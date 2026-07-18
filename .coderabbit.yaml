@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit configuration for nowo-tech/VerifactuBundle.
+# Requires the CodeRabbit GitHub App installed on nowo-tech/VerifactuBundle.
+# Manual review: comment `@coderabbitai review` on a pull request.
+
+language: en-US
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  commit_status: true
+  poem: false
+  collapse_walkthrough: true
+  sequence_diagrams: true
+  changed_files_summary: true
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 10
+    drafts: false
+    base_branches:
+      - main
+      - master
+    ignore_title_keywords:
+      - WIP
+      - "[skip review]"
+
+  path_filters:
+    - "!**/vendor/**"
+    - "!**/coverage/**"
+    - "!**/*.lock"
+    - "!phpstan-baseline.neon"
+    - "!.cursor/**"
+    - "src/**"
+    - "tests/**"
+    - "docs/**"
+    - "demo/**"
+    - ".github/**"
+    - "*.md"
+    - "*.yaml"
+    - "*.yml"
+    - "Makefile"
+
+  path_instructions:
+    - path: "src/**/*.php"
+      instructions: |
+        nowo-tech/verifactu-bundle — Symfony bundle for Spanish Veri*Factu (RD 1007/2023):
+        SHA-256 hash chains, billing record XML, AEAT QR codes, XSD validation, SOAP submission, XAdES signing.
+        Follow PSR-12 and `.php-cs-fixer.dist.php`. Prefer PHP 8 attributes over annotations.
+        Respect PHP and Symfony ranges in `composer.json`. Preserve backward compatibility unless the PR explicitly breaks it.
+        Align with `composer cs-check`, `composer phpstan`, and `composer test`.
+
+    - path: "tests/**/*.php"
+      instructions: |
+        PHPUnit tests for VerifactuBundle. Add or update tests for new behaviour.
+        Match existing test structure (Unit vs Integration). Include AEAT hash test vectors where relevant.
+
+    - path: "docs/**"
+      instructions: |
+        Documentation must be in English. Keep CONFIGURATION.md and USAGE.md aligned with Configuration.php.
+
+    - path: "demo/**"
+      instructions: |
+        Demo projects must not contain secrets. Use .env.example for AEAT certificate placeholders.

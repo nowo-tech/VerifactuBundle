@@ -1,0 +1,59 @@
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+        public: false
+
+    Nowo\VerifactuBundle\:
+        resource: '../../*'
+        exclude:
+            - '../../DependencyInjection/'
+            - '../../Model/'
+            - '../../Event/'
+            - '../../Entity/'
+            - '../../Repository/DoctrineHashChainRepository.php'
+
+    Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface:
+        alias: Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository
+
+    Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface:
+        alias: Nowo\VerifactuBundle\Client\NullAeatSubmissionClient
+
+    Nowo\VerifactuBundle\Validator\XsdValidator:
+        arguments:
+            $enabled: '%nowo_verifactu.aeat.validate_xsd%'
+
+    Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient:
+        arguments:
+            $issuerConfig: '%nowo_verifactu.issuer%'
+            $mode: '%nowo_verifactu.mode%'
+            $environment: '%nowo_verifactu.aeat.environment%'
+            $certificatePath: '%nowo_verifactu.aeat.certificate_path%'
+            $certificatePassword: '%nowo_verifactu.aeat.certificate_password%'
+            $certificateType: '%nowo_verifactu.aeat.certificate_type%'
+            $timeout: '%nowo_verifactu.aeat.timeout%'
+
+    Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner:
+        arguments:
+            $certificatePath: '%nowo_verifactu.aeat.certificate_path%'
+            $certificatePassword: '%nowo_verifactu.aeat.certificate_password%'
+
+    Nowo\VerifactuBundle\Service\BillingRecordProcessor:
+        arguments:
+            $issuerConfig: '%nowo_verifactu.issuer%'
+            $softwareConfig: '%nowo_verifactu.software%'
+            $installationConfig: '%nowo_verifactu.installation%'
+            $mode: '%nowo_verifactu.mode%'
+            $signRecords: '%nowo_verifactu.aeat.sign_xades%'
+            $recordSigner: '@?Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface'
+
+    Nowo\VerifactuBundle\Twig\VerifactuTwigExtension:
+        arguments:
+            $aeatEnvironment: '%nowo_verifactu.aeat.environment%'
+            $qrConfig: '%nowo_verifactu.qr%'
+        tags:
+            - { name: twig.extension }
+
+    Nowo\VerifactuBundle\Command\:
+        resource: '../../Command/*'
+        tags: ['console.command']

@@ -1,0 +1,16 @@
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+when@test:
+    services:
+        Nowo\VerifactuBundle\Tests\Support\FakeSoapTransport:
+            arguments:
+                $body: '<CSV>TESTCSV</CSV><EstadoRegistro>Correcto</EstadoRegistro>'
+
+        Nowo\VerifactuBundle\Client\SoapTransportInterface:
+            alias: Nowo\VerifactuBundle\Tests\Support\FakeSoapTransport
+
+        Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface:
+            alias: Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient

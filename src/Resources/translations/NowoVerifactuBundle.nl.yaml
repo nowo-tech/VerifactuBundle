@@ -1,0 +1,19 @@
+validation:
+  issuer_nif:
+    invalid: 'Het btw-nummer van de afzender (NIF/CIF/NIE) is ongeldig.'
+  invoice_series_number:
+    empty: 'Serie en factuurnummer mogen niet leeg zijn.'
+  issue_date:
+    invalid: 'De uitgiftedatum moet het formaat dd-mm-jjjj hebben.'
+  invoice_type:
+    empty: 'Het factuurtype is verplicht voor alta-records.'
+  total_amount:
+    invalid: 'Het totale bedrag moet een geldig getal zijn.'
+  total_tax_amount:
+    invalid: 'Het totale belastingbedrag moet een geldig getal zijn.'
+  generated_at:
+    empty: 'De tijdstempel van recordgeneratie is verplicht.'
+  xml:
+    parse_failed: 'Ongeldige XML: %errors%'
+    xsd:
+      failed: 'XSD-validatie mislukt: %errors%'

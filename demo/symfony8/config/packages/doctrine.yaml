@@ -1,0 +1,11 @@
+doctrine:
+    dbal:
+        url: '%env(resolve:DATABASE_URL)%'
+    orm:
+        auto_mapping: true
+        enable_lazy_ghost_objects: true
+
+when@test:
+    doctrine:
+        dbal:
+            url: 'sqlite:///%kernel.project_dir%/var/data/demo_test.db'

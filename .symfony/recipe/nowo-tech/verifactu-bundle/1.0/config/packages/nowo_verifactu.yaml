@@ -1,0 +1,18 @@
+nowo_verifactu:
+    mode: verifactu
+    issuer:
+        nif: ''
+        name: ''
+    software:
+        id: '01'
+        name: 'MyApp'
+        version: '1.0.0'
+        manufacturer_nif: ''
+        manufacturer_name: ''
+    installation:
+        number: '001'
+    aeat:
+        environment: sandbox
+    qr:
+        size_mm: 35
+        legend: verifactu

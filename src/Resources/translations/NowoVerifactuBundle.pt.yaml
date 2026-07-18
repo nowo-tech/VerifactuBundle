@@ -1,0 +1,19 @@
+validation:
+  issuer_nif:
+    invalid: 'O NIF/CIF/NIE do emissor é inválido.'
+  invoice_series_number:
+    empty: 'A série e o número da fatura não podem estar vazios.'
+  issue_date:
+    invalid: 'A data de emissão deve usar o formato dd-mm-aaaa.'
+  invoice_type:
+    empty: 'O tipo de fatura é obrigatório para registos de alta.'
+  total_amount:
+    invalid: 'O montante total deve ser um número válido.'
+  total_tax_amount:
+    invalid: 'O montante total de impostos deve ser um número válido.'
+  generated_at:
+    empty: 'O timestamp de geração do registo é obrigatório.'
+  xml:
+    parse_failed: 'XML inválido: %errors%'
+    xsd:
+      failed: 'Validação XSD falhou: %errors%'

@@ -1,0 +1,19 @@
+validation:
+  issuer_nif:
+    invalid: 'Le NIF/CIF/NIE de l''émetteur est invalide.'
+  invoice_series_number:
+    empty: 'La série et le numéro de facture ne peuvent pas être vides.'
+  issue_date:
+    invalid: 'La date d''émission doit être au format jj-mm-aaaa.'
+  invoice_type:
+    empty: 'Le type de facture est obligatoire pour les enregistrements d''alta.'
+  total_amount:
+    invalid: 'Le montant total doit être un nombre valide.'
+  total_tax_amount:
+    invalid: 'Le montant total des taxes doit être un nombre valide.'
+  generated_at:
+    empty: 'L''horodatage de génération de l''enregistrement est obligatoire.'
+  xml:
+    parse_failed: 'XML invalide : %errors%'
+    xsd:
+      failed: 'Échec de la validation XSD : %errors%'

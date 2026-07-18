@@ -1,0 +1,19 @@
+validation:
+  issuer_nif:
+    invalid: 'The issuer tax ID (NIF/CIF/NIE) is invalid.'
+  invoice_series_number:
+    empty: 'The invoice series and number must not be empty.'
+  issue_date:
+    invalid: 'The issue date must use dd-mm-yyyy format.'
+  invoice_type:
+    empty: 'The invoice type code is required for alta records.'
+  total_amount:
+    invalid: 'The total amount must be a valid number.'
+  total_tax_amount:
+    invalid: 'The total tax amount must be a valid number.'
+  generated_at:
+    empty: 'The record generation timestamp is required.'
+  xml:
+    parse_failed: 'Invalid XML: %errors%'
+    xsd:
+      failed: 'XSD validation failed: %errors%'

@@ -1,0 +1,24 @@
+nowo_verifactu:
+    mode: verifactu
+    issuer:
+        nif: '89890001K'
+        name: 'Demo Company SL'
+    software:
+        id: '01'
+        name: 'VerifactuBundle'
+        version: '1.0.0'
+        manufacturer_nif: 'B12345678'
+        manufacturer_name: 'Nowo.tech'
+    installation:
+        number: 'DEMO-001'
+    hash_chain:
+        storage: doctrine
+    aeat:
+        environment: sandbox
+        certificate_path: '%env(default::AEAT_CERT_PATH)%'
+        certificate_password: '%env(default::AEAT_CERT_PASSWORD)%'
+        validate_xsd: true
+        sign_xades: false
+    qr:
+        size_mm: 35
+        legend: verifactu

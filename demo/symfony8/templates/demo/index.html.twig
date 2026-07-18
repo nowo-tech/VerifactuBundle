@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VerifactuBundle Demo — Flujo Nowo</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+        form { display: grid; gap: 0.75rem; margin-bottom: 2rem; }
+        label { display: grid; gap: 0.25rem; font-weight: 600; }
+        input, select, button, textarea { padding: 0.5rem; font: inherit; }
+        button { cursor: pointer; width: fit-content; }
+        pre { background: #f5f5f5; padding: 1rem; overflow: auto; border-radius: 4px; font-size: 0.85rem; }
+        .errors { color: #b00020; }
+        .info { background: #eef6ff; border: 1px solid #b3d4fc; padding: 1rem; border-radius: 4px; margin-bottom: 1.5rem; }
+        .warn { background: #fff8e1; border: 1px solid #ffe082; padding: 0.75rem 1rem; border-radius: 4px; }
+        .qr { margin-top: 1rem; }
+        .legend { font-size: 0.875rem; margin-top: 0.5rem; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <h1>VerifactuBundle Demo</h1>
+    <p>Flujo de adopción Nowo: factura → <code>InvoiceDraft</code> → registro AEAT con cadena de hashes persistente (Doctrine).</p>
+
+    <div class="info">
+        <strong>Estado del sistema</strong>
+        <ul>
+            <li>Hash chain (Doctrine): {% if hashChainState %}último registro <code>{{ hashChainState.invoiceSeriesNumber }}</code> — hash <code>{{ hashChainState.hash|slice(0, 16) }}…</code>{% else %}sin registros previos{% endif %}</li>
+            <li>Certificado AEAT: {% if aeatConfigured %}<strong>configurado</strong> (envío sandbox disponible){% else %}<span class="warn">no configurado — define <code>AEAT_CERT_PATH</code> y <code>AEAT_CERT_PASSWORD</code> en <code>.env.local</code></span>{% endif %}</li>
+        </ul>
+    </div>
+
+    <form method="post">
+        <div class="grid-2">
+            <label>Serie + número <input name="numserie" value="FAC-DEMO-001" required></label>
+            <label>Fecha expedición (dd-mm-yyyy) <input name="fecha" value="{{ 'now'|date('d-m-Y') }}" required></label>
+        </div>
+        <div class="grid-2">
+            <label>Tipo operación
+                <select name="record_type">
+                    <option value="Alta">Alta (nueva factura)</option>
+                    <option value="Anulacion">Anulación</option>
+                </select>
+            </label>
+            <label>Tipo factura <input name="tipo" value="F1" required></label>
+        </div>
+        <div class="grid-2">
+            <label>Cuota total <input name="cuota" value="21.00" required></label>
+            <label>Importe total <input name="importe" value="121.00" required></label>
+        </div>
+        <label>Descripción operación <textarea name="description" rows="2">Servicios de consultoría demo</textarea></label>
+        {% if aeatConfigured %}
+            <label><input type="checkbox" name="submit_aeat" value="1" checked> Enviar a AEAT sandbox</label>
+        {% endif %}
+        <button type="submit">Emitir factura Veri*Factu</button>
+    </form>
+
+    {% if result is not null %}
+        {% if result.errors is not empty %}
+            <div class="errors">
+                <h2>Errores de validación</h2>
+                <ul>
+                    {% for error in result.errors %}
+                        <li>{{ error }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% else %}
+            <h2>Registro generado</h2>
+            <p><strong>Hash:</strong> {{ result.record.hash }}</p>
+            <p><strong>Hash anterior:</strong> {{ result.record.previousHash ?? '(primer registro)' }}</p>
+            {% if result.submission is defined %}
+                <p><strong>Envío AEAT:</strong>
+                    {% if result.submission.success %}
+                        OK — referencia {{ result.submission.reference ?? '(sin CSV)' }}
+                    {% else %}
+                        Fallido
+                        {% if result.submission.errors is defined %}
+                            <ul>{% for error in result.submission.errors %}<li>{{ error }}</li>{% endfor %}</ul>
+                        {% endif %}
+                    {% endif %}
+                </p>
+                {% if result.submission.endpoint is defined %}
+                    <p><small>Endpoint: {{ result.submission.endpoint }}</small></p>
+                {% endif %}
+            {% endif %}
+            {% if qrDataUri %}
+                <div class="qr">
+                    <img src="{{ qrDataUri }}" alt="QR Veri*Factu" width="140" height="140">
+                    <p class="legend">{{ verifactu_legend() }}</p>
+                    <p><a href="{{ verifactu_qr_url(result.record) }}" target="_blank" rel="noopener">Abrir URL de verificación AEAT</a></p>
+                </div>
+            {% endif %}
+            <h3>XML</h3>
+            <pre>{{ result.record.xml|e }}</pre>
+            {% if result.record.signedXml %}
+                <h3>XML firmado (XAdES)</h3>
+                <pre>{{ result.record.signedXml|e }}</pre>
+            {% endif %}
+        {% endif %}
+    {% endif %}
+</body>
+</html>

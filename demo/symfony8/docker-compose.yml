@@ -1,0 +1,34 @@
+name: verifactu-bundle-demo-symfony-8
+services:
+  php:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: verifactu-demo-symfony8-php
+    working_dir: /app
+    ports:
+      - "${PORT:-8010}:80"
+    volumes:
+      - .:/app
+      - ../..:/var/verifactu-bundle
+      - ./docker/frankenphp/Caddyfile.dev:/etc/frankenphp/Caddyfile.dev
+      - ./docker/php-dev.ini:/usr/local/etc/php/conf.d/99-dev.ini:ro
+      - composer-cache:/root/.composer/cache
+    environment:
+      - COMPOSER_ALLOW_SUPERUSER=1
+      - APP_ENV=dev
+      - APP_DEBUG=1
+      - APP_SECRET=${APP_SECRET:-demo-secret}
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    networks:
+      - verifactu-demo-network
+
+volumes:
+  composer-cache:
+    driver: local
+
+networks:
+  verifactu-demo-network:
+    driver: bridge

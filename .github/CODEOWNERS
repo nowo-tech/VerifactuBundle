@@ -1,0 +1,21 @@
+# CODEOWNERS for VerifactuBundle
+# These users are automatically requested for review on pull requests.
+
+# Default owner for the whole repository
+* @HecFranco
+
+# GitHub metadata and workflows
+/.github/ @HecFranco
+
+# Bundle source code
+/src/ @HecFranco
+
+# Tests
+/tests/ @HecFranco
+
+# Tooling scripts
+/.scripts/ @HecFranco
+/bin/ @HecFranco
+
+# Demo projects
+/demo/ @HecFranco

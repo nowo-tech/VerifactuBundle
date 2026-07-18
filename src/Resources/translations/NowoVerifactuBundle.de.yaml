@@ -1,0 +1,19 @@
+validation:
+  issuer_nif:
+    invalid: 'Die Steuer-ID des Ausstellers (NIF/CIF/NIE) ist ungültig.'
+  invoice_series_number:
+    empty: 'Serie und Rechnungsnummer dürfen nicht leer sein.'
+  issue_date:
+    invalid: 'Das Ausstellungsdatum muss das Format TT-MM-JJJJ haben.'
+  invoice_type:
+    empty: 'Der Rechnungstyp ist für Alta-Einträge erforderlich.'
+  total_amount:
+    invalid: 'Der Gesamtbetrag muss eine gültige Zahl sein.'
+  total_tax_amount:
+    invalid: 'Der Gesamtsteuerbetrag muss eine gültige Zahl sein.'
+  generated_at:
+    empty: 'Der Zeitstempel der Datensatzgenerierung ist erforderlich.'
+  xml:
+    parse_failed: 'Ungültiges XML: %errors%'
+    xsd:
+      failed: 'XSD-Validierung fehlgeschlagen: %errors%'

@@ -1,0 +1,5 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '~XMLSecurityDSig::addReference\(\) expects DOMDocument, DOMElement given~'
+			path: src/Signer/XadesBillingRecordSigner.php

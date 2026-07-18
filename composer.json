@@ -1,0 +1,127 @@
+{
+    "name": "nowo-tech/verifactu-bundle",
+    "description": "Symfony bundle for Spanish Veri*Factu (RD 1007/2023) billing record compliance: SHA-256 hash chains, XML generation, QR codes, and AEAT submission hooks",
+    "type": "symfony-bundle",
+    "license": "MIT",
+    "keywords": [
+        "symfony",
+        "symfony-bundle",
+        "verifactu",
+        "veri-factu",
+        "aeat",
+        "spain",
+        "facturacion",
+        "invoicing",
+        "billing-record",
+        "hash-chain",
+        "sha-256",
+        "qr-code",
+        "sif",
+        "rd-1007-2023",
+        "hacienda",
+        "tax-compliance"
+    ],
+    "homepage": "https://github.com/nowo-tech/VerifactuBundle",
+    "support": {
+        "issues": "https://github.com/nowo-tech/VerifactuBundle/issues",
+        "source": "https://github.com/nowo-tech/VerifactuBundle"
+    },
+    "authors": [
+        {
+            "name": "Nowo.tech",
+            "homepage": "https://nowo.tech"
+        }
+    ],
+    "require": {
+        "php": ">=8.1 <8.6",
+        "ext-curl": "*",
+        "ext-dom": "*",
+        "ext-libxml": "*",
+        "ext-openssl": "*",
+        "endroid/qr-code": "^5.0 || ^6.0",
+        "robrichards/xmlseclibs": "^3.1",
+        "symfony/config": "^6.0 || ^7.0 || ^8.0",
+        "symfony/console": "^6.0 || ^7.0 || ^8.0",
+        "symfony/dependency-injection": "^6.0 || ^7.0 || ^8.0",
+        "symfony/event-dispatcher": "^6.0 || ^7.0 || ^8.0",
+        "symfony/http-kernel": "^6.0 || ^7.0 || ^8.0",
+        "symfony/translation": "^6.0 || ^7.0 || ^8.0",
+        "symfony/twig-bridge": "^6.0 || ^7.0 || ^8.0",
+        "symfony/yaml": "^6.0 || ^7.0 || ^8.0",
+        "twig/twig": "^3.0"
+    },
+    "require-dev": {
+        "doctrine/doctrine-bundle": "^2.11",
+        "doctrine/orm": "^2.14 || ^3.0",
+        "symfony/var-exporter": "^7.4",
+        "friendsofphp/php-cs-fixer": "^3.0",
+        "phpstan/extension-installer": "^1.4",
+        "phpstan/phpstan": "^2.0",
+        "phpstan/phpstan-phpunit": "^2.0",
+        "phpstan/phpstan-symfony": "^2.0",
+        "phpunit/phpunit": "^10.0",
+        "rector/rector": "^2.0",
+        "symfony/framework-bundle": "^6.0 || ^7.0 || ^8.0",
+        "symfony/twig-bundle": "^6.0 || ^7.0 || ^8.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Nowo\\VerifactuBundle\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Nowo\\VerifactuBundle\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "composer/package-versions-deprecated": true,
+            "phpstan/extension-installer": true
+        }
+    },
+    "suggest": {
+        "doctrine/orm": "Required for persistent hash chain storage (hash_chain.storage: doctrine)",
+        "doctrine/doctrine-bundle": "Required for Doctrine entity mapping"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "archive": {
+        "exclude": ["/demo", "/.cursor"]
+    },
+    "scripts": {
+        "test": "phpunit",
+        "test-coverage": "phpunit --coverage-html coverage --coverage-clover coverage.xml --coverage-text",
+        "cs-check": "php-cs-fixer fix --dry-run --diff",
+        "cs-fix": "php-cs-fixer fix",
+        "phpstan": "phpstan analyse --memory-limit=512M",
+        "rector": "rector process",
+        "rector-dry": "rector process --dry-run --no-progress-bar",
+        "update": "composer update --no-interaction",
+        "validate": "composer validate --strict",
+        "qa": [
+            "@cs-check",
+            "@test"
+        ],
+        "release-check": [
+            "@cs-check",
+            "@rector-dry",
+            "@phpstan",
+            "@test-coverage"
+        ]
+    },
+    "scripts-descriptions": {
+        "test": "Run PHPUnit tests",
+        "test-coverage": "Run PHPUnit tests with code coverage",
+        "cs-check": "Check code style with PHP-CS-Fixer",
+        "cs-fix": "Fix code style with PHP-CS-Fixer",
+        "phpstan": "Run PHPStan static analysis",
+        "rector": "Apply Rector refactoring",
+        "rector-dry": "Run Rector in dry-run mode",
+        "update": "Update composer.lock (composer update)",
+        "validate": "Validate composer.json (composer validate --strict)",
+        "qa": "Run all quality assurance checks",
+        "release-check": "Run all release checks (cs-check, rector-dry, phpstan, test)"
+    }
+}
