@@ -34,24 +34,24 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 
 $options = parseArguments($argv);
 
-$certPath = $options['cert-path'] ?? getenv('AEAT_CERT_PATH') ?: null;
+$certPath     = $options['cert-path'] ?? getenv('AEAT_CERT_PATH') ?: null;
 $certPassword = $options['cert-password'] ?? getenv('AEAT_CERT_PASSWORD') ?: null;
-$submit = (bool) ($options['submit'] ?? false);
-$dryRun = (bool) ($options['dry-run'] ?? false) || !$submit;
+$submit       = (bool) ($options['submit'] ?? false);
+$dryRun       = (bool) ($options['dry-run'] ?? false) || !$submit;
 
 if ($submit && ($certPath === null || $certPath === '' || !is_file($certPath))) {
-    fwrite(STDERR, "ERROR: AEAT certificate not found.\n");
-    fwrite(STDERR, "Set AEAT_CERT_PATH (and AEAT_CERT_PASSWORD) to your AEAT sandbox .p12/.pfx.\n");
-    fwrite(STDERR, "Example:\n");
-    fwrite(STDERR, "  AEAT_CERT_PATH=/secure/aeat-test.p12 AEAT_CERT_PASSWORD=secret php scripts/aeat-sandbox-submit.php --submit\n");
+    fwrite(\STDERR, "ERROR: AEAT certificate not found.\n");
+    fwrite(\STDERR, "Set AEAT_CERT_PATH (and AEAT_CERT_PASSWORD) to your AEAT sandbox .p12/.pfx.\n");
+    fwrite(\STDERR, "Example:\n");
+    fwrite(\STDERR, "  AEAT_CERT_PATH=/secure/aeat-test.p12 AEAT_CERT_PASSWORD=secret php scripts/aeat-sandbox-submit.php --submit\n");
     exit(1);
 }
 
-$issuerNif = (string) ($options['nif'] ?? '89890001K');
-$numSerie = (string) ($options['numserie'] ?? 'SANDBOX-' . date('Ymd-His'));
-$fecha = (string) ($options['fecha'] ?? date('d-m-Y'));
+$issuerNif   = (string) ($options['nif'] ?? '89890001K');
+$numSerie    = (string) ($options['numserie'] ?? 'SANDBOX-' . date('Ymd-His'));
+$fecha       = (string) ($options['fecha'] ?? date('d-m-Y'));
 $generatedAt = (string) ($options['generated-at'] ?? date('c'));
-$recordType = RecordType::tryFrom((string) ($options['record-type'] ?? 'Alta')) ?? RecordType::Alta;
+$recordType  = RecordType::tryFrom((string) ($options['record-type'] ?? 'Alta')) ?? RecordType::Alta;
 
 $issuerConfig = [
     'nif'  => $issuerNif,
@@ -80,7 +80,7 @@ $record = new BillingRecord(
 );
 
 $translator = new IdentityTranslator();
-$processor = new BillingRecordProcessor(
+$processor  = new BillingRecordProcessor(
     new AeatBusinessRulesValidator(new SpanishTaxIdValidator(), $translator),
     new HashChainGenerator(),
     new BillingRecordXmlGenerator(),
@@ -111,7 +111,7 @@ echo "NIF:          {$issuerNif}\n";
 echo "NumSerie:     {$numSerie}\n";
 echo "Record type:  {$recordType->value}\n";
 echo "Environment:  sandbox\n";
-echo "Mode:         " . ($dryRun ? 'dry-run (no AEAT call)' : 'submit') . "\n";
+echo 'Mode:         ' . ($dryRun ? 'dry-run (no AEAT call)' : 'submit') . "\n";
 if ($certPath !== null && $certPath !== '') {
     echo "Certificate:  {$certPath}\n";
 }
@@ -120,21 +120,21 @@ echo str_repeat('-', 40) . "\n";
 $result = $processor->process($record, submitToAeat: $submit && !$dryRun);
 
 if ($result['errors'] !== []) {
-    fwrite(STDERR, "Validation/XSD failed:\n");
+    fwrite(\STDERR, "Validation/XSD failed:\n");
     foreach ($result['errors'] as $error) {
-        fwrite(STDERR, "  - {$error}\n");
+        fwrite(\STDERR, "  - {$error}\n");
     }
     exit(1);
 }
 
 $processed = $result['record'];
 echo "Hash: {$processed->hash}\n";
-echo "Previous hash: " . ($processed->previousHash ?? '(first record)') . "\n";
+echo 'Previous hash: ' . ($processed->previousHash ?? '(first record)') . "\n";
 
 if (isset($result['submission'])) {
     $submission = $result['submission'];
-    echo "Endpoint: " . ($submission['endpoint'] ?? '(unknown)') . "\n";
-    echo "HTTP status: " . ($submission['status_code'] ?? 0) . "\n";
+    echo 'Endpoint: ' . ($submission['endpoint'] ?? '(unknown)') . "\n";
+    echo 'HTTP status: ' . ($submission['status_code'] ?? 0) . "\n";
 
     if (($submission['success'] ?? false) === true) {
         echo "RESULT: AEAT submission OK\n";
@@ -142,13 +142,13 @@ if (isset($result['submission'])) {
         exit(0);
     }
 
-    fwrite(STDERR, "RESULT: AEAT submission FAILED\n");
+    fwrite(\STDERR, "RESULT: AEAT submission FAILED\n");
     foreach ($submission['errors'] ?? [] as $error) {
-        fwrite(STDERR, "  - {$error}\n");
+        fwrite(\STDERR, "  - {$error}\n");
     }
     if (isset($submission['raw_response']) && is_string($submission['raw_response']) && $submission['raw_response'] !== '') {
-        fwrite(STDERR, "\nRaw response (truncated):\n");
-        fwrite(STDERR, substr($submission['raw_response'], 0, 2000) . "\n");
+        fwrite(\STDERR, "\nRaw response (truncated):\n");
+        fwrite(\STDERR, substr($submission['raw_response'], 0, 2000) . "\n");
     }
     exit(1);
 }
@@ -159,7 +159,7 @@ exit(0);
 /**
  * @param list<string> $argv
  *
- * @return array<string, string|bool>
+ * @return array<string, bool|string>
  */
 function parseArguments(array $argv): array
 {
@@ -176,7 +176,7 @@ function parseArguments(array $argv): array
         if (!str_starts_with($arg, '--') || !str_contains($arg, '=')) {
             continue;
         }
-        [$key, $value] = explode('=', substr($arg, 2), 2);
+        [$key, $value]                       = explode('=', substr($arg, 2), 2);
         $parsed[str_replace('_', '-', $key)] = $value;
     }
 
