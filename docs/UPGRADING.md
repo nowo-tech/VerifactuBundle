@@ -6,6 +6,7 @@ For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Table of contents
 
+- [Upgrading to 1.0.2](#upgrading-to-102)
 - [Upgrading to 1.0.1](#upgrading-to-101)
 - [Upgrading to 1.0.0](#upgrading-to-100)
   - [First stable release](#first-stable-release)
@@ -16,6 +17,16 @@ For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
   - [Migration steps](#migration-steps)
 - [General upgrade notes](#general-upgrade-notes)
 - [Getting help](#getting-help)
+
+## Upgrading to 1.0.2
+
+**CI / maintainer tooling.** No public API or config schema changes.
+
+```bash
+composer require nowo-tech/verifactu-bundle:^1.0.2
+```
+
+Integrators: no application changes.
 
 ## Upgrading to 1.0.1
 

@@ -51,9 +51,9 @@
         "twig/twig": "^3.0"
     },
     "require-dev": {
-        "doctrine/doctrine-bundle": "^2.11",
+        "doctrine/doctrine-bundle": "^2.18 || ^3.2",
         "doctrine/orm": "^2.14 || ^3.0",
-        "symfony/var-exporter": "^7.4",
+        "symfony/var-exporter": "^6.4 || ^7.0 || ^8.0",
         "friendsofphp/php-cs-fixer": "^3.0",
         "phpstan/extension-installer": "^1.4",
         "phpstan/phpstan": "^2.0",

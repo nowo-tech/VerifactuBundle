@@ -49,15 +49,14 @@ Maintainers: follow this process before creating a new tag.
 6. **Packagist**  
    If the package is on [Packagist](https://packagist.org/packages/nowo-tech/verifactu-bundle), the new tag is picked up automatically (or use “Update” there).
 
-## Current release (v1.0.1)
+## Current release (v1.0.2)
 
 > **Renew this block on each release:** update the version in the heading, the bullets under “Documentation reviewed”, and the example commands below.
 
 ### Documentation reviewed for this release
 
-- **CHANGELOG.md**: `[1.0.1] - 2026-07-31` — REQ-GIT-001, 100% coverage gate, RUNTIME-001 timeout hierarchy, SEPA leftover fixes, demo FrankenPHP timeouts.
-- **UPGRADING.md**: “Upgrading to 1.0.1” — no API breaks; FrankenPHP timeout guidance when raising `aeat.timeout`.
-- **CONFIGURATION.md** / **DEMO-FRANKENPHP.md** / **SECURITY.md** / **GITHUB_CI.md**: Aligned with the above.
+- **CHANGELOG.md**: `[1.0.2] - 2026-07-31` — git-hygiene history rewrite, CI matrix composer update, require-dev Doctrine/var-exporter for SF8 / PHP 8.1.
+- **UPGRADING.md**: “Upgrading to 1.0.2” — no API breaks.
 
 ### Example commands for this version
 
@@ -65,22 +64,18 @@ Maintainers: follow this process before creating a new tag.
 make release-check
 git status
 git add -A
-git -c core.hooksPath=.githooks commit -m "release: v1.0.1 (REQ compliance, 100% coverage, AEAT timeout hierarchy)"
+git -c core.hooksPath=.githooks commit -m "release: v1.0.2 (CI matrix + git-hygiene)"
 make check-no-cursor-coauthor
-git tag -a v1.0.1 -m "Release v1.0.1"
+git tag -a v1.0.2 -m "Release v1.0.2"
 git push origin main
-git push origin v1.0.1
+git push origin v1.0.2
 ```
 
 ### Verify on GitHub
 
-- *Actions* → “Create Release” workflow green; *Releases* → **v1.0.1** with body aligned to `docs/CHANGELOG.md` (`## [1.0.1]`).
-
-### If the tag already exists but the release failed
-
-- Re-run the “Create GitHub Release” job from *Actions* (Re-run jobs), or delete the tag on the remote and recreate and push `v1.0.1`.
+- *Actions* → CI green; *Releases* → **v1.0.2** with body aligned to `docs/CHANGELOG.md` (`## [1.0.2]`).
 
 ### Notes
 
 - `.github/workflows/release.yml` runs when pushing a tag `v*`.
-- The release body is generated from the `## [1.0.1]` section of `docs/CHANGELOG.md`.
+- The release body is generated from the `## [1.0.2]` section of `docs/CHANGELOG.md`.

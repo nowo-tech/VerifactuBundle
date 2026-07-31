@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-31
+
+### Fixed
+
+- **REQ-GIT-001:** stripped Cursor co-author trailer from `v1.0.0` history (CI `git-hygiene`).
+- CI matrix install uses `composer update --with-all-dependencies` so PHP 8.1 / Symfony 8 jobs are not blocked by lock pins (`endroid/qr-code`, `doctrine/doctrine-bundle`).
+- `require-dev`: `doctrine/doctrine-bundle` `^2.18 || ^3.2`; `symfony/var-exporter` `^6.4 || ^7.0 || ^8.0` (PHP 8.1 compatible).
+
+### Upgrade
+
+```bash
+composer require nowo-tech/verifactu-bundle:^1.0.2
+```
+
+No public API changes.
+
 ## [1.0.1] - 2026-07-31
 
 ### Added
@@ -61,6 +77,7 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/nowo-tech/VerifactuBundle/releases/tag/v1.0.0
