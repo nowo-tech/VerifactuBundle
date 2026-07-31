@@ -1,5 +1,22 @@
 {
 	skip_install_trust
+	# Timeout stack (must stay aligned with nowo_verifactu.aeat.timeout):
+	#   AEAT SOAP timeout  <  PHP max_execution_time  <  Caddy write timeout
+	# Default aeat.timeout = 30s → PHP 45s → write 60s.
+	# max_wait_time bounds the queue when workers are busy (avoids endless backlog).
+	servers {
+		timeouts {
+			read_body 60s
+			read_header 30s
+			write 60s
+			idle 5m
+		}
+	}
+	frankenphp {
+		php_ini max_execution_time 45
+		php_ini max_input_time 45
+		max_wait_time 30s
+	}
 }
 
 :80 {

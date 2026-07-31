@@ -1,5 +1,14 @@
 # Usage
 
+## Table of contents
+
+- [Process a billing record](#process-a-billing-record)
+- [Production AEAT submission](#production-aeat-submission)
+- [Hash only](#hash-only)
+- [QR in Twig](#qr-in-twig)
+- [Console](#console)
+- [Events](#events)
+
 ## Process a billing record
 
 ```php

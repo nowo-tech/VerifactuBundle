@@ -45,8 +45,16 @@ build:
 ensure-up:
 	@if ! docker-compose exec -T php true 2>/dev/null; then \
 		echo "Starting container..."; \
-		docker-compose up -d; \
-		sleep 5; \
+		if [ ! -f .env ]; then cp .env.example .env 2>/dev/null || true; fi; \
+		docker-compose up -d --build; \
+		echo "Waiting for PHP service..."; \
+		i=0; \
+		while [ $$i -lt 60 ]; do \
+			if docker-compose exec -T php true 2>/dev/null; then break; fi; \
+			i=$$((i+1)); \
+			sleep 2; \
+		done; \
+		docker-compose exec -T php true; \
 	fi
 
 install: ensure-up
@@ -66,7 +74,9 @@ update: ensure-up
 update-bundle: ensure-up
 	docker-compose exec -T php composer update nowo-tech/verifactu-bundle --no-interaction
 	@$(MAKE) link-bundle
-	docker-compose exec -T php php bin/console cache:clear
+	docker-compose exec -T php php bin/console cache:clear --env=dev --no-warmup || true
+	docker-compose restart php
+	@sleep 3
 	@echo "Bundle updated. Reload the page in the browser."
 
 shell: ensure-up
@@ -88,8 +98,11 @@ verify: ensure-up
 	code=$$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$$PORT 2>/dev/null || echo "000"); \
 	if [ "$$code" = "200" ]; then echo "✅ Demo responding (HTTP $$code)"; else echo "❌ Demo not responding (HTTP $$code)"; exit 1; fi
 
+release-check: ensure-up update-bundle test verify
+	@echo "✅ Demo passed release-check."
+
 # REQ-MAKE-008: update-deps (REQ-MAKE-008)
 COMPOSE := docker-compose
 SERVICE_PHP := php
 BUNDLE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
-include $(BUNDLE_ROOT)/../.scripts/Makefile.demo-update-deps.mk
+-include $(BUNDLE_ROOT)/../.scripts/Makefile.demo-update-deps.mk

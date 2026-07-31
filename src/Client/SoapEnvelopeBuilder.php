@@ -46,9 +46,8 @@ final class SoapEnvelopeBuilder
         $envelope .= '</sfLR:RegistroFactura>';
         $envelope .= '</sfLR:RegFactuSistemaFacturacion>';
         $envelope .= '</soapenv:Body>';
-        $envelope .= '</soapenv:Envelope>';
 
-        return $envelope;
+        return $envelope . '</soapenv:Envelope>';
     }
 
     private function extractBodyInnerXml(string $recordXml): string

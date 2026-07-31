@@ -16,6 +16,7 @@ This document describes how the bundle’s demo applications run under **Franken
 - [Switching between development and production](#switching-between-development-and-production)
 - [Reproducing in another bundle](#reproducing-in-another-bundle)
 - [Troubleshooting](#troubleshooting)
+- [Timeouts (AEAT SOAP / FrankenPHP)](#timeouts-aeat-soap--frankenphp)
 
 ---
 
@@ -128,3 +129,20 @@ See [TwigInspectorBundle DEMO-FRANKENPHP](https://github.com/nowo-tech/TwigInspe
 - **Changes not visible:** Ensure worker mode is off in dev (Caddyfile.dev has no `worker`), add dev twig.yaml and php-dev.ini, restart container, hard-refresh browser.
 - **Web Profiler not visible:** Check `APP_ENV=dev` and `APP_DEBUG=1`, and that WebProfilerBundle is enabled for `dev` in bundles.php.
 - **Demo times out:** Check port is free, container logs (`docker-compose logs php`), and required env vars (e.g. APP_SECRET).
+
+---
+
+## Timeouts (AEAT SOAP / FrankenPHP)
+
+Blocking AEAT SOAP calls must not hang FrankenPHP workers. Keep this hierarchy (REQ-RUNTIME-001):
+
+| Layer | Config | Demo default |
+|-------|--------|--------------|
+| **Operation** — `nowo_verifactu.aeat.timeout` → `CURLOPT_TIMEOUT` / `CURLOPT_CONNECTTIMEOUT` | YAML / env | **30s** |
+| **PHP** — `max_execution_time` / `max_input_time` | Caddy `frankenphp { php_ini … }` + `docker/php-dev.ini` | **45s** |
+| **Caddy** — `servers.timeouts.write` | Caddyfile / Caddyfile.dev | **60s** |
+| **Queue** — `max_wait_time` | Caddy `frankenphp` block | **30s** |
+
+**Hierarchy:** AEAT SOAP timeout (30) &lt; PHP `max_execution_time` (45) &lt; Caddy write (60).
+
+When raising `aeat.timeout`, raise PHP and Caddy write timeouts in the same step so CurlSoapTransport can fail first.

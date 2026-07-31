@@ -53,6 +53,16 @@ In `no_verifactu` mode, billing records are signed automatically when a certific
 
 Official AEAT schemas ship under `src/Resources/schemas/aeat/`. Disable with `aeat.validate_xsd: false` only for debugging.
 
+### AEAT SOAP timeout (REQ-RUNTIME-001)
+
+`aeat.timeout` (seconds, range 5–120, default **30**) is applied to both `CURLOPT_TIMEOUT` and `CURLOPT_CONNECTTIMEOUT` in `CurlSoapTransport`.
+
+In FrankenPHP demos, keep:
+
+**operation (`aeat.timeout`) &lt; PHP `max_execution_time` &lt; Caddy `servers.timeouts.write`**
+
+See [DEMO-FRANKENPHP.md](DEMO-FRANKENPHP.md#timeouts-aeat-soap--frankenphp) for the demo values (30 / 45 / 60).
+
 ## Translations
 
 Validation messages use the `NowoVerifactuBundle` translation domain under `src/Resources/translations/`.

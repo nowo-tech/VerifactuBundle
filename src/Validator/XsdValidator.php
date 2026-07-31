@@ -17,7 +17,7 @@ use Symfony\Contracts\Translation\TranslatorInterface;
  * @copyright 2026 Nowo.tech
  */
 #[AsAlias(id: self::SERVICE_NAME, public: true)]
-final class XsdValidator
+class XsdValidator
 {
     public const SERVICE_NAME = 'nowo_verifactu.validator.xsd_validator';
 

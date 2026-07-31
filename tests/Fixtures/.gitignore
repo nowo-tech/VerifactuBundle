@@ -1,4 +1,5 @@
 /app/var/cache
+/doctrine-app/var
 
 # Archives / compressed
 *.zip

@@ -16,7 +16,9 @@ Thank you for your interest in contributing to Verifactu Bundle! This document p
 
 ## Code of Conduct
 
-This project adheres to a code of conduct. By participating, you are expected to uphold this code. Please report unacceptable behavior to hectorfranco@nowo.tech.
+This project follows the [Contributor Covenant Code of Conduct](../CODE_OF_CONDUCT.md). By participating, you are expected to uphold it. Please report unacceptable behavior to **hectorfranco@nowo.tech**.
+
+After cloning, run `make setup-hooks` once so `.githooks/commit-msg` strips Cursor co-author trailers (REQ-GIT-001). Use `make check-no-cursor-coauthor` before pushing; if CI fails, see [GITHUB_CI.md](GITHUB_CI.md) and `make strip-cursor-coauthor-from-history`.
 
 ## How can I contribute?
 

@@ -6,6 +6,16 @@ Three synchronized layers:
 2. **Product behavior** — [`USAGE.md`](USAGE.md), [`CONFIGURATION.md`](CONFIGURATION.md), [`INTEGRATION-NOWO.md`](INTEGRATION-NOWO.md), [`SANDBOX.md`](SANDBOX.md)
 3. **Traceability** — `REQ-*` in Makefiles, CI, and demos
 
+## Table of contents
+
+- [Non-goals](#non-goals)
+- [User stories](#user-stories)
+- [Functional scope](#functional-scope)
+- [Requirement identifiers](#requirement-identifiers)
+- [Validation](#validation)
+  - [Coverage exclusions (justified)](#coverage-exclusions-justified)
+- [Engram relationship](#engram-relationship)
+
 ## Non-goals
 
 - Full ERP / invoicing module (only AEAT compliance layer)
@@ -64,9 +74,15 @@ make validate-translations
 
 | Excluded | Reason |
 | --- | --- |
-| `NowoVerifactuBundle.php` | Empty bundle class |
+| `NowoVerifactuBundle.php` | Empty bundle class (0 executable statements) |
 | XSD files under `Resources/schemas/` | Official AEAT artifacts, validated indirectly |
 | GD-dependent QR PNG paths in CI without `ext-gd` | Skipped in PHPUnit when extension missing |
+| `CurlSoapTransport` `curl_init() === false` | Defensive: `curl_init` does not return `false` with ext-curl enabled |
+| `CertificateLoader` PKCS#12 `file_get_contents() === false` | Defensive: unreachable when `is_file` passed (CI runs as root; chmod cannot block reads) |
+| `CertificateLoader` PEM `openssl_pkey_get_details() === false` | Defensive: unreachable after a successful `openssl_pkey_get_private` |
+| `SubmitToAeatSandboxCommand` submit-without-submission branch | Defensive: `BillingRecordProcessor` always sets `submission` when `submitToAeat` is true |
+| `XadesBillingRecordSigner` null `documentElement` | Defensive: libxml rejects XML without a root before this check |
+| `SpanishTaxIdValidator` NIE `match` default | Exhaustive after `/^[XYZ]/` pre-check; required for PHPStan completeness |
 
 ## Engram relationship
 

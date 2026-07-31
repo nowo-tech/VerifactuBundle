@@ -1,0 +1,22 @@
+nowo_verifactu:
+    issuer:
+        nif: '89890001K'
+        name: 'Doctrine Test Issuer'
+    software:
+        manufacturer_nif: '89890001K'
+        manufacturer_name: 'Nowo.tech'
+        name: 'VerifactuBundle'
+        id: '01'
+        version: '1.0.0'
+    installation:
+        number: '001'
+    hash_chain:
+        storage: doctrine
+    aeat:
+        validate_xsd: true
+
+when@test:
+    nowo_verifactu:
+        aeat:
+            certificate_path: '%kernel.project_dir%/../certs/test.p12'
+            certificate_password: 'test'

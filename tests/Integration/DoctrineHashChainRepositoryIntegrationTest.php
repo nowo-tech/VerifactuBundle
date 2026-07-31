@@ -133,11 +133,27 @@ final class DoctrineHashChainRepositoryIntegrationTest extends KernelTestCase
         self::assertSame('FAC-2026-010', $state->invoiceSeriesNumber);
     }
 
+    public function testStoreLastHashCreatesStateWhenMissing(): void
+    {
+        /** @var DoctrineHashChainRepository $repository */
+        $repository = self::getContainer()->get(DoctrineHashChainRepository::class);
+
+        $repository->storeLastHash('89890001K', str_repeat('C', 64));
+
+        self::assertSame(str_repeat('C', 64), $repository->getLastHash('89890001K'));
+        $state = $repository->getLastState('89890001K');
+        self::assertNotNull($state);
+        self::assertSame('', $state->invoiceSeriesNumber);
+        self::assertSame('', $state->issueDate);
+    }
+
     private function createSchema(): void
     {
         /** @var EntityManagerInterface $entityManager */
         $entityManager = self::getContainer()->get(EntityManagerInterface::class);
         $schemaTool    = new SchemaTool($entityManager);
-        $schemaTool->createSchema($entityManager->getMetadataFactory()->getAllMetadata());
+        $metadata      = $entityManager->getMetadataFactory()->getAllMetadata();
+        $schemaTool->dropSchema($metadata);
+        $schemaTool->createSchema($metadata);
     }
 }

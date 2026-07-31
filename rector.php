@@ -15,6 +15,7 @@ declare(strict_types=1);
  */
 use Rector\Config\RectorConfig;
 use Rector\Symfony\Symfony73\Rector\Class_\CommandHelpToAttributeRector;
+use Rector\Symfony\Symfony73\Rector\Class_\GetFunctionsToAsTwigFunctionAttributeRector;
 use Rector\ValueObject\PhpVersion;
 
 return RectorConfig::configure()
@@ -34,4 +35,6 @@ return RectorConfig::configure()
         __DIR__ . '/tests', // Skip tests: some Symfony rules (e.g. RequestStack constructor) don't match Symfony's actual API
         // Keep setHelp() in configure(): #[AsCommand(help: …)] needs Symfony Console 6.2+.
         CommandHelpToAttributeRector::class,
+        // Keep AbstractExtension + getFunctions(): AsTwigFunction needs Twig 3.9+ / SF 7.3+; tag twig.extension still used.
+        GetFunctionsToAsTwigFunctionAttributeRector::class,
     ]);

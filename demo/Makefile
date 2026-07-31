@@ -35,7 +35,8 @@ release-verify:
 	@$(MAKE) verify-symfony8
 	@$(MAKE) down-symfony8
 
-release-check: release-verify
+release-check:
+	@$(MAKE) -C symfony8 release-check
 	@echo "✅ Demo passed release-check."
 
 clean:

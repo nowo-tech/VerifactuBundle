@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-31
+
+### Added
+
+- **REQ-GIT-001:** `.githooks/commit-msg`, `make setup-hooks` / `check-no-cursor-coauthor` / `check-open-prs`, CI `git-hygiene` job, and [`docs/GITHUB_CI.md`](GITHUB_CI.md).
+- **REQ-TEST-003 / REQ-TEST-006:** PHP line coverage gate at **100%** (`.scripts/coverage-check-100.php`); CI and `make release-check` enforce it.
+- **REQ-RUNTIME-001:** Documented AEAT SOAP timeout hierarchy (operation &lt; PHP &lt; Caddy write); demo Caddy/PHP ini aligned (30s / 45s / 60s).
+- Root [`CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md); README badges (stars, coverage 100%).
+- Extra unit/integration tests (Doctrine hash-chain fixtures, SOAP transport, processor, sandbox command) for the coverage floor.
+
+### Fixed
+
+- Leftover **SEPA** naming in `.github/FUNDING.yml`, `.github/SECURITY.md`, and Copilot instructions (now Veri*Factu / AEAT).
+- Soft `-include` for optional monorepo `update-deps` helpers so standalone GitHub checkouts do not break Make (REQ-MAKE-009).
+- Demo Symfony 8: `doctrine/doctrine-bundle` for Symfony 8 (`^2.18 || ^3.2`); image installs `pdo_sqlite` + `gd`; adds `symfony/property-info` / `symfony/validator`; Doctrine ORM config without removed `enable_lazy_ghost_objects`; PHPUnit `KERNEL_CLASS` + test env; default `FRANKENPHP_MODE=classic` for reliable demo/dev; demo `release-check` = `update-bundle` + tests + HTTP verify.
+
+### Changed
+
+- Demo Symfony 8: FrankenPHP production Caddyfile uses worker mode with explicit timeouts; `release-check` on demos runs `update-bundle` + tests.
+- Maintainer docs (CONFIGURATION, DEMO-FRANKENPHP, SECURITY SEC-002/004, RELEASE, SPEC-DRIVEN-DEVELOPMENT) aligned with the above.
+
+### Upgrade
+
+```bash
+composer require nowo-tech/verifactu-bundle:^1.0.1
+```
+
+No public API or config schema breaks. If you host under FrankenPHP and raise `aeat.timeout`, raise PHP `max_execution_time` and Caddy write timeouts in the same step — see [UPGRADING.md](UPGRADING.md).
+
 ## [1.0.0] - 2026-07-18
 
 ### Added
@@ -31,3 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README, INSTALLATION, CONFIGURATION, USAGE, SANDBOX, INTEGRATION-NOWO, SECURITY, CONTRIBUTING, SPEC-DRIVEN-DEVELOPMENT, SPEC-KIT, RELEASE, UPGRADING.
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
+
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/nowo-tech/VerifactuBundle/releases/tag/v1.0.0

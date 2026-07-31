@@ -1,6 +1,6 @@
 # VerifactuBundle
 
-[![CI](https://github.com/nowo-tech/VerifactuBundle/actions/workflows/ci.yml/badge.svg)](https://github.com/nowo-tech/VerifactuBundle/actions/workflows/ci.yml) [![Packagist Version](https://img.shields.io/packagist/v/nowo-tech/verifactu-bundle.svg?style=flat)](https://packagist.org/packages/nowo-tech/verifactu-bundle) [![Packagist Downloads](https://img.shields.io/packagist/dt/nowo-tech/verifactu-bundle.svg)](https://packagist.org/packages/nowo-tech/verifactu-bundle) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![PHP](https://img.shields.io/badge/PHP-8.1%2B-777BB4?logo=php)](https://php.net) [![Symfony](https://img.shields.io/badge/Symfony-6.0%2B%20%7C%207.4%2B%20%7C%208.0%20%7C%208.1%2B-000000?logo=symfony)](https://symfony.com) [![Coverage](https://img.shields.io/badge/coverage-manual-lightgrey)](#tests)
+[![CI](https://github.com/nowo-tech/VerifactuBundle/actions/workflows/ci.yml/badge.svg)](https://github.com/nowo-tech/VerifactuBundle/actions/workflows/ci.yml) [![Packagist Version](https://img.shields.io/packagist/v/nowo-tech/verifactu-bundle.svg?style=flat)](https://packagist.org/packages/nowo-tech/verifactu-bundle) [![Packagist Downloads](https://img.shields.io/packagist/dt/nowo-tech/verifactu-bundle.svg)](https://packagist.org/packages/nowo-tech/verifactu-bundle) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![PHP](https://img.shields.io/badge/PHP-8.1%2B-777BB4?logo=php)](https://php.net) [![Symfony](https://img.shields.io/badge/Symfony-6.0%2B%20%7C%207.4%2B%20%7C%208.0%20%7C%208.1%2B-000000?logo=symfony)](https://symfony.com) [![GitHub stars](https://img.shields.io/github/stars/nowo-tech/VerifactuBundle.svg?style=social&label=Star)](https://github.com/nowo-tech/VerifactuBundle) [![Coverage](https://img.shields.io/badge/Coverage-100%25-brightgreen)](#tests-and-coverage)
 
 > ⭐ **Found this useful?** Give it a star on GitHub! It helps us maintain and improve the project.
 
@@ -70,26 +70,6 @@ if ([] === $result['errors']) {
 }
 ```
 
-## Documentation
-
-- [Installation](docs/INSTALLATION.md)
-- [Configuration](docs/CONFIGURATION.md)
-- [Usage](docs/USAGE.md)
-- [Contributing](docs/CONTRIBUTING.md)
-- [Changelog](docs/CHANGELOG.md)
-- [Upgrading](docs/UPGRADING.md)
-- [Release process](docs/RELEASE.md)
-- [Security policy](docs/SECURITY.md)
-- [Engram (MCP memory)](docs/ENGRAM.md)
-- [Spec-driven development](docs/SPEC-DRIVEN-DEVELOPMENT.md)
-
-### Additional documentation
-
-- [GitHub Spec Kit](docs/SPEC-KIT.md)
-- [AEAT sandbox testing](docs/SANDBOX.md)
-- [Nowo integration guide](docs/INTEGRATION-NOWO.md)
-- [FrankenPHP demo](docs/DEMO-FRANKENPHP.md)
-
 ## Demo
 
 Symfony 8 demo with FrankenPHP:
@@ -99,14 +79,41 @@ make -C demo/symfony8 up
 # Open http://localhost:8010
 ```
 
+See [docs/DEMO-FRANKENPHP.md](docs/DEMO-FRANKENPHP.md) for worker mode and AEAT SOAP timeout hierarchy.
+
+This bundle is **FrankenPHP worker mode friendly** when AEAT SOAP timeouts stay below PHP and reverse-proxy write deadlines (**REQ-RUNTIME-001**).
+
+## Documentation
+
+- [Installation](docs/INSTALLATION.md)
+- [Configuration](docs/CONFIGURATION.md)
+- [Usage](docs/USAGE.md)
+- [Contributing](docs/CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Changelog](docs/CHANGELOG.md)
+- [Upgrading](docs/UPGRADING.md)
+- [Release process](docs/RELEASE.md)
+- [Security policy](docs/SECURITY.md)
+- [Engram (MCP memory)](docs/ENGRAM.md)
+- [Spec-driven development](docs/SPEC-DRIVEN-DEVELOPMENT.md)
+- [GitHub Spec Kit](docs/SPEC-KIT.md)
+
+### Additional documentation
+
+- [GitHub Actions CI requirements](docs/GITHUB_CI.md)
+- [AEAT sandbox testing](docs/SANDBOX.md)
+- [Nowo integration guide](docs/INTEGRATION-NOWO.md)
+- [FrankenPHP demo](docs/DEMO-FRANKENPHP.md)
+
 ## Tests and coverage
 
-- Tests: PHPUnit (PHP)
-- PHP: **~98%** (116 tests; target ~100% per REQ-TEST-003; minimum 80% enforced in CI)
-- TS/JS: N/A
-- Python: N/A
+| Stack | Coverage | How to run |
+| --- | --- | --- |
+| PHP | **100%** lines (`src/`) | `make test-coverage` / `composer test-coverage` |
+| TypeScript / JavaScript | N/A | — |
+| Python | N/A | — |
 
-Exclusions documented in [`docs/SPEC-DRIVEN-DEVELOPMENT.md`](docs/SPEC-DRIVEN-DEVELOPMENT.md#validation).
+CI enforces PHP coverage at **100%** (Clover elements / line gate via `.scripts/coverage-check-100.php`).
 
 ```bash
 make up && make install && make test

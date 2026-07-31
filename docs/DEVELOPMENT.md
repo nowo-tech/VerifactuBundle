@@ -2,6 +2,17 @@
 
 This document provides information about developing and contributing to the Verifactu Bundle.
 
+## Table of contents
+
+- [Development setup](#development-setup)
+  - [Using Docker (recommended)](#using-docker-recommended)
+  - [Without Docker](#without-docker)
+- [Testing](#testing)
+- [Code quality](#code-quality)
+- [CI/CD](#cicd)
+- [Contributing](#contributing)
+- [Demo](#demo)
+
 ## Development setup
 
 ### Using Docker (recommended)

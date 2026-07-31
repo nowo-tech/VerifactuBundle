@@ -17,6 +17,7 @@ use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
+use Nowo\VerifactuBundle\Tests\Support\FailingXsdValidator;
 use Nowo\VerifactuBundle\Tests\Unit\Helper\TranslationHelper;
 use Nowo\VerifactuBundle\Validator\AeatBusinessRulesValidator;
 use Nowo\VerifactuBundle\Validator\SpanishTaxIdValidator;
@@ -248,6 +249,39 @@ final class BillingRecordProcessorTest extends TestCase
 
         self::assertSame([], $result['errors']);
         self::assertSame('Mutated description', $result['record']->operationDescription);
+    }
+
+    public function testProcessReturnsXsdValidationErrors(): void
+    {
+        $translator = $this->createMock(TranslatorInterface::class);
+        $translator->method('trans')->willReturnCallback(TranslationHelper::createTranslatorCallback());
+
+        $processor = new BillingRecordProcessor(
+            new AeatBusinessRulesValidator(new SpanishTaxIdValidator(), $translator),
+            new HashChainGenerator(),
+            new BillingRecordXmlGenerator(),
+            new FailingXsdValidator($translator, true),
+            $this->repository,
+            new NullAeatSubmissionClient(),
+            new EventDispatcher(),
+            ['nif' => '89890001K', 'name' => 'Test Issuer'],
+            [
+                'manufacturer_nif'  => '89890001K',
+                'manufacturer_name' => 'Nowo.tech',
+                'name'              => 'VerifactuBundle',
+                'id'                => '01',
+                'version'           => '1.0.0',
+            ],
+            ['number' => '001'],
+            'verifactu',
+            false,
+            null,
+        );
+
+        $result = $processor->process($this->createValidRecord('FAC-2026-205'));
+
+        self::assertSame(['XSD broken'], $result['errors']);
+        self::assertNotNull($result['record']->xml);
     }
 
     private function createValidRecord(string $seriesNumber): BillingRecord

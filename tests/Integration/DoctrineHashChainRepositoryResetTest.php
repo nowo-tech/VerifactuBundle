@@ -53,6 +53,8 @@ final class DoctrineHashChainRepositoryResetTest extends KernelTestCase
         /** @var EntityManagerInterface $entityManager */
         $entityManager = self::getContainer()->get(EntityManagerInterface::class);
         $schemaTool    = new SchemaTool($entityManager);
-        $schemaTool->createSchema($entityManager->getMetadataFactory()->getAllMetadata());
+        $metadata      = $entityManager->getMetadataFactory()->getAllMetadata();
+        $schemaTool->dropSchema($metadata);
+        $schemaTool->createSchema($metadata);
     }
 }

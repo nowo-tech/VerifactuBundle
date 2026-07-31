@@ -40,6 +40,18 @@ Before tagging a release, confirm:
 | **Logging** | Logs do not print certificate passwords, private keys, or full SOAP payloads with PII unnecessarily. |
 | **Cryptography** | Certificates from secure config; never hardcoded. |
 | **Permissions / exposure** | AEAT submission routes and CLI commands documented; production roles configured. |
-| **Limits / DoS** | SOAP `timeout` configured; avoid unbounded XML processing on untrusted input. |
+| **Limits / DoS** | SOAP `timeout` configured; hierarchy AEAT op &lt; PHP &lt; Caddy write (see DEMO-FRANKENPHP); avoid unbounded XML processing on untrusted input. |
+| **AI security audit (REQ-SEC-004)** | Pass recorded in monorepo `BUNDLES_SECURITY_ANALYSIS.md`. |
 
 Record confirmation in the release PR or tag notes.
+
+## AI security audit (REQ-SEC-004)
+
+| Field | Value |
+|-------|--------|
+| Date | 2026-07-30 |
+| Method | Cursor / Nowo static AI security review (diff + baseline AEAT/mTLS / certs / hash / XAdES / Twig) |
+| Grade | **Pass (good)** |
+| Overall risk | **Medium** (host-owned certificates + AEAT network; unchanged by this remediation) |
+| Open Critical / High / Medium | None |
+| Notes | Certs via env only; mTLS to official AEAT endpoints; SOAP timeout hierarchy in demos; hash chain storage host-owned |

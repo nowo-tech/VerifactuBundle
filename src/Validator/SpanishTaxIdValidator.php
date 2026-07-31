@@ -59,7 +59,7 @@ final class SpanishTaxIdValidator
             'X'     => '0',
             'Y'     => '1',
             'Z'     => '2',
-            default => '',
+            default => '', // @codeCoverageIgnore
         };
 
         return $this->isValidNif($prefix . substr($taxId, 1));

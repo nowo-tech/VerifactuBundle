@@ -92,7 +92,7 @@ final class XadesBillingRecordSignerTest extends TestCase
         $signer->sign('not-xml');
     }
 
-    public function testSignThrowsWhenXmlHasNoRootElement(): void
+    public function testSignThrowsWhenXmlIsEmptyDocument(): void
     {
         $signer = new XadesBillingRecordSigner(
             new CertificateLoader(),
@@ -102,6 +102,7 @@ final class XadesBillingRecordSignerTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Unable to load billing record XML');
+        // libxml rejects declaration-only / comment-only payloads before documentElement is set
         $signer->sign('<?xml version="1.0"?><!-- empty -->');
     }
 }

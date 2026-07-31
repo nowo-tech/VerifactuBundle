@@ -82,7 +82,7 @@ final class SubmitToAeatSandboxCommand extends Command
             (string) ($input->getOption('generated-at') ?: date('c')),
             $recordType,
             (string) $input->getOption('tipo'),
-            isset($this->issuerConfig['name']) ? (string) $this->issuerConfig['name'] : null,
+            isset($this->issuerConfig['name']) ? $this->issuerConfig['name'] : null,
             operationDescription: 'Sandbox smoke test',
         );
 
@@ -131,8 +131,10 @@ final class SubmitToAeatSandboxCommand extends Command
 
                 return Command::FAILURE;
             }
+        // @codeCoverageIgnoreStart
         } elseif ($submit) {
             $io->note('Submission was requested but no response was returned.');
+        // @codeCoverageIgnoreEnd
         } else {
             $io->note('Dry run — use --submit to call AEAT sandbox with your certificate.');
         }

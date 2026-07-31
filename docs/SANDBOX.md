@@ -2,6 +2,15 @@
 
 Use this guide to validate the bundle against the **real AEAT sandbox** with your test certificate.
 
+## Table of contents
+
+- [Prerequisites](#prerequisites)
+- [Configuration](#configuration)
+- [CLI smoke test](#cli-smoke-test)
+- [Demo web UI](#demo-web-ui)
+- [Troubleshooting](#troubleshooting)
+- [Anulación in sandbox](#anulación-in-sandbox)
+
 ## Prerequisites
 
 1. AEAT test certificate (`.p12` / `.pfx`) with password

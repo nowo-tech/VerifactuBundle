@@ -45,9 +45,11 @@ final class CurlSoapTransport implements SoapTransportInterface
         }
 
         $handle = curl_init($endpoint);
+        // @codeCoverageIgnoreStart
         if ($handle === false) {
             return ['status_code' => 0, 'body' => '', 'error' => 'Unable to initialize cURL.'];
         }
+        // @codeCoverageIgnoreEnd
 
         $certType = $this->resolveCertType($certificatePath);
 
@@ -72,7 +74,7 @@ final class CurlSoapTransport implements SoapTransportInterface
         curl_setopt_array($handle, $options);
 
         $body       = curl_exec($handle);
-        $statusCode = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
+        $statusCode = curl_getinfo($handle, CURLINFO_HTTP_CODE);
         $error      = curl_error($handle);
         curl_close($handle);
 

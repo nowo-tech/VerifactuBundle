@@ -1,12 +1,27 @@
 {
 	skip_install_trust
+	# Timeout stack (must stay aligned with nowo_verifactu.aeat.timeout):
+	#   AEAT SOAP timeout  <  PHP max_execution_time  <  Caddy write timeout
+	# Default aeat.timeout = 30s → PHP 45s → write 60s.
+	servers {
+		timeouts {
+			read_body 60s
+			read_header 30s
+			write 60s
+			idle 5m
+		}
+	}
+	frankenphp {
+		php_ini max_execution_time 45
+		php_ini max_input_time 45
+		max_wait_time 30s
+	}
 }
 
 :80 {
 	root * /app/public
 	encode zstd br gzip
-	# No worker: one PHP process per request (reliable for demos/CI; Symfony index.php works as-is)
 	php_server {
-		try_files {path} /index.php
+		worker /app/public/index.php 2
 	}
 }

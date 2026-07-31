@@ -53,6 +53,30 @@ final class CurlSoapTransportTest extends TestCase
         self::assertArrayHasKey('error', $result);
     }
 
+    /**
+     * REQ-RUNTIME-001: short CURLOPT_TIMEOUT must surface as transport error (not hang).
+     */
+    public function testSendFailsFastWhenTimeoutIsVeryShort(): void
+    {
+        $certPath = dirname(__DIR__, 2) . '/Fixtures/certs/test.p12';
+        $started  = microtime(true);
+
+        // Non-routable TEST-NET address — connect should hit CURLOPT_CONNECTTIMEOUT.
+        $result = $this->transport->send(
+            'https://192.0.2.1/soap',
+            'submit',
+            '<xml/>',
+            $certPath,
+            'test',
+            1,
+        );
+
+        $elapsed = microtime(true) - $started;
+
+        self::assertArrayHasKey('error', $result);
+        self::assertLessThan(8.0, $elapsed, 'Transport must fail within a few seconds when timeout=1');
+    }
+
     public function testSendUsesPemCertificateTypeForPemExtension(): void
     {
         $pemPath = sys_get_temp_dir() . '/verifactu-transport-' . uniqid('', true) . '.pem';

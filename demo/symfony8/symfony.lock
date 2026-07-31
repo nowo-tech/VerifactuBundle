@@ -1,9 +1,35 @@
 {
+    "doctrine/deprecations": {
+        "version": "1.1",
+        "recipe": {
+            "repo": "github.com/symfony/recipes",
+            "branch": "main",
+            "version": "1.0",
+            "ref": "fdd756167454623e21f1d769c5b814b243782a67"
+        }
+    },
+    "doctrine/doctrine-bundle": {
+        "version": "3.3",
+        "recipe": {
+            "repo": "github.com/symfony/recipes",
+            "branch": "main",
+            "version": "3.0",
+            "ref": "d39a3bd844edfe90c20ae520b804a3bf4f82b4ad"
+        },
+        "files": [
+            "config/packages/doctrine.yaml",
+            "src/Entity/.gitignore",
+            "src/Repository/.gitignore"
+        ]
+    },
     "nowo-tech/sepa-payment-bundle": {
         "version": "v0.0.4"
     },
     "nowo-tech/twig-inspector-bundle": {
         "version": "v1.0.3"
+    },
+    "nowo-tech/verifactu-bundle": {
+        "version": "dev-main"
     },
     "phpunit/phpunit": {
         "version": "11.5",

@@ -59,4 +59,20 @@ final class AeatEndpointResolverTest extends TestCase
             $this->resolver->resolve('no_verifactu', 'sandbox', 'personal'),
         );
     }
+
+    public function testResolveNoVerifactuSandboxSeal(): void
+    {
+        self::assertSame(
+            'https://prewww10.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/RequerimientoSOAP',
+            $this->resolver->resolve('no_verifactu', 'sandbox', 'seal'),
+        );
+    }
+
+    public function testResolveVerifactuProductionSeal(): void
+    {
+        self::assertSame(
+            'https://www10.agenciatributaria.gob.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP',
+            $this->resolver->resolve('verifactu', 'production', 'seal'),
+        );
+    }
 }

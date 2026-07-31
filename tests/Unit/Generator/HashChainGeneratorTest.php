@@ -118,6 +118,22 @@ final class HashChainGeneratorTest extends TestCase
         self::assertStringContainsString('CuotaTotal=&ImporteTotal=', $this->generator->buildInputString($record));
     }
 
+    public function testBuildInputStringKeepsNonNumericAmountsUntouched(): void
+    {
+        $record = new BillingRecord(
+            RecordType::Alta,
+            '89890001K',
+            'FAC-001',
+            '09-07-2026',
+            'F1',
+            'N/A',
+            'pending',
+            '2026-07-09T16:00:00+02:00',
+        );
+
+        self::assertStringContainsString('CuotaTotal=N/A&ImporteTotal=pending', $this->generator->buildInputString($record));
+    }
+
     private function createAltaRecord(): BillingRecord
     {
         return new BillingRecord(

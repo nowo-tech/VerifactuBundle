@@ -104,7 +104,7 @@ final class BillingRecordProcessor
         }
 
         if ($this->shouldSign()) {
-            if ($this->recordSigner === null) {
+            if (!$this->recordSigner instanceof BillingRecordSignerInterface) {
                 return ['record' => $record, 'errors' => ['XAdES signing is required but no signer service is configured.']];
             }
 

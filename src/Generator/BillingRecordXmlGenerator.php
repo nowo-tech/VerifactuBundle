@@ -41,7 +41,7 @@ final class BillingRecordXmlGenerator
         ?HashChainState $previousState = null,
     ): string {
         if ($record->recordType === RecordType::Anulacion) {
-            return $this->generateAnulacion($record, $issuerConfig, $softwareConfig, $installationConfig, $previousState);
+            return $this->generateAnulacion($record, $softwareConfig, $installationConfig, $previousState);
         }
 
         return $this->generateAlta($record, $issuerConfig, $softwareConfig, $installationConfig, $previousState);
@@ -62,7 +62,7 @@ final class BillingRecordXmlGenerator
         $hash        = $record->hash ?? '';
         $ns          = self::NS_SUMINISTRO;
         $issuerName  = (string) ($record->issuerName ?? $issuerConfig['name'] ?? '');
-        $description = (string) ($record->operationDescription ?? 'Factura emitida');
+        $description = $record->operationDescription ?? 'Factura emitida';
         $taxBase     = $this->calculateTaxBase($record->totalAmount, $record->totalTaxAmount);
         $taxRate     = $this->resolveTaxRate($record, $taxBase);
 
@@ -83,24 +83,21 @@ final class BillingRecordXmlGenerator
         $xml .= '  </Desglose>' . "\n";
         $xml .= '  <CuotaTotal>' . $this->escape($record->totalTaxAmount) . '</CuotaTotal>' . "\n";
         $xml .= '  <ImporteTotal>' . $this->escape($record->totalAmount) . '</ImporteTotal>' . "\n";
-        $xml .= $this->renderEncadenamiento($record, $previousState);
-        $xml .= $this->renderSistemaInformatico($softwareConfig, $installationConfig, $record);
+        $xml .= $this->renderEncadenamiento($previousState);
+        $xml .= $this->renderSistemaInformatico($softwareConfig, $installationConfig);
         $xml .= '  <FechaHoraHusoGenRegistro>' . $this->escape($record->generatedAt) . '</FechaHoraHusoGenRegistro>' . "\n";
         $xml .= '  <TipoHuella>01</TipoHuella>' . "\n";
         $xml .= '  <Huella>' . $this->escape($hash) . '</Huella>' . "\n";
-        $xml .= '</RegistroAlta>';
 
-        return $xml;
+        return $xml . '</RegistroAlta>';
     }
 
     /**
-     * @param array<string, mixed> $issuerConfig
      * @param array<string, mixed> $softwareConfig
      * @param array<string, mixed> $installationConfig
      */
     private function generateAnulacion(
         BillingRecord $record,
-        array $issuerConfig,
         array $softwareConfig,
         array $installationConfig,
         ?HashChainState $previousState,
@@ -111,14 +108,13 @@ final class BillingRecordXmlGenerator
         $xml .= '<RegistroAnulacion xmlns="' . self::NS_SUMINISTRO . '">' . "\n";
         $xml .= '  <IDVersion>1.0</IDVersion>' . "\n";
         $xml .= $this->renderIdFacturaAnulada($record);
-        $xml .= $this->renderEncadenamiento($record, $previousState);
-        $xml .= $this->renderSistemaInformatico($softwareConfig, $installationConfig, $record);
+        $xml .= $this->renderEncadenamiento($previousState);
+        $xml .= $this->renderSistemaInformatico($softwareConfig, $installationConfig);
         $xml .= '  <FechaHoraHusoGenRegistro>' . $this->escape($record->generatedAt) . '</FechaHoraHusoGenRegistro>' . "\n";
         $xml .= '  <TipoHuella>01</TipoHuella>' . "\n";
         $xml .= '  <Huella>' . $this->escape($hash) . '</Huella>' . "\n";
-        $xml .= '</RegistroAnulacion>';
 
-        return $xml;
+        return $xml . '</RegistroAnulacion>';
     }
 
     private function renderIdFacturaAnulada(BillingRecord $record): string
@@ -127,9 +123,8 @@ final class BillingRecordXmlGenerator
         $xml .= '    <IDEmisorFacturaAnulada>' . $this->escape($record->issuerNif) . '</IDEmisorFacturaAnulada>' . "\n";
         $xml .= '    <NumSerieFacturaAnulada>' . $this->escape($record->invoiceSeriesNumber) . '</NumSerieFacturaAnulada>' . "\n";
         $xml .= '    <FechaExpedicionFacturaAnulada>' . $this->escape($record->issueDate) . '</FechaExpedicionFacturaAnulada>' . "\n";
-        $xml .= '  </IDFactura>' . "\n";
 
-        return $xml;
+        return $xml . ('  </IDFactura>' . "\n");
     }
 
     private function renderIdFactura(BillingRecord $record): string
@@ -138,16 +133,15 @@ final class BillingRecordXmlGenerator
         $xml .= '    <IDEmisorFactura>' . $this->escape($record->issuerNif) . '</IDEmisorFactura>' . "\n";
         $xml .= '    <NumSerieFactura>' . $this->escape($record->invoiceSeriesNumber) . '</NumSerieFactura>' . "\n";
         $xml .= '    <FechaExpedicionFactura>' . $this->escape($record->issueDate) . '</FechaExpedicionFactura>' . "\n";
-        $xml .= '  </IDFactura>' . "\n";
 
-        return $xml;
+        return $xml . ('  </IDFactura>' . "\n");
     }
 
-    private function renderEncadenamiento(BillingRecord $record, ?HashChainState $previousState): string
+    private function renderEncadenamiento(?HashChainState $previousState): string
     {
         $xml = '  <Encadenamiento>' . "\n";
 
-        if ($previousState !== null && $previousState->hash !== '') {
+        if ($previousState instanceof HashChainState && $previousState->hash !== '') {
             $xml .= '    <RegistroAnterior>' . "\n";
             $xml .= '      <IDEmisorFactura>' . $this->escape($previousState->issuerNif) . '</IDEmisorFactura>' . "\n";
             $xml .= '      <NumSerieFactura>' . $this->escape($previousState->invoiceSeriesNumber) . '</NumSerieFactura>' . "\n";
@@ -158,16 +152,14 @@ final class BillingRecordXmlGenerator
             $xml .= '    <PrimerRegistro>S</PrimerRegistro>' . "\n";
         }
 
-        $xml .= '  </Encadenamiento>' . "\n";
-
-        return $xml;
+        return $xml . ('  </Encadenamiento>' . "\n");
     }
 
     /**
      * @param array<string, mixed> $softwareConfig
      * @param array<string, mixed> $installationConfig
      */
-    private function renderSistemaInformatico(array $softwareConfig, array $installationConfig, BillingRecord $record): string
+    private function renderSistemaInformatico(array $softwareConfig, array $installationConfig): string
     {
         $soloVerifactu = ($softwareConfig['solo_verifactu'] ?? true) ? 'S' : 'N';
 
@@ -181,9 +173,8 @@ final class BillingRecordXmlGenerator
         $xml .= '    <TipoUsoPosibleSoloVerifactu>' . $soloVerifactu . '</TipoUsoPosibleSoloVerifactu>' . "\n";
         $xml .= '    <TipoUsoPosibleMultiOT>N</TipoUsoPosibleMultiOT>' . "\n";
         $xml .= '    <IndicadorMultiplesOT>N</IndicadorMultiplesOT>' . "\n";
-        $xml .= '  </SistemaInformatico>' . "\n";
 
-        return $xml;
+        return $xml . ('  </SistemaInformatico>' . "\n");
     }
 
     private function calculateTaxBase(string $totalAmount, string $totalTaxAmount): string

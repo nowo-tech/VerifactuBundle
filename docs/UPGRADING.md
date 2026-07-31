@@ -6,6 +6,7 @@ For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Table of contents
 
+- [Upgrading to 1.0.1](#upgrading-to-101)
 - [Upgrading to 1.0.0](#upgrading-to-100)
   - [First stable release](#first-stable-release)
   - [Requirements](#requirements)
@@ -15,6 +16,25 @@ For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
   - [Migration steps](#migration-steps)
 - [General upgrade notes](#general-upgrade-notes)
 - [Getting help](#getting-help)
+
+## Upgrading to 1.0.1
+
+**Compliance and hardening release.** No breaking public API or config schema changes.
+
+```bash
+composer require nowo-tech/verifactu-bundle:^1.0.1
+```
+
+### Integrators
+
+- No application code changes required for typical DI consumers.
+- Default `nowo_verifactu.aeat.timeout` remains **30** seconds (`CURLOPT_TIMEOUT` / `CURLOPT_CONNECTTIMEOUT`).
+- Under FrankenPHP, keep **AEAT SOAP timeout &lt; PHP `max_execution_time` &lt; Caddy `servers.timeouts.write`**. Demo defaults: **30 / 45 / 60**. See [DEMO-FRANKENPHP.md](DEMO-FRANKENPHP.md#timeouts-aeat-soap--frankenphp) and [CONFIGURATION.md](CONFIGURATION.md#aeat-soap-timeout-req-runtime-001).
+
+### Bundle contributors
+
+- Run `make setup-hooks` once per clone (REQ-GIT-001).
+- `make release-check` now requires **100%** PHP line coverage and open-PR / git-hygiene gates.
 
 ## Upgrading to 1.0.0
 

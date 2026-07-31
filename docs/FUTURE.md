@@ -2,6 +2,14 @@
 
 Roadmap ideas for the Verifactu Bundle. Items marked ✅ are already in **1.0.0**.
 
+## Table of contents
+
+- [Priority: High](#priority-high)
+- [Priority: Medium](#priority-medium)
+- [Priority: Low](#priority-low)
+- [Documentation / DX](#documentation-dx)
+- [Getting help](#getting-help)
+
 ## Priority: High
 
 1. ✅ SHA-256 hash chain (Alta / Anulación) per AEAT field order

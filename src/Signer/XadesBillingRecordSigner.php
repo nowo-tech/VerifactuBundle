@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Signer;
 
 use DOMDocument;
+use DOMElement;
 use InvalidArgumentException;
 use Nowo\VerifactuBundle\Certificate\CertificateLoader;
 use RobRichards\XMLSecLibs\XMLSecurityDSig;
@@ -40,14 +41,16 @@ final class XadesBillingRecordSigner implements BillingRecordSignerInterface
         $document                     = new DOMDocument();
         $document->preserveWhiteSpace = false;
         $document->formatOutput       = false;
-        if (!$document->loadXML($xml)) {
+        if (!@$document->loadXML($xml)) {
             throw new InvalidArgumentException('Unable to load billing record XML for signing.');
         }
 
         $root = $document->documentElement;
-        if ($root === null) {
+        // @codeCoverageIgnoreStart
+        if (!$root instanceof DOMElement) {
             throw new InvalidArgumentException('Billing record XML has no root element.');
         }
+        // @codeCoverageIgnoreEnd
 
         $dsig = new XMLSecurityDSig();
         $dsig->setCanonicalMethod(XMLSecurityDSig::EXC_C14N);

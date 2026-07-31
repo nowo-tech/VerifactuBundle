@@ -16,15 +16,21 @@ Maintainers: follow this process before creating a new tag.
    make release-check
    ```
 
-   This runs composer-sync, cs-fix, cs-check, rector-dry, phpstan, test-coverage, and demo verification (if present).
+   This runs `check-no-cursor-coauthor`, composer-sync, cs-fix, cs-check, rector-dry, phpstan, test-coverage (100%), and demo verification (if present).
 
-3. **Commit** any pending changes. Ensure the tree is clean and pushed:
+3. **Commit** any pending changes. Ensure the tree is clean and pushed.
+
+   Re-run **after** the release commit and **before** `git push`:
 
    ```bash
+   make check-no-cursor-coauthor
+   make setup-hooks   # once per clone (REQ-GIT-001)
    git status
    git add -A && git commit -m "Release vX.Y.Z"   # if needed
    git push origin main
    ```
+
+   See [GITHUB_CI.md](GITHUB_CI.md) if the git-hygiene job fails.
 
 ## Tag and publish
 
@@ -43,15 +49,15 @@ Maintainers: follow this process before creating a new tag.
 6. **Packagist**  
    If the package is on [Packagist](https://packagist.org/packages/nowo-tech/verifactu-bundle), the new tag is picked up automatically (or use “Update” there).
 
-## Current release (v1.0.0)
+## Current release (v1.0.1)
 
 > **Renew this block on each release:** update the version in the heading, the bullets under “Documentation reviewed”, and the example commands below.
 
 ### Documentation reviewed for this release
 
-- **CHANGELOG.md**: `[1.0.0] - 2026-07-18` — initial stable release (hash chain, XML, QR, AEAT SOAP, XAdES, CLI, Twig, i18n, demo).
-- **UPGRADING.md**: “Upgrading to 1.0.0” with requirements, install, minimal config, and no breaking changes.
-- **COMMANDS.md** / **DEMOS.md**: Aligned with Veri*Factu commands and `demo/symfony8` only (removed leftover SEPA template docs).
+- **CHANGELOG.md**: `[1.0.1] - 2026-07-31` — REQ-GIT-001, 100% coverage gate, RUNTIME-001 timeout hierarchy, SEPA leftover fixes, demo FrankenPHP timeouts.
+- **UPGRADING.md**: “Upgrading to 1.0.1” — no API breaks; FrankenPHP timeout guidance when raising `aeat.timeout`.
+- **CONFIGURATION.md** / **DEMO-FRANKENPHP.md** / **SECURITY.md** / **GITHUB_CI.md**: Aligned with the above.
 
 ### Example commands for this version
 
@@ -59,21 +65,22 @@ Maintainers: follow this process before creating a new tag.
 make release-check
 git status
 git add -A
-git commit -m "Release 1.0.0: initial Veri*Factu Symfony bundle"
-git tag -a v1.0.0 -m "Release v1.0.0"
+git -c core.hooksPath=.githooks commit -m "release: v1.0.1 (REQ compliance, 100% coverage, AEAT timeout hierarchy)"
+make check-no-cursor-coauthor
+git tag -a v1.0.1 -m "Release v1.0.1"
 git push origin main
-git push origin v1.0.0
+git push origin v1.0.1
 ```
 
 ### Verify on GitHub
 
-- *Actions* → “Create Release” workflow green; *Releases* → **v1.0.0** with body aligned to `docs/CHANGELOG.md` (`## [1.0.0]`).
+- *Actions* → “Create Release” workflow green; *Releases* → **v1.0.1** with body aligned to `docs/CHANGELOG.md` (`## [1.0.1]`).
 
 ### If the tag already exists but the release failed
 
-- Re-run the “Create GitHub Release” job from *Actions* (Re-run jobs), or delete the tag on the remote and recreate and push `v1.0.0`.
+- Re-run the “Create GitHub Release” job from *Actions* (Re-run jobs), or delete the tag on the remote and recreate and push `v1.0.1`.
 
 ### Notes
 
 - `.github/workflows/release.yml` runs when pushing a tag `v*`.
-- The release body is generated from the `## [1.0.0]` section of `docs/CHANGELOG.md`.
+- The release body is generated from the `## [1.0.1]` section of `docs/CHANGELOG.md`.

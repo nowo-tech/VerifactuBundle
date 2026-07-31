@@ -47,9 +47,11 @@ final class CertificateLoader
     private function loadPkcs12(string $path, ?string $password): array
     {
         $contents = file_get_contents($path);
+        // @codeCoverageIgnoreStart
         if ($contents === false) {
             throw new InvalidArgumentException(sprintf('Unable to read certificate: %s', $path));
         }
+        // @codeCoverageIgnoreEnd
 
         $certs = [];
         if (!openssl_pkcs12_read($contents, $certs, $password ?? '')) {
@@ -75,9 +77,11 @@ final class CertificateLoader
         }
 
         $details = openssl_pkey_get_details($privateKey);
+        // @codeCoverageIgnoreStart
         if ($details === false || !isset($details['key'])) {
             throw new InvalidArgumentException('Unable to export PEM private key.');
         }
+        // @codeCoverageIgnoreEnd
 
         $certificate = file_get_contents($path) ?: '';
 

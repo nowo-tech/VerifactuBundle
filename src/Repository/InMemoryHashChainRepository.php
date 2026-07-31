@@ -51,8 +51,8 @@ final class InMemoryHashChainRepository implements HashChainRepositoryInterface
         $existing = $this->getLastState($issuerNif);
         $this->storeLastState(new HashChainState(
             $issuerNif,
-            $existing !== null ? $existing->invoiceSeriesNumber : '',
-            $existing !== null ? $existing->issueDate : '',
+            $existing instanceof HashChainState ? $existing->invoiceSeriesNumber : '',
+            $existing instanceof HashChainState ? $existing->issueDate : '',
             $hash,
         ));
     }

@@ -10,7 +10,7 @@ Security fixes are applied to the current major version line. Please upgrade to 
 
 ## Reporting a Vulnerability
 
-We take the security of **SepaPaymentBundle** seriously. If you believe you have found a security vulnerability, please report it privately.
+We take the security of **VerifactuBundle** seriously. If you believe you have found a security vulnerability, please report it privately.
 
 ### How to Report
 

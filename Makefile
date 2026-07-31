@@ -1,7 +1,7 @@
 # Makefile for Verifactu Bundle
 # Simplifies Docker commands for development
 
-.PHONY: help up down build shell install test test-coverage coverage-php-percent cs-check cs-fix qa clean assets ensure-up rector rector-dry phpstan release-check release-check-demos composer-sync update validate validate-translations
+.PHONY: help up down build shell install test test-coverage coverage-php-percent coverage-check test-coverage-100 cs-check cs-fix qa clean assets ensure-up rector rector-dry phpstan release-check release-check-demos composer-sync update validate validate-translations setup-hooks check-no-cursor-coauthor strip-cursor-coauthor-from-history check-open-prs
 
 # Default target
 help:
@@ -24,12 +24,14 @@ help:
 	@echo "  rector-dry      Run Rector in dry-run mode"
 	@echo "  phpstan         Run PHPStan static analysis"
 	@echo "  qa              Run all QA checks (cs-check + test)"
-	@echo "  release-check   Pre-release: composer-sync, cs-fix, cs-check, rector-dry, phpstan, test-coverage, demo healthchecks"
+	@echo "  release-check   Pre-release: git hygiene, composer-sync, QA, demos"
 	@echo "  composer-sync   Validate composer.json and align composer.lock"
 	@echo "  clean           Remove vendor and cache"
 	@echo "  update          Update composer.lock (composer update)"
 	@echo "  validate-translations  Validate translation YAML syntax and key parity"
 	@echo "  update-deps            Update Composer deps in bundle and demos (REQ-MAKE-008)"
+	@echo "  setup-hooks            Install .githooks (REQ-GIT-001 / REQ-MAKE-006)"
+	@echo "  check-no-cursor-coauthor  Fail if Cursor co-author trailers in history"
 	@echo "Demos:"
 	@echo "  (use make -C demo or make -C demo/symfonyX)"
 	@echo ""
@@ -76,6 +78,11 @@ test-coverage: ensure-up
 	docker-compose exec php composer test-coverage | tee coverage-php.txt
 	./.scripts/php-coverage-percent.sh coverage-php.txt
 
+coverage-check: ensure-up
+	docker-compose exec -T php php .scripts/coverage-check-100.php
+
+test-coverage-100: test-coverage coverage-check
+
 # Check code style
 cs-check: ensure-up
 	docker-compose exec -T php composer cs-check
@@ -113,11 +120,29 @@ validate: ensure-up
 qa: ensure-up
 	docker-compose exec -T php composer qa
 
-# Pre-release: composer-sync, cs-fix, cs-check, rector-dry, phpstan, test-coverage, demo healthchecks
-release-check: ensure-up composer-sync cs-fix cs-check rector-dry phpstan test-coverage release-check-demos
+# Pre-release: git hygiene, composer-sync, cs-fix, cs-check, rector-dry, phpstan, test-coverage, demos
+release-check: check-no-cursor-coauthor check-open-prs ensure-up composer-sync cs-fix cs-check rector-dry phpstan test-coverage-100 release-check-demos
 
 release-check-demos:
 	@$(MAKE) -C demo release-check
+
+check-no-cursor-coauthor:
+	@chmod +x .scripts/check-no-cursor-coauthor.sh
+	@./.scripts/check-no-cursor-coauthor.sh HEAD
+
+check-open-prs:
+	@chmod +x .scripts/check-open-prs.sh
+	@bash .scripts/check-open-prs.sh
+
+strip-cursor-coauthor-from-history:
+	@chmod +x .scripts/strip-cursor-coauthor-from-history.sh
+	@./.scripts/strip-cursor-coauthor-from-history.sh main
+
+setup-hooks:
+	@chmod +x .githooks/commit-msg .githooks/pre-commit 2>/dev/null || true
+	@chmod +x .scripts/check-no-cursor-coauthor.sh .scripts/strip-cursor-coauthor-from-history.sh 2>/dev/null || true
+	@git config core.hooksPath .githooks
+	@echo "✅ Git hooks installed (.githooks — includes commit-msg for REQ-GIT-001)."
 
 # No frontend assets in this bundle
 assets:
@@ -140,4 +165,5 @@ validate-translations: ensure-up
 COMPOSE := docker-compose
 SERVICE_PHP := php
 BUNDLE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-include $(BUNDLE_ROOT)/../.scripts/Makefile.update-deps.mk
+# Optional: monorepo helper absent on standalone GitHub Actions checkout (REQ-MAKE-009).
+-include $(BUNDLE_ROOT)/../.scripts/Makefile.update-deps.mk
