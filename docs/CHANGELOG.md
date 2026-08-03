@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-03
+
+### Changed
+
+- CI: `actions/stale` v11 (Dependabot).
+- Rector: skip `ParamAndEnvAttributeRector` so `#[Autowire('%param%')]` stays compatible with Symfony `^6.0`.
+- PHP-CS-Fixer: exclude auto-generated `config/reference.php` dumps (Symfony regenerates without `declare(strict_types=1)`).
+- Refresh Symfony `reference.php` fixtures (demo + test kernels) and demo `composer.lock`.
+- Dev lock refresh on the reference matrix (`composer-sync`).
+
+### Upgrade
+
+```bash
+composer require nowo-tech/verifactu-bundle:^1.0.3
+```
+
+No public API or config schema changes.
+
 ## [1.0.2] - 2026-07-31
 
 ### Fixed
@@ -77,7 +95,8 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/nowo-tech/VerifactuBundle/releases/tag/v1.0.0

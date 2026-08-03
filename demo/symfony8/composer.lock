@@ -1111,7 +1111,7 @@
             "dist": {
                 "type": "path",
                 "url": "/var/verifactu-bundle",
-                "reference": "c133cbaf947cffacecd58d07c214eeb3b70c5b08"
+                "reference": "9a8b8799b9d9d0c521e974174288ebc6414d2e45"
             },
             "require": {
                 "endroid/qr-code": "^5.0 || ^6.0",
@@ -1132,7 +1132,7 @@
                 "twig/twig": "^3.0"
             },
             "require-dev": {
-                "doctrine/doctrine-bundle": "^2.11",
+                "doctrine/doctrine-bundle": "^2.18 || ^3.2",
                 "doctrine/orm": "^2.14 || ^3.0",
                 "friendsofphp/php-cs-fixer": "^3.0",
                 "phpstan/extension-installer": "^1.4",
@@ -1143,7 +1143,7 @@
                 "rector/rector": "^2.0",
                 "symfony/framework-bundle": "^6.0 || ^7.0 || ^8.0",
                 "symfony/twig-bundle": "^6.0 || ^7.0 || ^8.0",
-                "symfony/var-exporter": "^7.4"
+                "symfony/var-exporter": "^6.4 || ^7.0 || ^8.0"
             },
             "suggest": {
                 "doctrine/doctrine-bundle": "Required for Doctrine entity mapping",
