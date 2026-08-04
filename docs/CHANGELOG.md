@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-08-04
+
+### Fixed
+
+- XAdES signing: pass the `DOMDocument` to `XMLSecurityDSig::addReference()` (library PHPDoc / runtime expect the document, which signs `documentElement`).
+- PHPStan: drop baseline file; keep `ignoreErrors: []` in `phpstan.neon.dist`.
+
+### Changed
+
+- Demo `.env.example` tweak.
+
+[1.0.4]: https://github.com/nowo-tech/VerifactuBundle/releases/tag/v1.0.4
+
 ## [1.0.3] - 2026-08-03
 
 ### Changed

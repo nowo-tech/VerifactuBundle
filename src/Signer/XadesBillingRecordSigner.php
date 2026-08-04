@@ -54,8 +54,9 @@ final class XadesBillingRecordSigner implements BillingRecordSignerInterface
 
         $dsig = new XMLSecurityDSig();
         $dsig->setCanonicalMethod(XMLSecurityDSig::EXC_C14N);
+        // XMLSecurityDSig::addReference PHPDoc expects DOMDocument (library signs documentElement).
         $dsig->addReference(
-            $root,
+            $document,
             XMLSecurityDSig::SHA256,
             ['http://www.w3.org/2000/09/xmldsig#enveloped-signature'],
             ['force_uri' => true],

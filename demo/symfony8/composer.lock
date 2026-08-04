@@ -1111,7 +1111,7 @@
             "dist": {
                 "type": "path",
                 "url": "/var/verifactu-bundle",
-                "reference": "9a8b8799b9d9d0c521e974174288ebc6414d2e45"
+                "reference": "811ab5fe736acdd5d77562873bc078114305ea4c"
             },
             "require": {
                 "endroid/qr-code": "^5.0 || ^6.0",
