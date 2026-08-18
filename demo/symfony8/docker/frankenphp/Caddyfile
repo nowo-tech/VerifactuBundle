@@ -1,4 +1,5 @@
 {
+	order mercure after encode
 	skip_install_trust
 	# Timeout stack (must stay aligned with nowo_verifactu.aeat.timeout):
 	#   AEAT SOAP timeout  <  PHP max_execution_time  <  Caddy write timeout
@@ -21,7 +22,15 @@
 :80 {
 	root * /app/public
 	encode zstd br gzip
+	mercure {
+		anonymous
+	}
+
 	php_server {
-		worker /app/public/index.php 2
+		hot_reload
+		worker {
+			file /app/public/index.php
+			watch
+		}
 	}
 }

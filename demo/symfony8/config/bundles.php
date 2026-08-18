@@ -9,5 +9,7 @@ return [
     Nowo\VerifactuBundle\NowoVerifactuBundle::class           => ['all' => true],
     Symfony\Bundle\DebugBundle\DebugBundle::class             => ['dev' => true],
     Symfony\Bundle\WebProfilerBundle\WebProfilerBundle::class => ['dev' => true, 'test' => true],
+    Nowo\HotReloadBundle\NowoHotReloadBundle::class           => ['dev' => true, 'test' => true],
     Nowo\TwigInspectorBundle\NowoTwigInspectorBundle::class   => ['dev' => true, 'test' => true],
+    Twig\Extra\TwigExtraBundle\TwigExtraBundle::class => ['all' => true],
 ];

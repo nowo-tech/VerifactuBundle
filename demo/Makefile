@@ -39,6 +39,13 @@ release-check:
 	@$(MAKE) -C symfony8 release-check
 	@echo "✅ Demo passed release-check."
 
+up: up-symfony8
+
+down: down-symfony8
+
+update-bundle:
+	@$(MAKE) -C symfony8 update-bundle
+
 clean:
 	rm -rf symfony8/vendor symfony8/var symfony8/.phpunit.cache symfony8/coverage symfony8/coverage.xml
 
