@@ -11,5 +11,5 @@ return [
     Symfony\Bundle\WebProfilerBundle\WebProfilerBundle::class => ['dev' => true, 'test' => true],
     Nowo\HotReloadBundle\NowoHotReloadBundle::class           => ['dev' => true, 'test' => true],
     Nowo\TwigInspectorBundle\NowoTwigInspectorBundle::class   => ['dev' => true, 'test' => true],
-    Twig\Extra\TwigExtraBundle\TwigExtraBundle::class => ['all' => true],
+    Twig\Extra\TwigExtraBundle\TwigExtraBundle::class         => ['all' => true],
 ];

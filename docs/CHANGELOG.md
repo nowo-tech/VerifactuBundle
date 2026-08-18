@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-08-18
+
+### Changed
+
+- **Demos:** pin `nowo-tech/hot-reload-bundle` to `^1.4` with FrankenPHP Mercure/`hot_reload` (`dev`/`test` only).
+
+[1.0.5]: https://github.com/nowo-tech/VerifactuBundle/releases/tag/v1.0.5
+
 ## [1.0.4] - 2026-08-04
 
 ### Fixed
@@ -108,7 +116,7 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.5...HEAD
 [1.0.3]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.0...v1.0.1
