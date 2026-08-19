@@ -85,6 +85,9 @@ jobs:
           composer require symfony/config:^${{ matrix.symfony }} symfony/dependency-injection:^${{ matrix.symfony }} symfony/http-kernel:^${{ matrix.symfony }} symfony/console:^${{ matrix.symfony }} --no-interaction --no-update
           # Full update so lock pins (e.g. endroid/qr-code, doctrine-bundle) can resolve per PHP/Symfony matrix.
           composer update --with-all-dependencies --no-interaction --prefer-dist --no-progress
+      - name: Composer audit (Critical/High)
+        run: composer audit --locked
+
 
       - name: Run tests
         run: |
