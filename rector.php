@@ -16,6 +16,7 @@ declare(strict_types=1);
 use Rector\Config\RectorConfig;
 use Rector\Symfony\Symfony63\Rector\Class_\ParamAndEnvAttributeRector;
 use Rector\Symfony\Symfony73\Rector\Class_\CommandHelpToAttributeRector;
+use Rector\Symfony\Symfony73\Rector\Class_\GetFiltersAndFunctionsToAsTwigAttributeRector;
 use Rector\Symfony\Symfony73\Rector\Class_\GetFunctionsToAsTwigFunctionAttributeRector;
 use Rector\ValueObject\PhpVersion;
 
@@ -38,6 +39,7 @@ return RectorConfig::configure()
         CommandHelpToAttributeRector::class,
         // Keep AbstractExtension + getFunctions(): AsTwigFunction needs Twig 3.9+ / SF 7.3+; tag twig.extension still used.
         GetFunctionsToAsTwigFunctionAttributeRector::class,
+        GetFiltersAndFunctionsToAsTwigAttributeRector::class,
         // Keep #[Autowire('%param%')]: Autowire(param: …) needs Symfony 6.1+; bundle supports ^6.0.
         ParamAndEnvAttributeRector::class,
     ]);
