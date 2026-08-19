@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-08-19
+
+### Security
+
+- **CI:** run `composer audit --locked` after dependency install (REQ-SEC / P3).
+
+### Fixed
+
+- **CI:** skip `GetFiltersAndFunctionsToAsTwigAttributeRector` in `rector.php` (conflicts with project Rector config).
+
 ## [1.0.5] - 2026-08-18
 
 ### Changed

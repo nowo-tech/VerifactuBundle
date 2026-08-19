@@ -20,6 +20,14 @@ For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
 - [General upgrade notes](#general-upgrade-notes)
 - [Getting help](#getting-help)
 
+## Upgrading to 1.0.6
+
+No application upgrade steps.
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
 ## Upgrading to 1.0.5
 
 **Demos only.** Pin Hot Reload Bundle to `^1.4` (FrankenPHP Mercure/`hot_reload`, `dev`/`test`). No public API or config schema changes.
