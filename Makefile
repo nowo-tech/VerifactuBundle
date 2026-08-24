@@ -38,87 +38,87 @@ help:
 
 # Rebuild Docker image (no cache)
 build:
-	docker-compose build --no-cache
+	$(COMPOSE) build --no-cache
 
 # Build and start container
 up:
-	docker-compose build
-	docker-compose up -d
+	$(COMPOSE) build
+	$(COMPOSE) up -d
 	@echo "Installing dependencies..."
-	docker-compose exec php composer install --no-interaction
+	$(COMPOSE) exec php composer install --no-interaction
 	@echo "✅ Container ready!"
 
 # Stop container
 down:
-	docker-compose down
+	$(COMPOSE) down
 
 # Ensure root container is running (start if not). Used by cs-fix, cs-check, qa, install, test, test-coverage.
 ensure-up:
-	@if ! docker-compose exec -T php true 2>/dev/null; then \
+	@if ! $(COMPOSE) exec -T php true 2>/dev/null; then \
 		echo "Starting container (root docker-compose)..."; \
-		docker-compose up -d; \
+		$(COMPOSE) up -d; \
 		sleep 3; \
-		docker-compose exec -T php composer install --no-interaction; \
+		$(COMPOSE) exec -T php composer install --no-interaction; \
 	fi
 
 # Open shell in container
 shell:
-	docker-compose exec php sh
+	$(COMPOSE) exec php sh
 
 # Install dependencies
 install: ensure-up
-	docker-compose exec -T php composer install
+	$(COMPOSE) exec -T php composer install
 
 # Run tests (no -T so TTY is allocated and PHPUnit can show colors in console)
 test: ensure-up
-	docker-compose exec php composer test
+	$(COMPOSE) exec php composer test
 
 # Run tests with coverage (no -T so coverage is shown in console with colors)
 test-coverage: ensure-up
-	docker-compose exec php composer test-coverage | tee coverage-php.txt
+	$(COMPOSE) exec php composer test-coverage | tee coverage-php.txt
 	./.scripts/php-coverage-percent.sh coverage-php.txt
 
 coverage-check: ensure-up
-	docker-compose exec -T php php .scripts/coverage-check-100.php
+	$(COMPOSE) exec -T php php .scripts/coverage-check-100.php
 
 test-coverage-100: test-coverage coverage-check
 
 # Check code style
 cs-check: ensure-up
-	docker-compose exec -T php composer cs-check
+	$(COMPOSE) exec -T php composer cs-check
 
 # Fix code style
 cs-fix: ensure-up
-	docker-compose exec -T php composer cs-fix
+	$(COMPOSE) exec -T php composer cs-fix
 
 # Run Rector (apply refactoring)
 rector: ensure-up
-	docker-compose exec -T php composer rector
+	$(COMPOSE) exec -T php composer rector
 
 # Run Rector in dry-run mode
 rector-dry: ensure-up
-	docker-compose exec -T php composer rector-dry
+	$(COMPOSE) exec -T php composer rector-dry
 
 # Run PHPStan static analysis
 phpstan: ensure-up
-	docker-compose exec -T php composer phpstan
+	$(COMPOSE) exec -T php composer phpstan
 
 # Validate composer.json and verify composer.lock matches (does not rewrite the lock file)
 composer-sync: ensure-up
-	docker-compose exec -T php composer validate --strict
-	docker-compose exec -T php composer install --dry-run --no-interaction
+	$(COMPOSE) exec -T php composer validate --strict
+	$(COMPOSE) exec -T php composer install --dry-run --no-interaction
 
 # Update composer.lock
 update: ensure-up
-	docker-compose exec -T php composer update --no-interaction
+	$(COMPOSE) exec -T php composer update --no-interaction
 
 # Validate composer.json
 validate: ensure-up
-	docker-compose exec -T php composer validate --strict
+	$(COMPOSE) exec -T php composer validate --strict
 
 # Run all QA
 qa: ensure-up
-	docker-compose exec -T php composer qa
+	$(COMPOSE) exec -T php composer qa
 
 # Pre-release: git hygiene, composer-sync, cs-fix, cs-check, rector-dry, phpstan, test-coverage, demos
 release-check: check-no-cursor-coauthor check-open-prs ensure-up composer-sync cs-fix cs-check rector-dry phpstan test-coverage-100 release-check-demos
@@ -159,10 +159,10 @@ clean:
 
 # Validate bundle translation YAML files and key parity
 validate-translations: ensure-up
-	docker-compose exec -T php php .scripts/validate-translations.php
+	$(COMPOSE) exec -T php php .scripts/validate-translations.php
 
 # REQ-MAKE-008: update-deps (REQ-MAKE-008)
-COMPOSE := docker-compose
+COMPOSE ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 SERVICE_PHP := php
 BUNDLE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 # Optional: monorepo helper absent on standalone GitHub Actions checkout (REQ-MAKE-009).
