@@ -1,3 +1,7 @@
+includes:
+    - vendor/nowo-tech/phpstan-frankenphp/ruleset-classic.neon
+    - vendor/nowo-tech/phpstan-frankenphp/ruleset-worker.neon
+
 # PHPStan configuration for VerifactuBundle
 # Compatible with PHP 8.1+ and Symfony 6.x / 7.x / 8.x
 # phpstan/extension-installer auto-includes phpstan-symfony and phpstan-phpunit
