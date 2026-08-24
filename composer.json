@@ -33,7 +33,7 @@
         }
     ],
     "require": {
-        "php": ">=8.1 <8.6",
+        "php": ">=8.2 <8.6",
         "ext-curl": "*",
         "ext-dom": "*",
         "ext-libxml": "*",
@@ -53,8 +53,8 @@
     "require-dev": {
         "doctrine/doctrine-bundle": "^2.18 || ^3.2",
         "doctrine/orm": "^2.14 || ^3.0",
-        "symfony/var-exporter": "^6.4 || ^7.0 || ^8.0",
         "friendsofphp/php-cs-fixer": "^3.0",
+        "nowo-tech/phpstan-frankenphp": "^1.0",
         "phpstan/extension-installer": "^1.4",
         "phpstan/phpstan": "^2.0",
         "phpstan/phpstan-phpunit": "^2.0",
@@ -62,7 +62,8 @@
         "phpunit/phpunit": "^10.0",
         "rector/rector": "^2.0",
         "symfony/framework-bundle": "^6.0 || ^7.0 || ^8.0",
-        "symfony/twig-bundle": "^6.0 || ^7.0 || ^8.0"
+        "symfony/twig-bundle": "^6.0 || ^7.0 || ^8.0",
+        "symfony/var-exporter": "^6.4 || ^7.0 || ^8.0"
     },
     "autoload": {
         "psr-4": {
@@ -88,7 +89,10 @@
     "minimum-stability": "stable",
     "prefer-stable": true,
     "archive": {
-        "exclude": ["/demo", "/.cursor"]
+        "exclude": [
+            "/demo",
+            "/.cursor"
+        ]
     },
     "scripts": {
         "test": "phpunit",
