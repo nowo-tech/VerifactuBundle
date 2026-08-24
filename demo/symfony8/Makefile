@@ -23,73 +23,73 @@ help:
 
 up:
 	@if [ ! -f .env ]; then cp .env.example .env 2>/dev/null || true; fi
-	docker-compose up -d
+	$(COMPOSE) up -d
 	@echo "Waiting for container to be ready..."
 	@sleep 5
 	@echo "Installing dependencies..."
-	@docker-compose exec -T -e COMPOSER_MEMORY_LIMIT=-1 php composer install --no-interaction
+	@$(COMPOSE) exec -T -e COMPOSER_MEMORY_LIMIT=-1 php composer install --no-interaction
 	@$(MAKE) link-bundle
 	@$(MAKE) db-setup
 	@PORT=$$(grep "^PORT=" .env 2>/dev/null | cut -d= -f2 | tr -d '\r'); \
 	[ -z "$$PORT" ] && PORT=$$(grep "^PORT=" .env.example 2>/dev/null | cut -d= -f2 | tr -d '\r'); \
 	echo "Demo started at: http://localhost:$$PORT"
 down:
-	docker-compose down
+	$(COMPOSE) down
 
 restart: ensure-up
-	docker-compose restart
+	$(COMPOSE) restart
 
 build:
-	docker-compose build --no-cache
+	$(COMPOSE) build --no-cache
 
 ensure-up:
-	@if ! docker-compose exec -T php true 2>/dev/null; then \
+	@if ! $(COMPOSE) exec -T php true 2>/dev/null; then \
 		echo "Starting container..."; \
 		if [ ! -f .env ]; then cp .env.example .env 2>/dev/null || true; fi; \
-		docker-compose up -d --build; \
+		$(COMPOSE) up -d --build; \
 		echo "Waiting for PHP service..."; \
 		i=0; \
 		while [ $$i -lt 60 ]; do \
-			if docker-compose exec -T php true 2>/dev/null; then break; fi; \
+			if $(COMPOSE) exec -T php true 2>/dev/null; then break; fi; \
 			i=$$((i+1)); \
 			sleep 2; \
 		done; \
-		docker-compose exec -T php true; \
+		$(COMPOSE) exec -T php true; \
 	fi
 
 install: ensure-up
-	@docker-compose exec -T php sh -c 'rm -rf vendor/nowo-tech/verifactu-bundle 2>/dev/null; composer update --no-interaction'
+	@$(COMPOSE) exec -T php sh -c 'rm -rf vendor/nowo-tech/verifactu-bundle 2>/dev/null; composer update --no-interaction'
 	@$(MAKE) link-bundle
 	@$(MAKE) db-setup
 
 db-setup: ensure-up
-	@docker-compose exec -T php sh -c 'mkdir -p var/data && php bin/console doctrine:schema:update --force --no-interaction'
+	@$(COMPOSE) exec -T php sh -c 'mkdir -p var/data && php bin/console doctrine:schema:update --force --no-interaction'
 
 link-bundle: ensure-up
-	@docker-compose exec -T php sh -c 'rm -rf vendor/nowo-tech/verifactu-bundle; ln -sf /var/verifactu-bundle vendor/nowo-tech/verifactu-bundle && composer run-script post-install-cmd'
+	@$(COMPOSE) exec -T php sh -c 'rm -rf vendor/nowo-tech/verifactu-bundle; ln -sf /var/verifactu-bundle vendor/nowo-tech/verifactu-bundle && composer run-script post-install-cmd'
 
 update: ensure-up
-	docker-compose exec -T php composer update --no-interaction
+	$(COMPOSE) exec -T php composer update --no-interaction
 
 update-bundle: ensure-up
-	docker-compose exec -T php composer update nowo-tech/verifactu-bundle --no-interaction
+	$(COMPOSE) exec -T php composer update nowo-tech/verifactu-bundle --no-interaction
 	@$(MAKE) link-bundle
-	docker-compose exec -T php php bin/console cache:clear --env=dev --no-warmup || true
-	docker-compose restart php
+	$(COMPOSE) exec -T php php bin/console cache:clear --env=dev --no-warmup || true
+	$(COMPOSE) restart php
 	@sleep 3
 	@echo "Bundle updated. Reload the page in the browser."
 
 shell: ensure-up
-	docker-compose exec php sh
+	$(COMPOSE) exec php sh
 
 logs:
-	docker-compose logs -f
+	$(COMPOSE) logs -f
 
 test: ensure-up
-	docker-compose exec php composer test
+	$(COMPOSE) exec php composer test
 
 test-coverage: ensure-up
-	docker-compose exec php composer test-coverage
+	$(COMPOSE) exec php composer test-coverage
 
 verify: ensure-up
 	@PORT=$$(grep '^PORT=' .env 2>/dev/null | cut -d= -f2 | tr -d '\r'); \
@@ -102,7 +102,7 @@ release-check: ensure-up update-bundle test verify
 	@echo "✅ Demo passed release-check."
 
 # REQ-MAKE-008: update-deps (REQ-MAKE-008)
-COMPOSE := docker-compose
+COMPOSE ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 SERVICE_PHP := php
 BUNDLE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 -include $(BUNDLE_ROOT)/../.scripts/Makefile.demo-update-deps.mk
