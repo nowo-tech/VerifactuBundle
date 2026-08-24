@@ -6,6 +6,8 @@ For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Table of contents
 
+
+- [From 1.0.6 to 1.0.7](#from-106-to-107)
 - [Upgrading to 1.0.5](#upgrading-to-105)
 - [Upgrading to 1.0.3](#upgrading-to-103)
 - [Upgrading to 1.0.2](#upgrading-to-102)

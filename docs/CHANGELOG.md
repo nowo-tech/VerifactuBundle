@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [1.0.7] - 2026-08-24
+
+### Changed
+
+- Raise minimum PHP to **8.2** and sync README badge (REQ-SF-001).
+- **Demos:** MySQL env policy in FrankenPHP stack (REQ-DEMO-011).
+- **Makefile:** detect Docker Compose V2 (REQ-MAKE-010).
+- **QA:** add `phpstan-frankenphp` extension (REQ-CS-005).
+- **README:** FrankenPHP-friendly worker-mode banner (REQ-DOCS-017).
+- **Docs:** PHP-FIG PSR evaluation (REQ-CS-007).
+- **Style:** PHP CS Fixer alignment.
+
+### Notes
+
+- **No API or configuration changes** for integrators unless noted above.
+
+[1.0.7]: https://github.com/nowo-tech/VerifactuBundle/releases/tag/v1.0.7
+
 ## [1.0.6] - 2026-08-19
 
 ### Security
