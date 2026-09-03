@@ -13,7 +13,7 @@ namespace Nowo\VerifactuBundle\Tests\Unit\Helper;
 final class TranslationHelper
 {
     /** @var array<string, string> */
-    private static array $translations = [
+    private const TRANSLATIONS = [
         'validation.issuer_nif.invalid'          => 'The issuer tax ID (NIF/CIF/NIE) is invalid.',
         'validation.invoice_series_number.empty' => 'The invoice series and number must not be empty.',
         'validation.issue_date.invalid'          => 'The issue date must use dd-mm-yyyy format.',
@@ -30,7 +30,7 @@ final class TranslationHelper
      */
     public static function translate(string $id, array $parameters = [], ?string $domain = null): string
     {
-        $message = self::$translations[$id] ?? $id;
+        $message = self::TRANSLATIONS[$id] ?? $id;
 
         foreach ($parameters as $key => $value) {
             $message           = str_replace($key, (string) $value, $message);
