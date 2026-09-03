@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-09-03
+
+### Fixed
+
+- **FrankenPHP / PHPStan:** replace mutable static `$translations` with immutable class constant in unit helper.
+- **CI:** drop obsolete PHP 8.1 from the test matrix (composer requires PHP ≥8.2).
+- **Demo:** install `pdo_mysql` in FrankenPHP image (demo was HTTP 500: could not find driver).
+
+### Changed
+
+- **Deps (dev):** refresh Composer lockfiles (`xmlseclibs` and demo lock alignment).
+
+[1.0.8]: https://github.com/nowo-tech/VerifactuBundle/releases/tag/v1.0.8
 
 ## [1.0.7] - 2026-08-24
 

@@ -3,7 +3,7 @@
 **Feature Branch**: `001-baseline`  
 **Created**: 2026-07-09  
 **Status**: Active  
-**Last updated**: 2026-07-09
+**Last updated**: 2026-09-03
 
 **Related docs**: [`docs/SPEC-DRIVEN-DEVELOPMENT.md`](../../docs/SPEC-DRIVEN-DEVELOPMENT.md), [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md), [`docs/USAGE.md`](../../docs/USAGE.md), [`docs/SANDBOX.md`](../../docs/SANDBOX.md), [`docs/INTEGRATION-NOWO.md`](../../docs/INTEGRATION-NOWO.md)  
 **Code inventory**: [`code-inventory.md`](code-inventory.md)
@@ -16,6 +16,11 @@
 **Configuration root**: `nowo_verifactu`
 
 Symfony bundle for Spanish Veri*Factu (RD 1007/2023): SHA-256 hash chains, billing record XML (Alta/Anulación), XSD validation, XAdES signing, AEAT SOAP submission, QR codes, and Nowo ERP integration hooks.
+
+
+## Notes / release sync
+
+- **2026-09-03 (v1.0.8):** FrankenPHP/PHPStan static-state fix; CI matrix drops PHP 8.1; demo FrankenPHP image includes `pdo_mysql`.
 
 ---
 

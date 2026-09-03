@@ -9,7 +9,7 @@ RUN apk add --no-cache \
     bash
 
 # Install PHP extensions
-RUN install-php-extensions intl zip pdo_sqlite gd
+RUN install-php-extensions intl zip pdo_sqlite pdo_mysql gd
 
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer

@@ -6,6 +6,7 @@ For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Table of contents
 
+- [From 1.0.7 to 1.0.8](#from-107-to-108)
 
 - [From 1.0.6 to 1.0.7](#from-106-to-107)
 - [Upgrading to 1.0.5](#upgrading-to-105)
@@ -162,3 +163,12 @@ See [USAGE.md](USAGE.md) for API examples and [COMMANDS.md](COMMANDS.md) for CLI
 1. Check [CHANGELOG.md](CHANGELOG.md) and [USAGE.md](USAGE.md).
 2. Review [SECURITY.md](SECURITY.md) for certificate and submission guidance.
 3. Open an issue on [GitHub](https://github.com/nowo-tech/VerifactuBundle/issues).
+
+## From 1.0.7 to 1.0.8
+
+No application upgrade steps.
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+

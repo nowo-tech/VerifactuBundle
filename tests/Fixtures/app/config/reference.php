@@ -734,6 +734,7 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *         id?: scalar|Param|null,
  *         type?: scalar|Param|null,
  *         value?: mixed,
+ *         ...<string, mixed>
  *     }>,
  *     autoescape_service?: scalar|Param|null, // Default: null
  *     autoescape_service_method?: scalar|Param|null, // Default: null
