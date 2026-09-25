@@ -6,8 +6,8 @@ For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Table of contents
 
+- [From 1.0.8 to 1.0.9](#from-108-to-109)
 - [From 1.0.7 to 1.0.8](#from-107-to-108)
-
 - [From 1.0.6 to 1.0.7](#from-106-to-107)
 - [Upgrading to 1.0.5](#upgrading-to-105)
 - [Upgrading to 1.0.3](#upgrading-to-103)
@@ -22,6 +22,20 @@ For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
   - [Migration steps](#migration-steps)
 - [General upgrade notes](#general-upgrade-notes)
 - [Getting help](#getting-help)
+
+## From 1.0.8 to 1.0.9
+
+FrankenPHP worker mode hardening (kernel not reset between requests). Full audit: [FRANKENPHP-WORKER-AUDIT.md](FRANKENPHP-WORKER-AUDIT.md).
+
+- **`hash_chain.repository` is now honoured by `BillingRecordProcessor`:** the configured service id is aliased to `HashChainRepositoryInterface`. If you set this option and relied (unknowingly) on the in-memory storage, records now chain through your service.
+- **In-memory storage (`hash_chain.storage: memory`, default) is request-scoped.** It is cleared at the start of every main request and on `kernel.reset`. Classic PHP-FPM behaviour is unchanged; in FrankenPHP worker mode the chain no longer survives between requests (it used to fork per worker). With `kernel.debug: false` every store logs a warning. For a legally valid chain use `hash_chain.storage: doctrine` or a persistent `hash_chain.repository`.
+- **Doctrine storage** always reads the last hash from the database and detaches the `BillingRecordHashChain` entity after use: do not rely on it staying managed in your EntityManager.
+
+No public signature removed; `InMemoryHashChainRepository` gained optional constructor arguments (`?LoggerInterface $logger = null, bool $warnNotPersistent = false`) and a `clear()` method.
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
 
 ## Upgrading to 1.0.6
 

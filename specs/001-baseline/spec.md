@@ -3,9 +3,9 @@
 **Feature Branch**: `001-baseline`  
 **Created**: 2026-07-09  
 **Status**: Active  
-**Last updated**: 2026-09-03
+**Last updated**: 2026-09-25
 
-**Related docs**: [`docs/SPEC-DRIVEN-DEVELOPMENT.md`](../../docs/SPEC-DRIVEN-DEVELOPMENT.md), [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md), [`docs/USAGE.md`](../../docs/USAGE.md), [`docs/SANDBOX.md`](../../docs/SANDBOX.md), [`docs/INTEGRATION-NOWO.md`](../../docs/INTEGRATION-NOWO.md)  
+**Related docs**: [`docs/SPEC-DRIVEN-DEVELOPMENT.md`](../../docs/SPEC-DRIVEN-DEVELOPMENT.md), [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md), [`docs/USAGE.md`](../../docs/USAGE.md), [`docs/SANDBOX.md`](../../docs/SANDBOX.md), [`docs/INTEGRATION-NOWO.md`](../../docs/INTEGRATION-NOWO.md), [`docs/FRANKENPHP-WORKER-AUDIT.md`](../../docs/FRANKENPHP-WORKER-AUDIT.md)  
 **Code inventory**: [`code-inventory.md`](code-inventory.md)
 
 ---
@@ -20,6 +20,7 @@ Symfony bundle for Spanish Veri*Factu (RD 1007/2023): SHA-256 hash chains, billi
 
 ## Notes / release sync
 
+- **2026-09-25 (v1.0.9):** FrankenPHP worker mode with kernel not reset between requests (scenario B): request-scoped in-memory hash chain, Doctrine fresh reads + closed EntityManager recovery, XsdValidator libxml restore, `hash_chain.repository` aliases `HashChainRepositoryInterface`. See [`docs/FRANKENPHP-WORKER-AUDIT.md`](../../docs/FRANKENPHP-WORKER-AUDIT.md).
 - **2026-09-03 (v1.0.8):** FrankenPHP/PHPStan static-state fix; CI matrix drops PHP 8.1; demo FrankenPHP image includes `pdo_mysql`.
 
 ---
@@ -74,6 +75,13 @@ Symfony bundle for Spanish Veri*Factu (RD 1007/2023): SHA-256 hash chains, billi
 - **FR-HASH-002**: Hash MUST be uppercase SHA-256 hex (64 chars).
 - **FR-XML-001**: `BillingRecordXmlGenerator` MUST produce RegistroAlta/Anulacion XML with official field names.
 - **FR-XSD-001**: `XsdValidator` MUST validate against bundled AEAT XSD schemas.
+- **FR-XSD-002**: `XsdValidator` MUST restore the previous `libxml_use_internal_errors()` value after every validation (worker-safe).
+
+### FrankenPHP worker mode
+
+- **FR-WORKER-001**: Default in-memory hash-chain storage MUST be request-scoped (cleared on every main `kernel.request` and on `kernel.reset`) so workers without `services_resetter` never build per-worker chains.
+- **FR-WORKER-002**: `DoctrineHashChainRepository` MUST read the last state fresh from the database (not a stale identity map), detach managed entities after use, and reset a closed EntityManager before the next call.
+- **FR-WORKER-003**: When `hash_chain.repository` is set, the extension MUST alias both `nowo_verifactu.hash_chain_repository` and `HashChainRepositoryInterface` to that service.
 
 ### Validation & QR
 
@@ -106,10 +114,11 @@ Symfony bundle for Spanish Veri*Factu (RD 1007/2023): SHA-256 hash chains, billi
 
 ## Success Criteria
 
-- **SC-001**: **53/53** artifacts mapped in [`code-inventory.md`](code-inventory.md).
+- **SC-001**: **54/54** artifacts mapped in [`code-inventory.md`](code-inventory.md).
 - **SC-002**: AEAT example hash test vector passes in PHPUnit.
 - **SC-003**: PHPUnit + PHPStan pass in CI; coverage target ~100% (minimum 80% enforced in CI).
 - **SC-004**: XSD validation passes for generated Alta and Anulación XML in tests.
+- **SC-005**: Worker-mode integration tests pass without `services_resetter` (in-memory request scope + Doctrine fresh reads).
 
 ---
 

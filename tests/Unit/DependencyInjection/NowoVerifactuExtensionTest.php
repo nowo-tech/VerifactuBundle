@@ -8,6 +8,7 @@ use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
 use Nowo\VerifactuBundle\DependencyInjection\NowoVerifactuExtension;
+use Nowo\VerifactuBundle\EventSubscriber\WorkerStateResetSubscriber;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
@@ -90,6 +91,34 @@ final class NowoVerifactuExtensionTest extends TestCase
         ], $container);
 
         self::assertSame('app.custom_hash_chain', (string) $container->getAlias('nowo_verifactu.hash_chain_repository'));
+        self::assertSame('app.custom_hash_chain', (string) $container->getAlias(HashChainRepositoryInterface::class));
+    }
+
+    public function testInMemoryRepositoryIsResetBetweenRequestsAndWarnsOutsideDebug(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('kernel.debug', false);
+
+        (new NowoVerifactuExtension())->load([[]], $container);
+
+        $definition = $container->getDefinition(InMemoryHashChainRepository::class);
+        self::assertTrue($definition->getArgument('$warnNotPersistent'));
+        self::assertSame([['method' => 'clear']], $definition->getTag('kernel.reset'));
+        self::assertTrue($container->hasDefinition(WorkerStateResetSubscriber::class));
+    }
+
+    public function testInMemoryRepositoryDoesNotWarnInDebug(): void
+    {
+        foreach ([true, null] as $debug) {
+            $container = new ContainerBuilder();
+            if ($debug !== null) {
+                $container->setParameter('kernel.debug', $debug);
+            }
+
+            (new NowoVerifactuExtension())->load([[]], $container);
+
+            self::assertFalse($container->getDefinition(InMemoryHashChainRepository::class)->getArgument('$warnNotPersistent'));
+        }
     }
 
     public function testDoctrineHashChainRepositoryAliasWhenDoctrineStorageIsEnabled(): void

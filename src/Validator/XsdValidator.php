@@ -45,22 +45,28 @@ class XsdValidator
             return [];
         }
 
-        $dom = new DOMDocument();
-        libxml_use_internal_errors(true);
-        $loaded      = @$dom->loadXML($xml);
-        $parseErrors = libxml_get_errors();
-        libxml_clear_errors();
-        libxml_use_internal_errors(false);
+        $dom               = new DOMDocument();
+        $previousUseErrors = libxml_use_internal_errors(true);
+        try {
+            $loaded      = @$dom->loadXML($xml);
+            $parseErrors = libxml_get_errors();
+            libxml_clear_errors();
+        } finally {
+            libxml_use_internal_errors($previousUseErrors);
+        }
 
         if (!$loaded) {
             return [$this->formatLibxmlErrors('validation.xml.parse_failed', $parseErrors)];
         }
 
-        libxml_use_internal_errors(true);
-        $valid        = @$dom->schemaValidate($xsdPath);
-        $schemaErrors = libxml_get_errors();
-        libxml_clear_errors();
-        libxml_use_internal_errors(false);
+        $previousUseErrors = libxml_use_internal_errors(true);
+        try {
+            $valid        = @$dom->schemaValidate($xsdPath);
+            $schemaErrors = libxml_get_errors();
+            libxml_clear_errors();
+        } finally {
+            libxml_use_internal_errors($previousUseErrors);
+        }
 
         if ($valid) {
             return [];

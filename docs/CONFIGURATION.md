@@ -43,7 +43,9 @@ When `aeat.certificate_path` is set, the bundle auto-wires `SoapAeatSubmissionCl
 
 ### Hash chain persistence
 
-Set `hash_chain.storage: doctrine` and install `doctrine/orm` + `doctrine/doctrine-bundle`. The bundle registers the `BillingRecordHashChain` entity automatically.
+Set `hash_chain.storage: doctrine` and install `doctrine/orm` + `doctrine/doctrine-bundle`. The bundle registers the `BillingRecordHashChain` entity automatically. Alternatively set `hash_chain.repository` to your own `HashChainRepositoryInterface` service id (it is aliased to the interface).
+
+The default `memory` storage is **request-scoped** (cleared at the start of every main request, also in FrankenPHP worker mode without `services_resetter`): every request starts a new chain. It is meant for development and tests; with `kernel.debug: false` it logs a warning on every stored record. Full worker-mode notes: [FRANKENPHP-WORKER-AUDIT.md](FRANKENPHP-WORKER-AUDIT.md).
 
 ### XAdES signing (No-Veri*Factu)
 

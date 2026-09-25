@@ -2,9 +2,9 @@
 
 **Baseline spec**: [`spec.md`](spec.md)  
 **Package**: `nowo-tech/verifactu-bundle`  
-**Last audited**: 2026-07-09
+**Last audited**: 2026-09-25
 
-Every production artifact under `src/` is mapped below (53/53).
+Every production artifact under `src/` is mapped below (54/54).
 
 ## Bundle & DI
 
@@ -12,7 +12,7 @@ Every production artifact under `src/` is mapped below (53/53).
 | --- | --- | --- |
 | `NowoVerifactuBundle.php` | Bundle entry | FR-BUNDLE-001 |
 | `DependencyInjection/Configuration.php` | Config tree | FR-CFG-001 |
-| `DependencyInjection/NowoVerifactuExtension.php` | DI extension | FR-CFG-002 |
+| `DependencyInjection/NowoVerifactuExtension.php` | DI extension | FR-CFG-002, FR-WORKER-001, FR-WORKER-003 |
 | `Resources/config/services.yaml` | Service wiring | FR-CFG-002 |
 | `Resources/config/services_doctrine.yaml` | Doctrine repo wiring | FR-STORE-001 |
 
@@ -46,7 +46,7 @@ Every production artifact under `src/` is mapped below (53/53).
 | --- | --- | --- |
 | `Validator/AeatBusinessRulesValidator.php` | Business rules | FR-VAL-001 |
 | `Validator/SpanishTaxIdValidator.php` | NIF/NIE/CIF | FR-VAL-002 |
-| `Validator/XsdValidator.php` | AEAT XSD | FR-XSD-001 |
+| `Validator/XsdValidator.php` | AEAT XSD | FR-XSD-001, FR-XSD-002 |
 
 ## QR
 
@@ -80,8 +80,8 @@ Every production artifact under `src/` is mapped below (53/53).
 | Source file | Spec section | Requirement IDs |
 | --- | --- | --- |
 | `Repository/HashChainRepositoryInterface.php` | Hash chain contract | FR-PROC-001 |
-| `Repository/InMemoryHashChainRepository.php` | In-memory storage | FR-PROC-001 |
-| `Repository/DoctrineHashChainRepository.php` | Doctrine storage | FR-STORE-001 |
+| `Repository/InMemoryHashChainRepository.php` | In-memory storage | FR-PROC-001, FR-WORKER-001 |
+| `Repository/DoctrineHashChainRepository.php` | Doctrine storage | FR-STORE-001, FR-WORKER-002 |
 | `Entity/BillingRecordHashChain.php` | Doctrine entity | FR-STORE-001 |
 
 ## Processing & events
@@ -89,6 +89,7 @@ Every production artifact under `src/` is mapped below (53/53).
 | Source file | Spec section | Requirement IDs |
 | --- | --- | --- |
 | `Service/BillingRecordProcessor.php` | Orchestration | FR-PROC-001, FR-PROC-002 |
+| `EventSubscriber/WorkerStateResetSubscriber.php` | Worker request-scope reset | FR-WORKER-001 |
 | `Event/VerifactuEvents.php` | Event names | FR-PROC-002 |
 | `Event/BeforeBillingRecordGenerationEvent.php` | Before hook | FR-PROC-002 |
 | `Event/AfterBillingRecordGeneratedEvent.php` | After hook | FR-PROC-002 |
@@ -133,8 +134,8 @@ Every production artifact under `src/` is mapped below (53/53).
 
 | Category | Files | Mapped |
 | --- | ---: | ---: |
-| PHP classes | 39 | 39 |
+| PHP classes | 40 | 40 |
 | YAML config | 2 | 2 |
 | Translation locales | 7 | 7 |
 | XSD schemas | 5 | 5 |
-| **Total `src/` artifacts** | **53** | **53** |
+| **Total `src/` artifacts** | **54** | **54** |

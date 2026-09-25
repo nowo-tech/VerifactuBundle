@@ -1113,7 +1113,7 @@
             "dist": {
                 "type": "path",
                 "url": "/var/verifactu-bundle",
-                "reference": "09095c56908ce071568f9064964ff8549482345d"
+                "reference": "5416ed63c68815e4887999378fb59023c20b771f"
             },
             "require": {
                 "endroid/qr-code": "^5.0 || ^6.0",

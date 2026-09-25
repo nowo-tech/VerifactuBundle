@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-09-25
+
+### Fixed
+
+- **`hash_chain.repository`** now also aliases `HashChainRepositoryInterface` (previously only `nowo_verifactu.hash_chain_repository`, so `BillingRecordProcessor` kept using the in-memory storage).
+- **FrankenPHP worker mode (no kernel reset between requests):** see `docs/FRANKENPHP-WORKER-AUDIT.md`.
+  - `InMemoryHashChainRepository` is request-scoped: new `clear()` method, tagged `kernel.reset`, and called at the start of every main request by the new `EventSubscriber\WorkerStateResetSubscriber` (priority 4096). Workers no longer build per-worker hash chains. When `kernel.debug` is false it logs a warning on every store (the chain is not persistent).
+  - `DoctrineHashChainRepository` reads the last state fresh from the database (`Query::HINT_REFRESH`), detaches the entity after each read/write, deletes with a DQL `DELETE`, and resets a closed EntityManager when a flush/query fails before rethrowing.
+  - `XsdValidator` restores the previous `libxml_use_internal_errors()` value in `finally`.
+
+[1.0.9]: https://github.com/nowo-tech/VerifactuBundle/releases/tag/v1.0.9
+
 ## [1.0.8] - 2026-09-03
 
 ### Fixed

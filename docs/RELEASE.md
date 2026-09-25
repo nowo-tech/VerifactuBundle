@@ -49,32 +49,35 @@ Maintainers: follow this process before creating a new tag.
 6. **Packagist**  
    If the package is on [Packagist](https://packagist.org/packages/nowo-tech/verifactu-bundle), the new tag is picked up automatically (or use “Update” there).
 
-## Current release (v1.0.3)
+## Current release (v1.0.9)
 
 > **Renew this block on each release:** update the version in the heading, the bullets under “Documentation reviewed”, and the example commands below.
 
 ### Documentation reviewed for this release
 
-- **CHANGELOG.md**: `[1.0.3] - 2026-08-03` — `actions/stale` v11, Rector/CS Fixer hygiene for SF6 Autowire + `reference.php`, lock refresh.
-- **UPGRADING.md**: “Upgrading to 1.0.3” — no API breaks.
+- **CHANGELOG.md**: `[1.0.9] - 2026-09-25` — FrankenPHP worker mode (no kernel reset): request-scoped in-memory chain, Doctrine fresh reads / closed-EM recovery, XsdValidator libxml restore, `hash_chain.repository` interface alias.
+- **UPGRADING.md**: “From 1.0.8 to 1.0.9” — behaviour notes for worker mode and custom repository wiring.
+- **FRANKENPHP-WORKER-AUDIT.md**: scenario B viable; W-01–W-04 resolved, W-05 accepted.
+- **CONFIGURATION.md**, **README.md**, **specs/001-baseline**: aligned with worker-mode guarantees.
+
 ### Example commands for this version
 
 ```bash
 make release-check
 git status
 git add -A
-git -c core.hooksPath=.githooks commit -m "release: v1.0.3 (CI stale + lock hygiene)"
+git -c core.hooksPath=.githooks commit -m "release: v1.0.9 (FrankenPHP worker mode hardening)"
 make check-no-cursor-coauthor
-git tag -a v1.0.3 -m "Release v1.0.3"
+git tag -a v1.0.9 -m "Release v1.0.9"
 git push origin main
-git push origin v1.0.3
+git push origin v1.0.9
 ```
 
 ### Verify on GitHub
 
-- *Actions* → CI green; *Releases* → **v1.0.3** with body aligned to `docs/CHANGELOG.md` (`## [1.0.3]`).
+- *Actions* → CI green; *Releases* → **v1.0.9** with body aligned to `docs/CHANGELOG.md` (`## [1.0.9]`).
 
 ### Notes
 
 - `.github/workflows/release.yml` runs when pushing a tag `v*`.
-- The release body is generated from the `## [1.0.3]` section of `docs/CHANGELOG.md`.
+- The release body is generated from the `## [1.0.9]` section of `docs/CHANGELOG.md`.

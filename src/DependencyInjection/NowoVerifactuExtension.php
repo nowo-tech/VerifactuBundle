@@ -95,6 +95,7 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
     {
         if ($config['hash_chain']['repository'] !== null) {
             $container->setAlias('nowo_verifactu.hash_chain_repository', $config['hash_chain']['repository']);
+            $container->setAlias(HashChainRepositoryInterface::class, $config['hash_chain']['repository']);
 
             return;
         }
@@ -107,6 +108,8 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         }
 
         $container->setAlias('nowo_verifactu.hash_chain_repository', InMemoryHashChainRepository::class);
+        $container->getDefinition(InMemoryHashChainRepository::class)
+            ->setArgument('$warnNotPersistent', $container->hasParameter('kernel.debug') && $container->getParameter('kernel.debug') === false);
     }
 
     /**

@@ -8,7 +8,7 @@
 
 ![FrankenPHP Friendly Worker Mode](docs/images/frankenphp-friendly.png)
 
-This bundle is **FrankenPHP worker mode friendly**.
+This bundle is **FrankenPHP worker mode friendly**, including when the kernel is **not** reset between requests (`reset_kernel` / `services_resetter` off). See [docs/FRANKENPHP-WORKER-AUDIT.md](docs/FRANKENPHP-WORKER-AUDIT.md).
 
 ## Features
 
@@ -109,6 +109,7 @@ This bundle is **FrankenPHP worker mode friendly** when AEAT SOAP timeouts stay 
 - [AEAT sandbox testing](docs/SANDBOX.md)
 - [Nowo integration guide](docs/INTEGRATION-NOWO.md)
 - [FrankenPHP demo](docs/DEMO-FRANKENPHP.md)
+- [FrankenPHP worker mode audit](docs/FRANKENPHP-WORKER-AUDIT.md)
 
 ## Tests and coverage
 

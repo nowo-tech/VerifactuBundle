@@ -16,6 +16,12 @@ services:
     Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface:
         alias: Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository
 
+    Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository:
+        arguments:
+            $logger: '@?logger'
+        tags:
+            - { name: kernel.reset, method: clear }
+
     Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface:
         alias: Nowo\VerifactuBundle\Client\NullAeatSubmissionClient
 

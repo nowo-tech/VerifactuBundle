@@ -102,4 +102,23 @@ XML;
     {
         self::assertSame([], $this->validator->validate('<root/>', 'unknown_schema'));
     }
+
+    public function testLibxmlInternalErrorsModeIsRestored(): void
+    {
+        $original = libxml_use_internal_errors();
+
+        try {
+            foreach ([true, false] as $previous) {
+                libxml_use_internal_errors($previous);
+
+                self::assertCount(1, $this->validator->validate('<unclosed'));
+                self::assertSame($previous, libxml_use_internal_errors($previous));
+
+                self::assertCount(1, $this->validator->validate('<RegistroAlta/>', XsdValidator::SCHEMA_REGISTRO_ALTA));
+                self::assertSame($previous, libxml_use_internal_errors($previous));
+            }
+        } finally {
+            libxml_use_internal_errors($original);
+        }
+    }
 }
