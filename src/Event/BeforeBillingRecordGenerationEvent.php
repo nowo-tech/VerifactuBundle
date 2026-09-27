@@ -27,6 +27,7 @@ final class BeforeBillingRecordGenerationEvent extends Event
 
     public function setRecord(BillingRecord $record): void
     {
+        // @igor-ignore - Request-scoped Event DTO; not a shared worker service.
         $this->record = $record;
     }
 }

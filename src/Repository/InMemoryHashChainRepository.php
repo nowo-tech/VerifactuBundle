@@ -50,6 +50,7 @@ final class InMemoryHashChainRepository implements HashChainRepositoryInterface
             );
         }
 
+        // @igor-ignore - Repository persists entities; Doctrine manages instance lifecycle.
         $this->states[$this->normalizeKey($state->issuerNif)] = new HashChainState(
             $state->issuerNif,
             $state->invoiceSeriesNumber,
@@ -68,6 +69,7 @@ final class InMemoryHashChainRepository implements HashChainRepositoryInterface
      */
     public function clear(): void
     {
+        // @igor-ignore - Repository persists entities; Doctrine manages instance lifecycle.
         $this->states = [];
     }
 

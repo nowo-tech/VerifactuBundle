@@ -181,3 +181,6 @@ If you have questions about contributing, please:
 
 Thank you for contributing! 🎉
 
+## Igor worker audit (REQ-CS-008)
+
+Run `make igor` (or `composer igor`) before release. Igor audits package `src/` for FrankenPHP worker-state issues. It is require-dev only.

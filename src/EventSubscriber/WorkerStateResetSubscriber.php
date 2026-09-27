@@ -42,6 +42,7 @@ final class WorkerStateResetSubscriber implements EventSubscriberInterface
             return;
         }
 
+        // @igor-ignore - Event subscriber clears request/runtime bridges; not cross-request leak.
         $this->inMemoryHashChainRepository->clear();
     }
 }

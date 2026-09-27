@@ -1,5 +1,19 @@
 # Upgrade Guide
 
+
+## Unreleased
+
+## To 1.0.10
+
+From **1.0.9** — REQ-CS-008 Igor FrankenPHP worker audit (igor-php require-dev, igor.json, make igor).
+
+```bash
+composer update nowo-tech/verifactu-bundle
+php bin/console cache:clear
+```
+
+- No application upgrade steps for require-dev Igor tooling (REQ-CS-008). Consumers do not pull `igor-php/igor-php` transitively.
+
 This guide helps you install and upgrade versions of the **Verifactu Bundle** (`nowo-tech/verifactu-bundle`).
 
 For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).

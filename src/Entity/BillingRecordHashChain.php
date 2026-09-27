@@ -86,9 +86,13 @@ class BillingRecordHashChain
 
     public function update(string $invoiceSeriesNumber, string $issueDate, string $hash): void
     {
+        // @igor-ignore - Doctrine entity field; instance-scoped, not a shared service.
         $this->invoiceSeriesNumber = trim($invoiceSeriesNumber);
-        $this->issueDate           = trim($issueDate);
-        $this->hash                = strtoupper(trim($hash));
-        $this->updatedAt           = new DateTimeImmutable();
+        // @igor-ignore - Doctrine entity field; instance-scoped, not a shared service.
+        $this->issueDate = trim($issueDate);
+        // @igor-ignore - Doctrine entity field; instance-scoped, not a shared service.
+        $this->hash = strtoupper(trim($hash));
+        // @igor-ignore - Doctrine entity field; instance-scoped, not a shared service.
+        $this->updatedAt = new DateTimeImmutable();
     }
 }
