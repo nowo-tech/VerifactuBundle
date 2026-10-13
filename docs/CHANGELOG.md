@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-10-13
+
 ### Changed
 
 - Development: `composer.json` pins `config.platform.php` to 8.2.0 so the committed lock stays installable on the minimum PHP; CI overrides the platform per matrix cell.
+
+### Dependencies
+
+- `doctrine/orm` 3.7.4 → 3.7.5 (development lock; #12).
 
 ## [1.0.11] - 2026-10-09
 
@@ -193,7 +199,8 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.11...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.12...HEAD
+[1.0.12]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.11...v1.0.12
 [1.0.11]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.10...v1.0.11
 [1.0.3]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.1...v1.0.2
