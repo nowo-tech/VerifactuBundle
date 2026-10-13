@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
 ### Fixed
 
 - `TaxBreakdown::$taxType` is now emitted as `<Impuesto>` (first child of `DetalleDesglose`, as required by the AEAT `DetalleType` sequence) when it is not empty. Previously it was ignored, so IGIC (`03`), IPSI (`02`) and other (`05`) lines were sent without their tax type and AEAT assumed IVA. Generated XML with `Impuesto` is XSD-validated against the bundled `SuministroInformacion.xsd` in tests.
@@ -227,7 +229,8 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.12...v1.1.0
 [1.0.12]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.11...v1.0.12
 [1.0.11]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.10...v1.0.11
