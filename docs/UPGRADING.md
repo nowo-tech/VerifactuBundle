@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Symfony requirement raised to `^6.4 || ^7.0 || ^8.0`.** Symfony 6.0–6.3 were allowed but never tested in CI; upgrade to Symfony 6.4 LTS or later before updating the bundle.
 - **`<Impuesto>` is now emitted** for each `TaxBreakdown` whose `taxType` is not empty. `taxType` must be an AEAT `ImpuestoType` code: `01` (IVA), `02` (IPSI), `03` (IGIC) or `05` (Otros). Any other value (e.g. `'IVA'`) now makes the XML fail XSD validation. Pass `''` to omit the element (AEAT then assumes IVA).
 
 ## To 1.1.0

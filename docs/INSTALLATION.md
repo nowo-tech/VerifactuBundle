@@ -11,8 +11,8 @@
 
 ## Requirements
 
-- PHP >= 8.1, < 8.6
-- Symfony ^6.0 || ^7.0 || ^8.0
+- PHP >= 8.2, < 8.6
+- Symfony ^6.4 || ^7.0 || ^8.0
 - Composer 2
 
 ## Install via Composer
