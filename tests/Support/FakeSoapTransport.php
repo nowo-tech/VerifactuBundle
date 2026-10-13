@@ -17,6 +17,7 @@ final class FakeSoapTransport implements SoapTransportInterface
     public function __construct(
         private readonly string $body = '',
         private readonly ?string $error = null,
+        private readonly int $statusCode = 200,
     ) {
     }
 
@@ -26,6 +27,6 @@ final class FakeSoapTransport implements SoapTransportInterface
             return ['status_code' => 0, 'body' => '', 'error' => $this->error];
         }
 
-        return ['status_code' => 200, 'body' => $this->body];
+        return ['status_code' => $this->statusCode, 'body' => $this->body];
     }
 }

@@ -13,6 +13,7 @@ use Nowo\VerifactuBundle\Command\SubmitToAeatSandboxCommand;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
 use Nowo\VerifactuBundle\Integration\InvoiceToBillingRecordMapper;
+use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
@@ -98,6 +99,47 @@ final class SubmitToAeatSandboxCommandTest extends TestCase
         self::assertStringContainsString('AEAT rejected', $tester->getDisplay());
     }
 
+    public function testDryRunDoesNotAdvancePersistentHashChain(): void
+    {
+        $repository = new InMemoryHashChainRepository();
+        $realHead   = new HashChainState('89890001K', 'REAL-001', '01-07-2026', str_repeat('A', 64));
+        $repository->storeLastState($realHead);
+        $tester = $this->createTester(
+            $this->createProcessor(new NullAeatSubmissionClient(), repository: $repository),
+            certificatePath: '/tmp/cert.p12',
+        );
+
+        self::assertSame(0, $tester->execute([
+            '--fecha'        => '09-07-2026',
+            '--generated-at' => '2026-07-09T16:00:00+02:00',
+            '--submit'       => true,
+            '--dry-run'      => true,
+        ]));
+        self::assertEquals($realHead, $repository->getLastState('89890001K'));
+
+        self::assertSame(0, $tester->execute([
+            '--fecha'        => '09-07-2026',
+            '--generated-at' => '2026-07-09T16:00:00+02:00',
+        ]));
+        self::assertEquals($realHead, $repository->getLastState('89890001K'));
+    }
+
+    public function testSubmitAdvancesHashChain(): void
+    {
+        $repository = new InMemoryHashChainRepository();
+        $tester     = $this->createTester(
+            $this->createProcessor(new NullAeatSubmissionClient(), repository: $repository),
+            certificatePath: '/tmp/cert.p12',
+        );
+
+        self::assertSame(0, $tester->execute([
+            '--fecha'        => '09-07-2026',
+            '--generated-at' => '2026-07-09T16:00:00+02:00',
+            '--submit'       => true,
+        ]));
+        self::assertSame('SANDBOX-001', $repository->getLastState('89890001K')?->invoiceSeriesNumber);
+    }
+
     private function createTester(
         BillingRecordProcessor $processor,
         ?string $certificatePath = null,
@@ -118,6 +160,7 @@ final class SubmitToAeatSandboxCommandTest extends TestCase
         NullAeatSubmissionClient|SoapAeatSubmissionClient $submissionClient,
         string $mode = 'verifactu',
         ?XadesBillingRecordSigner $recordSigner = null,
+        ?InMemoryHashChainRepository $repository = null,
     ): BillingRecordProcessor {
         $translator = $this->createMock(TranslatorInterface::class);
         $translator->method('trans')->willReturnCallback(TranslationHelper::createTranslatorCallback());
@@ -127,7 +170,7 @@ final class SubmitToAeatSandboxCommandTest extends TestCase
             new HashChainGenerator(),
             new BillingRecordXmlGenerator(),
             new XsdValidator($translator, true),
-            new InMemoryHashChainRepository(),
+            $repository ?? new InMemoryHashChainRepository(),
             $submissionClient,
             new EventDispatcher(),
             ['nif' => '89890001K', 'name' => 'Test Issuer'],

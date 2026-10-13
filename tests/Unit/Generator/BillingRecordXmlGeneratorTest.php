@@ -199,6 +199,54 @@ final class BillingRecordXmlGeneratorTest extends TestCase
         self::assertStringContainsString('<TipoImpositivo>21.00</TipoImpositivo>', $xml);
     }
 
+    public function testGenerateAltaXmlEmitsOneDetalleDesglosePerTaxBreakdown(): void
+    {
+        $record = new BillingRecord(
+            RecordType::Alta,
+            '89890001K',
+            'FAC-2026-005',
+            '09-07-2026',
+            'F1',
+            '31.00',
+            '231.00',
+            '2026-07-09T18:00:00+02:00',
+            taxBreakdown: [
+                new \Nowo\VerifactuBundle\Model\TaxBreakdown('01', '21.00', '100.00', '21.00'),
+                new \Nowo\VerifactuBundle\Model\TaxBreakdown('01', '10.00', '100.00', '10.00'),
+            ],
+            hash: 'ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789',
+            issuerName: 'Demo Company SL',
+        );
+
+        $xml = $this->generator->generate(
+            $record,
+            ['name' => 'Demo Company SL'],
+            [
+                'manufacturer_name' => 'Nowo.tech',
+                'manufacturer_nif'  => '89890001K',
+                'name'              => 'VerifactuBundle',
+                'id'                => '01',
+                'version'           => '1.0.0',
+            ],
+            ['number' => '001'],
+        );
+
+        self::assertSame(2, substr_count($xml, '<DetalleDesglose>'));
+        self::assertStringContainsString(
+            '<TipoImpositivo>21.00</TipoImpositivo>' . "\n" . '      <BaseImponibleOimporteNoSujeto>100.00</BaseImponibleOimporteNoSujeto>' . "\n" . '      <CuotaRepercutida>21.00</CuotaRepercutida>',
+            $xml,
+        );
+        self::assertStringContainsString(
+            '<TipoImpositivo>10.00</TipoImpositivo>' . "\n" . '      <BaseImponibleOimporteNoSujeto>100.00</BaseImponibleOimporteNoSujeto>' . "\n" . '      <CuotaRepercutida>10.00</CuotaRepercutida>',
+            $xml,
+        );
+        self::assertStringContainsString('<CuotaTotal>31.00</CuotaTotal>', $xml);
+        self::assertStringNotContainsString('<BaseImponibleOimporteNoSujeto>200.00</BaseImponibleOimporteNoSujeto>', $xml);
+
+        $validator = new XsdValidator(new IdentityTranslator(), true);
+        self::assertSame([], $validator->validate($xml, XsdValidator::SCHEMA_REGISTRO_ALTA));
+    }
+
     public function testGenerateAltaXmlHandlesNonNumericAmounts(): void
     {
         $record = new BillingRecord(

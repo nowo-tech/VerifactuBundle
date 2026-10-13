@@ -21,7 +21,9 @@ We will acknowledge your report and work on a fix. We appreciate responsible dis
 - **Certificate handling:** PKCS#12/PEM files grant mTLS access to AEAT. Restrict file permissions (e.g. `0600`) and rotate certificates before expiry.
 - **Hash chain integrity:** The SHA-256 chain is append-only per issuer NIF. Protect `HashChainRepository` storage (Doctrine table or custom backend) from unauthorized modification.
 - **Input validation:** NIF/CIF/NIE, dates, amounts, and invoice types are validated before XML generation. Do not bypass `AeatBusinessRulesValidator` or XSD validation in production.
-- **XAdES signing:** Private keys are loaded in memory only during signing. Ensure OpenSSL and certificate stores are patched on the host.
+- **XAdES signing:** Private keys are loaded in memory only during signing. Ensure OpenSSL and certificate stores are patched on the host. **Known limitation:** `XadesBillingRecordSigner` emits a plain enveloped XML-DSig signature, not a full XAdES signature (no `QualifyingProperties` / `SignedProperties`), so No-Veri*Factu records signed by the bundle do not yet meet the AEAT XAdES requirement. Provide your own `BillingRecordSignerInterface` if you need XAdES-compliant signatures.
+- **Hash chain concurrency:** the chain head is read and written under a per-issuer lock when the repository implements `LockableHashChainRepositoryInterface` (the Doctrine repository uses `SELECT … FOR UPDATE` in a transaction). Custom repositories without a lock can fork the chain under concurrent requests.
+- **AEAT responses:** a submission is reported as successful only when the HTTP status is 2xx and the response contains `EstadoRegistro` = `Correcto`; missing status, `AceptadoConErrores`, `Incorrecto`, SOAP faults and non-2xx responses are failures.
 - **SOAP transport:** `CurlSoapTransport` sends billing records to official AEAT endpoints only. Verify endpoint URLs when switching between sandbox and production.
 - **Dependencies:** Run `composer audit` in projects that use this bundle to check for known vulnerabilities in dependencies.
 

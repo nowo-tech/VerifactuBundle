@@ -40,7 +40,7 @@ AEAT_CERT_PASSWORD=your-password
 
 ## CLI smoke test
 
-Dry run (no certificate required — validates XML + hash only):
+Dry run (no certificate required — validates XML + hash only; the record is chained onto the current head but the configured hash chain is **not** updated, also when `--dry-run` is combined with `--submit`):
 
 ```bash
 php bin/console nowo:verifactu:submit-sandbox \

@@ -8,6 +8,8 @@ use InvalidArgumentException;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
+use function sprintf;
+
 use const ENT_QUOTES;
 use const ENT_XML1;
 
@@ -65,11 +67,19 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
             ];
         }
 
-        $parsed = $this->parseResponse($response['body']);
+        $parsed     = $this->parseResponse($response['body']);
+        $statusCode = $response['status_code'];
+        $success    = $parsed['success'];
+        $errors     = $parsed['errors'];
+
+        if ($statusCode < 200 || $statusCode >= 300) {
+            $success  = false;
+            $errors[] = sprintf('AEAT returned HTTP status %d.', $statusCode);
+        }
 
         $result = [
-            'success'      => $parsed['success'],
-            'errors'       => $parsed['errors'],
+            'success'      => $success,
+            'errors'       => $errors,
             'endpoint'     => $endpoint,
             'status_code'  => $response['status_code'],
             'raw_response' => $response['body'],
@@ -101,16 +111,40 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
             ];
         }
 
-        preg_match('/<CSV[^>]*>(.*?)<\/CSV>/s', $body, $csvMatch);
-        preg_match('/<EstadoRegistro[^>]*>(.*?)<\/EstadoRegistro>/s', $body, $statusMatch);
+        // AEAT responses use namespace prefixes (e.g. <tikR:EstadoRegistro>); accept prefixed and unprefixed tags.
+        $csv         = $this->extractElement($body, 'CSV');
+        $status      = $this->extractElement($body, 'EstadoRegistro');
+        $description = $this->extractElement($body, 'DescripcionErrorRegistro');
 
-        $csv    = trim(strip_tags($csvMatch[1] ?? ''));
-        $status = trim(strip_tags($statusMatch[1] ?? 'Correcto'));
+        if ($status === null || $status === '') {
+            return [
+                'success'   => false,
+                'reference' => null,
+                'errors'    => ['AEAT response does not contain an EstadoRegistro status.'],
+            ];
+        }
+
+        $errors = [];
+        if ($status !== 'Correcto') {
+            $errors[] = $description !== null && $description !== ''
+                ? sprintf('AEAT registration status "%s": %s', $status, $description)
+                : sprintf('AEAT registration status "%s".', $status);
+        }
 
         return [
-            'success'   => !str_contains(strtolower($status), 'incorrecto') && !str_contains(strtolower($status), 'error'),
-            'reference' => $csv !== '' ? $csv : null,
-            'errors'    => [],
+            'success'   => $status === 'Correcto',
+            'reference' => $csv !== null && $csv !== '' ? $csv : null,
+            'errors'    => $errors,
         ];
+    }
+
+    private function extractElement(string $body, string $name): ?string
+    {
+        $pattern = '/<(?:[\w.-]+:)?' . $name . '(?:\s[^>]*)?>(.*?)<\/(?:[\w.-]+:)?' . $name . '>/s';
+        if (preg_match($pattern, $body, $matches) !== 1) {
+            return null;
+        }
+
+        return trim(html_entity_decode(strip_tags($matches[1]), ENT_QUOTES | ENT_XML1, 'UTF-8'));
     }
 }

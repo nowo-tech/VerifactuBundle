@@ -13,11 +13,13 @@ use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
 use Nowo\VerifactuBundle\Tests\Support\FailingXsdValidator;
+use Nowo\VerifactuBundle\Tests\Support\RecordingLockableHashChainRepository;
 use Nowo\VerifactuBundle\Tests\Unit\Helper\TranslationHelper;
 use Nowo\VerifactuBundle\Validator\AeatBusinessRulesValidator;
 use Nowo\VerifactuBundle\Validator\SpanishTaxIdValidator;
@@ -284,6 +286,40 @@ final class BillingRecordProcessorTest extends TestCase
         self::assertNotNull($result['record']->xml);
     }
 
+    public function testProcessWithoutPersistingLeavesHashChainUntouched(): void
+    {
+        $this->processor->process($this->createValidRecord('FAC-2026-300'));
+        $head = $this->repository->getLastState('89890001K');
+        self::assertNotNull($head);
+
+        $result = $this->processor->process($this->createValidRecord('FAC-2026-301'), persistChainState: false);
+
+        self::assertSame([], $result['errors']);
+        self::assertSame($head->hash, $result['record']->previousHash);
+        self::assertEquals($head, $this->repository->getLastState('89890001K'));
+    }
+
+    public function testProcessRunsChainReadAndWriteInsideRepositoryLock(): void
+    {
+        $repository = new RecordingLockableHashChainRepository();
+        $processor  = $this->createProcessor(repository: $repository);
+
+        $result = $processor->process($this->createValidRecord('FAC-2026-302'));
+
+        self::assertSame([], $result['errors']);
+        self::assertSame(['lock:89890001K', 'get', 'store', 'unlock:89890001K'], $repository->calls);
+    }
+
+    public function testProcessDoesNotLockWhenNotPersisting(): void
+    {
+        $repository = new RecordingLockableHashChainRepository();
+        $processor  = $this->createProcessor(repository: $repository);
+
+        $processor->process($this->createValidRecord('FAC-2026-303'), persistChainState: false);
+
+        self::assertSame(['get'], $repository->calls);
+    }
+
     private function createValidRecord(string $seriesNumber): BillingRecord
     {
         return new BillingRecord(
@@ -305,6 +341,7 @@ final class BillingRecordProcessorTest extends TestCase
         bool $signRecords = false,
         ?BillingRecordSignerInterface $recordSigner = null,
         ?EventDispatcher $eventDispatcher = null,
+        ?HashChainRepositoryInterface $repository = null,
     ): BillingRecordProcessor {
         $translator = $this->createMock(TranslatorInterface::class);
         $translator->method('trans')->willReturnCallback(TranslationHelper::createTranslatorCallback());
@@ -314,7 +351,7 @@ final class BillingRecordProcessorTest extends TestCase
             new HashChainGenerator(),
             new BillingRecordXmlGenerator(),
             new XsdValidator($translator, true),
-            $this->repository,
+            $repository ?? $this->repository,
             new NullAeatSubmissionClient(),
             $eventDispatcher ?? new EventDispatcher(),
             ['nif' => '89890001K', 'name' => 'Test Issuer'],

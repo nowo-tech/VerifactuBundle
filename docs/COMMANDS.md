@@ -33,7 +33,7 @@ Recomputes the AEAT fingerprint from the given fields and compares it to `--hash
 
 ## Submit to AEAT sandbox
 
-Dry run (no certificate required — validates XML + hash only):
+Dry run (no certificate required — validates XML + hash only; the record is chained onto the current head but the configured hash chain is **not** updated, also when `--dry-run` is combined with `--submit`):
 
 ```bash
 php bin/console nowo:verifactu:submit-sandbox \

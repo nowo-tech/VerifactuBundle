@@ -13,6 +13,7 @@ use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Tests\Kernel\DoctrineTestKernel;
+use RuntimeException;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
 /**
@@ -145,6 +146,53 @@ final class DoctrineHashChainRepositoryIntegrationTest extends KernelTestCase
         self::assertNotNull($state);
         self::assertSame('', $state->invoiceSeriesNumber);
         self::assertSame('', $state->issueDate);
+    }
+
+    public function testWithChainLockCommitsTheChainUpdate(): void
+    {
+        /** @var DoctrineHashChainRepository $repository */
+        $repository = self::getContainer()->get(DoctrineHashChainRepository::class);
+        $repository->storeLastState(new HashChainState('89890001K', 'FAC-2026-020', '09-07-2026', str_repeat('A', 64)));
+
+        $result = $repository->withChainLock('89890001k', static function () use ($repository): string {
+            $repository->storeLastState(new HashChainState('89890001K', 'FAC-2026-021', '09-07-2026', str_repeat('D', 64)));
+
+            return 'done';
+        });
+
+        /** @var EntityManagerInterface $entityManager */
+        $entityManager = self::getContainer()->get(EntityManagerInterface::class);
+        $entityManager->clear();
+
+        self::assertSame('done', $result);
+        self::assertFalse($entityManager->getConnection()->isTransactionActive());
+        self::assertSame(str_repeat('D', 64), $repository->getLastHash('89890001K'));
+    }
+
+    public function testWithChainLockRollsBackWhenTheOperationFails(): void
+    {
+        /** @var DoctrineHashChainRepository $repository */
+        $repository = self::getContainer()->get(DoctrineHashChainRepository::class);
+
+        $message = null;
+        try {
+            $repository->withChainLock('89890001K', static function () use ($repository): void {
+                $repository->storeLastState(new HashChainState('89890001K', 'FAC-2026-030', '09-07-2026', str_repeat('E', 64)));
+
+                throw new RuntimeException('XSD or signing failed after the write');
+            });
+        } catch (RuntimeException $exception) {
+            $message = $exception->getMessage();
+        }
+
+        self::assertSame('XSD or signing failed after the write', $message);
+
+        /** @var EntityManagerInterface $entityManager */
+        $entityManager = self::getContainer()->get(EntityManagerInterface::class);
+        $entityManager->clear();
+
+        self::assertFalse($entityManager->getConnection()->isTransactionActive());
+        self::assertNull($repository->getLastState('89890001K'));
     }
 
     private function createSchema(): void

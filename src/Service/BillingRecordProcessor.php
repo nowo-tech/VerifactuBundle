@@ -14,6 +14,7 @@ use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
+use Nowo\VerifactuBundle\Repository\LockableHashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Validator\AeatBusinessRulesValidator;
 use Nowo\VerifactuBundle\Validator\XsdValidator;
@@ -54,9 +55,12 @@ final class BillingRecordProcessor
     }
 
     /**
+     * @param bool $persistChainState When false (dry runs), the record is chained onto the current head but
+     *                                the new state is NOT stored, so the persistent hash chain is left untouched
+     *
      * @return array{record: BillingRecord, errors: list<string>, submission?: array<string, mixed>}
      */
-    public function process(BillingRecord $record, bool $submitToAeat = false): array
+    public function process(BillingRecord $record, bool $submitToAeat = false, bool $persistChainState = true): array
     {
         $beforeEvent = new BeforeBillingRecordGenerationEvent($record);
         $this->eventDispatcher->dispatch($beforeEvent, VerifactuEvents::BEFORE_BILLING_RECORD_GENERATION);
@@ -67,6 +71,40 @@ final class BillingRecordProcessor
             return ['record' => $record, 'errors' => $errors];
         }
 
+        $operation = fn (): array => $this->chainRecord($record, $persistChainState);
+        $chained   = $persistChainState && $this->hashChainRepository instanceof LockableHashChainRepositoryInterface
+            ? $this->hashChainRepository->withChainLock($record->issuerNif, $operation)
+            : $operation();
+
+        if ($chained['errors'] !== []) {
+            return $chained;
+        }
+
+        $record = $chained['record'];
+
+        $this->eventDispatcher->dispatch(
+            new AfterBillingRecordGeneratedEvent($record),
+            VerifactuEvents::AFTER_BILLING_RECORD_GENERATED,
+        );
+
+        $result = ['record' => $record, 'errors' => []];
+
+        if ($submitToAeat) {
+            $result['submission'] = $this->submissionClient->submit($record);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Reads the chain head, hashes, renders, validates and signs the record, then stores the new head.
+     *
+     * Runs inside the repository chain lock when available (read-then-write must be atomic per issuer).
+     *
+     * @return array{record: BillingRecord, errors: list<string>}
+     */
+    private function chainRecord(BillingRecord $record, bool $persistChainState): array
+    {
         $previousState = $this->hashChainRepository->getLastState($record->issuerNif);
         $record        = new BillingRecord(
             $record->recordType,
@@ -111,25 +149,16 @@ final class BillingRecordProcessor
             $record = $record->withSignedXml($this->recordSigner->sign($xml));
         }
 
-        $this->hashChainRepository->storeLastState(new HashChainState(
-            $record->issuerNif,
-            $record->invoiceSeriesNumber,
-            $record->issueDate,
-            $hash,
-        ));
-
-        $this->eventDispatcher->dispatch(
-            new AfterBillingRecordGeneratedEvent($record),
-            VerifactuEvents::AFTER_BILLING_RECORD_GENERATED,
-        );
-
-        $result = ['record' => $record, 'errors' => []];
-
-        if ($submitToAeat) {
-            $result['submission'] = $this->submissionClient->submit($record);
+        if ($persistChainState) {
+            $this->hashChainRepository->storeLastState(new HashChainState(
+                $record->issuerNif,
+                $record->invoiceSeriesNumber,
+                $record->issueDate,
+                $hash,
+            ));
         }
 
-        return $result;
+        return ['record' => $record, 'errors' => []];
     }
 
     private function shouldSign(): bool

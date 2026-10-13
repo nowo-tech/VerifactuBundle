@@ -31,7 +31,7 @@ final class HashChainGeneratorAnulacionTest extends TestCase
             '2026-07-09T18:00:00+02:00',
         );
 
-        self::assertStringContainsString('IDEmisorFactura=89890001K', $generator->buildInputString($record));
+        self::assertStringStartsWith('IDEmisorFacturaAnulada=89890001K&', $generator->buildInputString($record));
         self::assertSame(64, strlen($generator->computeHash($record)));
     }
 }

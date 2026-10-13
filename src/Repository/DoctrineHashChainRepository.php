@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Repository;
 
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use Doctrine\DBAL\LockMode;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Query;
 use Doctrine\Persistence\ManagerRegistry;
@@ -21,13 +22,18 @@ use Throwable;
  * entities are detached after each write, and a manager closed by a failed flush is reset so
  * long-running workers (FrankenPHP worker mode) recover on the next call.
  *
+ * withChainLock() wraps the chain update in a transaction holding a pessimistic write lock
+ * (SELECT … FOR UPDATE) on the issuer row; for the very first record of an issuer there is no
+ * row to lock, and the unique constraint on issuer_nif makes a concurrent second insert fail
+ * instead of forking the chain.
+ *
  * @extends ServiceEntityRepository<BillingRecordHashChain>
  *
  * @author Nowo.tech
  * @copyright 2026 Nowo.tech
  */
 #[AsAlias(id: self::SERVICE_NAME, public: true)]
-final class DoctrineHashChainRepository extends ServiceEntityRepository implements HashChainRepositoryInterface
+final class DoctrineHashChainRepository extends ServiceEntityRepository implements LockableHashChainRepositoryInterface
 {
     public const SERVICE_NAME = 'nowo_verifactu.repository.doctrine_hash_chain';
 
@@ -56,6 +62,39 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
         $entityManager->detach($entity);
 
         return $state;
+    }
+
+    public function withChainLock(string $issuerNif, callable $operation): mixed
+    {
+        $entityManager = $this->resolveEntityManager();
+        $connection    = $entityManager->getConnection();
+        $connection->beginTransaction();
+
+        try {
+            $entity = $entityManager->createQueryBuilder()
+                ->select('h')
+                ->from(BillingRecordHashChain::class, 'h')
+                ->where('h.issuerNif = :issuerNif')
+                ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
+                ->getQuery()
+                ->setLockMode(LockMode::PESSIMISTIC_WRITE)
+                ->getOneOrNullResult();
+            if ($entity instanceof BillingRecordHashChain) {
+                $entityManager->detach($entity);
+            }
+
+            $result = $operation();
+            $connection->commit();
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($connection->isTransactionActive()) {
+                $connection->rollBack();
+            }
+            $this->resetIfClosed($entityManager);
+
+            throw $exception;
+        }
     }
 
     public function storeLastState(HashChainState $state): void

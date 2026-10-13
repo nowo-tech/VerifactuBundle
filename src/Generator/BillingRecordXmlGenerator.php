@@ -63,8 +63,6 @@ final class BillingRecordXmlGenerator
         $ns          = self::NS_SUMINISTRO;
         $issuerName  = (string) ($record->issuerName ?? $issuerConfig['name'] ?? '');
         $description = $record->operationDescription ?? 'Factura emitida';
-        $taxBase     = $this->calculateTaxBase($record->totalAmount, $record->totalTaxAmount);
-        $taxRate     = $this->resolveTaxRate($record, $taxBase);
 
         $xml = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
         $xml .= '<RegistroAlta xmlns="' . $ns . '">' . "\n";
@@ -73,14 +71,7 @@ final class BillingRecordXmlGenerator
         $xml .= '  <NombreRazonEmisor>' . $this->escape($issuerName) . '</NombreRazonEmisor>' . "\n";
         $xml .= '  <TipoFactura>' . $this->escape($record->invoiceType) . '</TipoFactura>' . "\n";
         $xml .= '  <DescripcionOperacion>' . $this->escape($description) . '</DescripcionOperacion>' . "\n";
-        $xml .= '  <Desglose>' . "\n";
-        $xml .= '    <DetalleDesglose>' . "\n";
-        $xml .= '      <CalificacionOperacion>S1</CalificacionOperacion>' . "\n";
-        $xml .= '      <TipoImpositivo>' . $this->escape($taxRate) . '</TipoImpositivo>' . "\n";
-        $xml .= '      <BaseImponibleOimporteNoSujeto>' . $this->escape($taxBase) . '</BaseImponibleOimporteNoSujeto>' . "\n";
-        $xml .= '      <CuotaRepercutida>' . $this->escape($record->totalTaxAmount) . '</CuotaRepercutida>' . "\n";
-        $xml .= '    </DetalleDesglose>' . "\n";
-        $xml .= '  </Desglose>' . "\n";
+        $xml .= $this->renderDesglose($record);
         $xml .= '  <CuotaTotal>' . $this->escape($record->totalTaxAmount) . '</CuotaTotal>' . "\n";
         $xml .= '  <ImporteTotal>' . $this->escape($record->totalAmount) . '</ImporteTotal>' . "\n";
         $xml .= $this->renderEncadenamiento($previousState);
@@ -177,6 +168,36 @@ final class BillingRecordXmlGenerator
         return $xml . ('  </SistemaInformatico>' . "\n");
     }
 
+    /**
+     * Renders one DetalleDesglose per TaxBreakdown entry; without breakdown, a single line derived from the totals.
+     */
+    private function renderDesglose(BillingRecord $record): string
+    {
+        $xml = '  <Desglose>' . "\n";
+
+        if ($record->taxBreakdown !== []) {
+            foreach ($record->taxBreakdown as $breakdown) {
+                $xml .= $this->renderDetalleDesglose($breakdown->taxRate, $breakdown->taxBase, $breakdown->taxAmount);
+            }
+        } else {
+            $taxBase = $this->calculateTaxBase($record->totalAmount, $record->totalTaxAmount);
+            $xml .= $this->renderDetalleDesglose($this->resolveTaxRate($record, $taxBase), $taxBase, $record->totalTaxAmount);
+        }
+
+        return $xml . ('  </Desglose>' . "\n");
+    }
+
+    private function renderDetalleDesglose(string $taxRate, string $taxBase, string $taxAmount): string
+    {
+        $xml = '    <DetalleDesglose>' . "\n";
+        $xml .= '      <CalificacionOperacion>S1</CalificacionOperacion>' . "\n";
+        $xml .= '      <TipoImpositivo>' . $this->escape($taxRate) . '</TipoImpositivo>' . "\n";
+        $xml .= '      <BaseImponibleOimporteNoSujeto>' . $this->escape($taxBase) . '</BaseImponibleOimporteNoSujeto>' . "\n";
+        $xml .= '      <CuotaRepercutida>' . $this->escape($taxAmount) . '</CuotaRepercutida>' . "\n";
+
+        return $xml . ('    </DetalleDesglose>' . "\n");
+    }
+
     private function calculateTaxBase(string $totalAmount, string $totalTaxAmount): string
     {
         if (!is_numeric($totalAmount) || !is_numeric($totalTaxAmount)) {
@@ -190,10 +211,6 @@ final class BillingRecordXmlGenerator
 
     private function resolveTaxRate(BillingRecord $record, string $taxBase): string
     {
-        if ($record->taxBreakdown !== []) {
-            return $record->taxBreakdown[0]->taxRate;
-        }
-
         if (is_numeric($taxBase) && (float) $taxBase > 0 && is_numeric($record->totalTaxAmount)) {
             $rate = ((float) $record->totalTaxAmount / (float) $taxBase) * 100;
 

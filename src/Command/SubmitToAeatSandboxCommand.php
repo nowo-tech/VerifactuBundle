@@ -98,7 +98,9 @@ final class SubmitToAeatSandboxCommand extends Command
             $io->warning(sprintf('Environment is "%s". Sandbox command is intended for sandbox testing.', $this->environment));
         }
 
-        $result = $this->processor->process($this->mapper->map($draft), submitToAeat: $submit);
+        // Without --submit (or with --dry-run) nothing is registered at the AEAT, so the configured
+        // (possibly persistent) hash chain must not advance.
+        $result = $this->processor->process($this->mapper->map($draft), submitToAeat: $submit, persistChainState: $submit);
 
         if ($result['errors'] !== []) {
             $io->error('Validation failed:');

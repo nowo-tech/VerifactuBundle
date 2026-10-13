@@ -83,12 +83,13 @@ final class HashChainGenerator
 
     private function buildAnulacionInputString(BillingRecord $record): string
     {
+        // RegistroAnulacion/IDFactura uses the *Anulada element names (AEAT hash spec v0.1.2, §3.b).
         $fields = [
-            'IDEmisorFactura'          => $this->normalize($record->issuerNif),
-            'NumSerieFactura'          => $this->normalize($record->invoiceSeriesNumber),
-            'FechaExpedicionFactura'   => $this->normalize($record->issueDate),
-            'Huella'                   => $this->normalize($record->previousHash ?? ''),
-            'FechaHoraHusoGenRegistro' => $this->normalize($record->generatedAt),
+            'IDEmisorFacturaAnulada'        => $this->normalize($record->issuerNif),
+            'NumSerieFacturaAnulada'        => $this->normalize($record->invoiceSeriesNumber),
+            'FechaExpedicionFacturaAnulada' => $this->normalize($record->issueDate),
+            'Huella'                        => $this->normalize($record->previousHash ?? ''),
+            'FechaHoraHusoGenRegistro'      => $this->normalize($record->generatedAt),
         ];
 
         return $this->concatenateFields($fields);
@@ -112,19 +113,25 @@ final class HashChainGenerator
         return trim($value);
     }
 
+    /**
+     * Normalizes a decimal amount without going through float.
+     *
+     * The AEAT hash specification states that trailing zeros in the decimals are not significant
+     * ("123.1" and "123.10" are equally valid), so only insignificant zeros are stripped from the
+     * exact string written into the XML. Anything that is not a plain decimal is hashed as-is.
+     */
     private function normalizeAmount(string $value): string
     {
         $trimmed = trim($value);
-        if ($trimmed === '') {
-            return '';
-        }
-
-        if (!is_numeric($trimmed)) {
+        if (preg_match('/^([+-]?)(\d*)(?:\.(\d*))?$/', $trimmed, $matches) !== 1 || ($matches[2] === '' && ($matches[3] ?? '') === '')) {
             return $trimmed;
         }
 
-        $normalized = rtrim(rtrim(number_format((float) $trimmed, 6, '.', ''), '0'), '.');
+        $sign     = $matches[1] === '-' ? '-' : '';
+        $integer  = ltrim($matches[2], '0');
+        $integer  = $integer === '' ? '0' : $integer;
+        $decimals = rtrim($matches[3] ?? '', '0');
 
-        return str_contains($normalized, '.') ? $normalized : $normalized;
+        return $sign . $integer . ($decimals !== '' ? '.' . $decimals : '');
     }
 }

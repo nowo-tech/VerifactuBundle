@@ -53,6 +53,10 @@ services:
             $signRecords: '%nowo_verifactu.aeat.sign_xades%'
             $recordSigner: '@?Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface'
 
+    Nowo\VerifactuBundle\Qr\QrUrlBuilder:
+        arguments:
+            $mode: '%nowo_verifactu.mode%'
+
     Nowo\VerifactuBundle\Twig\VerifactuTwigExtension:
         arguments:
             $aeatEnvironment: '%nowo_verifactu.aeat.environment%'

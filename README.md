@@ -21,7 +21,7 @@ This bundle is **FrankenPHP worker mode friendly**, including when the kernel is
 - ✅ **Twig helpers**: `verifactu_qr_data_uri`, `verifactu_qr_url`, `verifactu_legend`
 - ✅ **Pluggable storage**: `HashChainRepositoryInterface` with in-memory and Doctrine backends
 - ✅ **AEAT SOAP client**: mTLS submission to sandbox/production with client certificate
-- ✅ **XAdES signing**: No-Veri*Factu modalidad with PKCS#12/PEM certificates
+- ⚠️ **Record signing**: No-Veri*Factu modalidad with PKCS#12/PEM certificates — currently a plain enveloped XML-DSig signature, **not full XAdES** (see [CONFIGURATION.md](docs/CONFIGURATION.md#xades-signing-no-verifactu))
 - ✅ **XSD validation**: Official AEAT schemas shipped with the bundle
 - ✅ **Nowo integration**: `InvoiceDraft` + `InvoiceToBillingRecordMapper` for ERP adoption
 - ✅ **Sandbox CLI**: `nowo:verifactu:submit-sandbox` smoke-test command

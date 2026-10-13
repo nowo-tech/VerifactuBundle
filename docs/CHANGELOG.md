@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `nowo:verifactu:submit-sandbox` without `--submit` (or with `--dry-run`) no longer stores the generated record as the new hash chain head, so smoke tests cannot rewrite the real persistent chain. `BillingRecordProcessor::process()` gains a `persistChainState` argument (default `true`).
+- AEAT SOAP responses are only reported as successful when the HTTP status is 2xx and `EstadoRegistro` is `Correcto`. A missing `EstadoRegistro` (e.g. HTML error pages) or a non-2xx status is now a failure; namespace-prefixed AEAT responses (`<tikR:EstadoRegistro>`) are parsed and `DescripcionErrorRegistro` is reported.
+- The chain head read-then-write is now serialized per issuer NIF: new `LockableHashChainRepositoryInterface`; the Doctrine repository runs it in a transaction with `SELECT … FOR UPDATE`, preventing forked chains under concurrent requests.
+
+### Fixed
+
+- Apps without `doctrine/doctrine-bundle` no longer fail at container build: the extension checks `hash_chain.storage` first and probes `ServiceEntityRepository` instead of autoloading the Doctrine repository. `storage: doctrine` without Doctrine now throws a clear `LogicException`.
+- Anulación fingerprints now use `IDEmisorFacturaAnulada` / `NumSerieFacturaAnulada` / `FechaExpedicionFacturaAnulada`, as required by the AEAT hash specification (verified with the official test vector).
+- Hash amounts are normalized as strings (insignificant zeros only) instead of through `float`, so large amounts such as `999999999999.99` are no longer altered.
+- `Desglose` emits one `DetalleDesglose` per `TaxBreakdown` entry instead of a single line with the first rate and the invoice totals.
+- QR URLs use `ValidarQRNoVerifactu` in `no_verifactu` mode (`QrUrlBuilder` takes the configured mode; `buildUrl()` accepts an optional per-call `$mode`).
+
+### Changed
+
+- Documented that `XadesBillingRecordSigner` produces plain enveloped XML-DSig, not full XAdES, and that `hash_chain.table_prefix` and `aeat_spec_version` are reserved options with no effect.
+
 ## [1.0.12] - 2026-10-13
 
 ### Changed

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Unit\DependencyInjection;
 
+use ArrayObject;
+use LogicException;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
@@ -14,6 +16,8 @@ use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Extension\Extension;
@@ -41,6 +45,36 @@ final class NowoVerifactuExtensionTest extends TestCase
         $issuer = $container->getParameter('nowo_verifactu.issuer');
         self::assertSame('89890001K', $issuer['nif']);
         self::assertTrue($container->hasDefinition('Nowo\\VerifactuBundle\\Generator\\HashChainGenerator'));
+    }
+
+    /**
+     * Simulates an application without doctrine/doctrine-bundle: the default (memory) storage must
+     * build without ever autoloading the Doctrine-based repository or its Doctrine parent class.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testMemoryStorageBuildsWithoutDoctrineInstalled(): void
+    {
+        $requested = $this->hideDoctrineBundleFromAutoloader();
+
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[]], $container);
+
+        self::assertSame(InMemoryHashChainRepository::class, (string) $container->getAlias('nowo_verifactu.hash_chain_repository'));
+        self::assertNotContains(DoctrineHashChainRepository::class, $requested->getArrayCopy());
+        self::assertFalse(class_exists(DoctrineHashChainRepository::class, false));
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testDoctrineStorageWithoutDoctrineInstalledFailsWithClearMessage(): void
+    {
+        $this->hideDoctrineBundleFromAutoloader();
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('requires doctrine/doctrine-bundle');
+
+        (new NowoVerifactuExtension())->load([['hash_chain' => ['storage' => 'doctrine']]], new ContainerBuilder());
     }
 
     public function testGetAlias(): void
@@ -243,5 +277,37 @@ final class NowoVerifactuExtensionTest extends TestCase
             XadesBillingRecordSigner::class,
             (string) $container->getAlias(BillingRecordSignerInterface::class),
         );
+    }
+
+    /**
+     * Replaces the registered autoloaders with a wrapper that cannot resolve DoctrineBundle classes
+     * (nor the bundle's Doctrine repository), and records every class requested from it.
+     *
+     * @return ArrayObject<int, string>
+     */
+    private function hideDoctrineBundleFromAutoloader(): ArrayObject
+    {
+        /** @var ArrayObject<int, string> $requested */
+        $requested = new ArrayObject();
+        $loaders   = spl_autoload_functions();
+        foreach ($loaders as $loader) {
+            spl_autoload_unregister($loader);
+        }
+
+        spl_autoload_register(static function (string $class) use ($loaders, $requested): void {
+            $requested->append($class);
+            if (str_starts_with($class, 'Doctrine\\Bundle\\DoctrineBundle\\') || $class === DoctrineHashChainRepository::class) {
+                return;
+            }
+
+            foreach ($loaders as $loader) {
+                $loader($class);
+                if (class_exists($class, false) || interface_exists($class, false) || trait_exists($class, false) || enum_exists($class, false)) {
+                    return;
+                }
+            }
+        });
+
+        return $requested;
     }
 }

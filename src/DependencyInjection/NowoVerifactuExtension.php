@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\DependencyInjection;
 
+use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use LogicException;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
@@ -39,7 +41,13 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         $loader = new YamlFileLoader($container, new FileLocator(__DIR__ . '/../Resources/config'));
         $loader->load('services.yaml');
 
-        if (class_exists(DoctrineHashChainRepository::class) && $config['hash_chain']['storage'] === 'doctrine') {
+        // Check storage first and probe the Doctrine parent class by name: autoloading
+        // DoctrineHashChainRepository itself fails hard when doctrine/doctrine-bundle is not installed.
+        if ($config['hash_chain']['storage'] === 'doctrine') {
+            if (!class_exists(ServiceEntityRepository::class)) {
+                throw new LogicException('nowo_verifactu.hash_chain.storage "doctrine" requires doctrine/doctrine-bundle and doctrine/orm. Install them (composer require doctrine/doctrine-bundle doctrine/orm) or configure hash_chain.repository with your own persistent repository.');
+            }
+
             $loader->load('services_doctrine.yaml');
         }
 
