@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## To 1.1.0
+
+From **1.0.12** — AEAT compliance and hardening: spec-correct Anulación hash, one DetalleDesglose per tax rate, strict SOAP success detection, chain lock, QR mode.
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- **Anulación hash input changed** to the spec-correct `IDEmisorFacturaAnulada` / `NumSerieFacturaAnulada` / `FechaExpedicionFacturaAnulada` fields (validated with the official AEAT vectors). Anulación hashes stored before this release will not pass `verify-hash-chain`.
+- AEAT responses are only successful with HTTP 2xx and `EstadoRegistro=Correcto` (namespaced responses are now parsed). Before, a missing status counted as success.
+- `verifactu:submit-sandbox` without `--submit` (or with `--dry-run`) no longer advances the persistent hash chain.
+- Invoices with several VAT rates now emit one `DetalleDesglose` per `TaxBreakdown`.
+- QR URLs in `no_verifactu` mode point to `ValidarQRNoVerifactu`.
+- `storage: doctrine` without DoctrineBundle now fails at container build with a clear `LogicException`; the memory storage no longer requires Doctrine.
+- The signer produces plain enveloped XML-DSig, **not XAdES** (now documented); No-Veri*Factu signing requirements are not yet met.
+
 ## To 1.0.12
 
 From **1.0.11** — dependency refresh and repository maintenance.
@@ -39,6 +55,7 @@ For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Table of contents
 
+- [To 1.1.0](#to-110)
 - [To 1.0.12](#to-1012)
 - [To 1.0.11](#to-1011)
 - [From 1.0.8 to 1.0.9](#from-108-to-109)

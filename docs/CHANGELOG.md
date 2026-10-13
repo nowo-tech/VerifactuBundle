@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-13
+
 ### Security
 
 - `nowo:verifactu:submit-sandbox` without `--submit` (or with `--dry-run`) no longer stores the generated record as the new hash chain head, so smoke tests cannot rewrite the real persistent chain. `BillingRecordProcessor::process()` gains a `persistChainState` argument (default `true`).
@@ -217,7 +219,8 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.12...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.12...v1.1.0
 [1.0.12]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.11...v1.0.12
 [1.0.11]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.10...v1.0.11
 [1.0.3]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.2...v1.0.3
