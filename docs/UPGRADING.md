@@ -1,5 +1,32 @@
 # Upgrade Guide
 
+## Table of contents
+
+- [Unreleased](#unreleased)
+- [To 1.2.0](#to-120)
+- [To 1.1.0](#to-110)
+- [To 1.0.12](#to-1012)
+- [To 1.0.11](#to-1011)
+- [To 1.0.10](#to-1010)
+- [From 1.0.8 to 1.0.9](#from-108-to-109)
+- [Upgrading to 1.0.6](#upgrading-to-106)
+- [Upgrading to 1.0.5](#upgrading-to-105)
+- [Upgrading to 1.0.3](#upgrading-to-103)
+- [Upgrading to 1.0.2](#upgrading-to-102)
+- [Upgrading to 1.0.1](#upgrading-to-101)
+  - [Integrators](#integrators)
+  - [Bundle contributors](#bundle-contributors)
+- [Upgrading to 1.0.0](#upgrading-to-100)
+  - [First stable release](#first-stable-release)
+  - [Requirements](#requirements)
+  - [Installation](#installation)
+  - [Minimal configuration](#minimal-configuration)
+  - [Breaking changes](#breaking-changes)
+  - [Migration steps](#migration-steps)
+- [General upgrade notes](#general-upgrade-notes)
+- [Getting help](#getting-help)
+- [From 1.0.7 to 1.0.8](#from-107-to-108)
+
 ## Unreleased
 
 ## To 1.2.0
@@ -63,29 +90,6 @@ php bin/console cache:clear
 This guide helps you install and upgrade versions of the **Verifactu Bundle** (`nowo-tech/verifactu-bundle`).
 
 For a full list of changes per version, see [CHANGELOG.md](CHANGELOG.md).
-
-## Table of contents
-
-- [To 1.2.0](#to-120)
-- [To 1.1.0](#to-110)
-- [To 1.0.12](#to-1012)
-- [To 1.0.11](#to-1011)
-- [From 1.0.8 to 1.0.9](#from-108-to-109)
-- [From 1.0.7 to 1.0.8](#from-107-to-108)
-- [From 1.0.6 to 1.0.7](#from-106-to-107)
-- [Upgrading to 1.0.5](#upgrading-to-105)
-- [Upgrading to 1.0.3](#upgrading-to-103)
-- [Upgrading to 1.0.2](#upgrading-to-102)
-- [Upgrading to 1.0.1](#upgrading-to-101)
-- [Upgrading to 1.0.0](#upgrading-to-100)
-  - [First stable release](#first-stable-release)
-  - [Requirements](#requirements)
-  - [Installation](#installation)
-  - [Minimal configuration](#minimal-configuration)
-  - [Breaking changes](#breaking-changes)
-  - [Migration steps](#migration-steps)
-- [General upgrade notes](#general-upgrade-notes)
-- [Getting help](#getting-help)
 
 ## From 1.0.8 to 1.0.9
 
