@@ -926,7 +926,7 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  * }
  * @psalm-type NowoVerifactuConfig = array{
  *     mode?: "verifactu"|"no_verifactu"|Param, // Default: "verifactu"
- *     aeat_spec_version?: scalar|Param|null, // Default: "1.0.0"
+ *     aeat_spec_version?: scalar|Param|null, // Reserved: published as the nowo_verifactu.aeat_spec_version parameter only; it does not change XML, hash or SOAP output. // Default: "1.0.0"
  *     issuer?: array{
  *         nif?: scalar|Param|null, // Default: ""
  *         name?: scalar|Param|null, // Default: ""
@@ -945,7 +945,7 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *     hash_chain?: array{
  *         storage?: "memory"|"doctrine"|Param, // Default: "memory"
  *         repository?: scalar|Param|null, // Default: null
- *         table_prefix?: scalar|Param|null, // Default: "verifactu_"
+ *         table_prefix?: scalar|Param|null, // Reserved: not applied yet. The Doctrine entity always maps to the "verifactu_hash_chain" table. // Default: "verifactu_"
  *     },
  *     aeat?: array{
  *         environment?: "sandbox"|"production"|Param, // Default: "sandbox"
