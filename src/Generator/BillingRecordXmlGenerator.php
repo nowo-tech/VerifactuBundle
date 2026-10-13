@@ -177,7 +177,7 @@ final class BillingRecordXmlGenerator
 
         if ($record->taxBreakdown !== []) {
             foreach ($record->taxBreakdown as $breakdown) {
-                $xml .= $this->renderDetalleDesglose($breakdown->taxRate, $breakdown->taxBase, $breakdown->taxAmount);
+                $xml .= $this->renderDetalleDesglose($breakdown->taxRate, $breakdown->taxBase, $breakdown->taxAmount, $breakdown->taxType);
             }
         } else {
             $taxBase = $this->calculateTaxBase($record->totalAmount, $record->totalTaxAmount);
@@ -187,9 +187,16 @@ final class BillingRecordXmlGenerator
         return $xml . ('  </Desglose>' . "\n");
     }
 
-    private function renderDetalleDesglose(string $taxRate, string $taxBase, string $taxAmount): string
+    /**
+     * Impuesto (AEAT ImpuestoType: 01 IVA, 02 IPSI, 03 IGIC, 05 Otros) is the first child of DetalleDesglose
+     * and is optional (AEAT assumes 01 when absent), so it is only emitted when a tax type is given.
+     */
+    private function renderDetalleDesglose(string $taxRate, string $taxBase, string $taxAmount, string $taxType = ''): string
     {
         $xml = '    <DetalleDesglose>' . "\n";
+        if (trim($taxType) !== '') {
+            $xml .= '      <Impuesto>' . $this->escape($taxType) . '</Impuesto>' . "\n";
+        }
         $xml .= '      <CalificacionOperacion>S1</CalificacionOperacion>' . "\n";
         $xml .= '      <TipoImpositivo>' . $this->escape($taxRate) . '</TipoImpositivo>' . "\n";
         $xml .= '      <BaseImponibleOimporteNoSujeto>' . $this->escape($taxBase) . '</BaseImponibleOimporteNoSujeto>' . "\n";

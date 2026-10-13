@@ -197,6 +197,87 @@ final class BillingRecordXmlGeneratorTest extends TestCase
         );
 
         self::assertStringContainsString('<TipoImpositivo>21.00</TipoImpositivo>', $xml);
+        self::assertStringContainsString(
+            '<DetalleDesglose>' . "\n" . '      <Impuesto>01</Impuesto>' . "\n" . '      <CalificacionOperacion>S1</CalificacionOperacion>',
+            $xml,
+        );
+    }
+
+    public function testGenerateAltaXmlOmitsImpuestoWhenTaxTypeEmptyOrWithoutBreakdown(): void
+    {
+        $software = [
+            'manufacturer_name' => 'Nowo.tech',
+            'manufacturer_nif'  => '89890001K',
+            'name'              => 'VerifactuBundle',
+            'id'                => '01',
+            'version'           => '1.0.0',
+        ];
+
+        $withEmptyType = new BillingRecord(
+            RecordType::Alta,
+            '89890001K',
+            'FAC-2026-006',
+            '09-07-2026',
+            'F1',
+            '21.00',
+            '121.00',
+            '2026-07-09T18:00:00+02:00',
+            taxBreakdown: [new \Nowo\VerifactuBundle\Model\TaxBreakdown('  ', '21.00', '100.00', '21.00')],
+            hash: 'ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789',
+            issuerName: 'Demo Company SL',
+        );
+        $withoutBreakdown = new BillingRecord(
+            RecordType::Alta,
+            '89890001K',
+            'FAC-2026-007',
+            '09-07-2026',
+            'F1',
+            '21.00',
+            '121.00',
+            '2026-07-09T18:00:00+02:00',
+            hash: 'ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789',
+            issuerName: 'Demo Company SL',
+        );
+
+        foreach ([$withEmptyType, $withoutBreakdown] as $record) {
+            $xml = $this->generator->generate($record, ['name' => 'Demo Company SL'], $software, ['number' => '001']);
+
+            self::assertStringContainsString('<DetalleDesglose>', $xml);
+            self::assertStringNotContainsString('<Impuesto>', $xml);
+        }
+    }
+
+    public function testGenerateAltaXmlEmitsImpuestoPerTaxBreakdownType(): void
+    {
+        $record = new BillingRecord(
+            RecordType::Alta,
+            '89890001K',
+            'FAC-2026-008',
+            '09-07-2026',
+            'F1',
+            '7.00',
+            '107.00',
+            '2026-07-09T18:00:00+02:00',
+            taxBreakdown: [new \Nowo\VerifactuBundle\Model\TaxBreakdown('03', '7.00', '100.00', '7.00')],
+            hash: 'ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789',
+            issuerName: 'Demo Company SL',
+        );
+
+        $xml = $this->generator->generate(
+            $record,
+            ['name' => 'Demo Company SL'],
+            [
+                'manufacturer_name' => 'Nowo.tech',
+                'manufacturer_nif'  => '89890001K',
+                'name'              => 'VerifactuBundle',
+                'id'                => '01',
+                'version'           => '1.0.0',
+            ],
+            ['number' => '001'],
+        );
+
+        self::assertStringContainsString('<Impuesto>03</Impuesto>', $xml);
+        self::assertStringNotContainsString('<Impuesto>01</Impuesto>', $xml);
     }
 
     public function testGenerateAltaXmlEmitsOneDetalleDesglosePerTaxBreakdown(): void

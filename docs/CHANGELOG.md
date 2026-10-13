@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `TaxBreakdown::$taxType` is now emitted as `<Impuesto>` (first child of `DetalleDesglose`, as required by the AEAT `DetalleType` sequence) when it is not empty. Previously it was ignored, so IGIC (`03`), IPSI (`02`) and other (`05`) lines were sent without their tax type and AEAT assumed IVA. Generated XML with `Impuesto` is XSD-validated against the bundled `SuministroInformacion.xsd` in tests.
+
 ## [1.1.0] - 2026-10-13
 
 ### Security

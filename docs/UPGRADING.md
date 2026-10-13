@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`<Impuesto>` is now emitted** for each `TaxBreakdown` whose `taxType` is not empty. `taxType` must be an AEAT `ImpuestoType` code: `01` (IVA), `02` (IPSI), `03` (IGIC) or `05` (Otros). Any other value (e.g. `'IVA'`) now makes the XML fail XSD validation. Pass `''` to omit the element (AEAT then assumes IVA).
+
 ## To 1.1.0
 
 From **1.0.12** — AEAT compliance and hardening: spec-correct Anulación hash, one DetalleDesglose per tax rate, strict SOAP success detection, chain lock, QR mode.
