@@ -11,6 +11,7 @@ Use this when suggesting code, tests, documentation, or CI changes for this repo
 ### Git commits (REQ-GIT-001)
 
 - **Never** add `Co-authored-by: Cursor <cursoragent@cursor.com>` (or any `cursoragent@cursor.com`) to commit messages.
+- Never add `Co-Authored-By: Claude …` / `noreply@anthropic.com` trailers either (REQ-GIT-001).
 - Human authors only in `git log`. Attribute tooling in PR descriptions or changelogs if needed.
 - After clone: `make setup-hooks`. Before push/release: `make check-no-cursor-coauthor`.
 
