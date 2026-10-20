@@ -2,9 +2,9 @@
 
 **Baseline spec**: [`spec.md`](spec.md)  
 **Package**: `nowo-tech/verifactu-bundle`  
-**Last audited**: 2026-09-25
+**Last audited**: 2026-10-20
 
-Every production artifact under `src/` is mapped below (54/54).
+Every production artifact under `src/` is mapped below (55/55; audit: `git ls-files src | wc -l`).
 
 ## Bundle & DI
 
@@ -80,6 +80,7 @@ Every production artifact under `src/` is mapped below (54/54).
 | Source file | Spec section | Requirement IDs |
 | --- | --- | --- |
 | `Repository/HashChainRepositoryInterface.php` | Hash chain contract | FR-PROC-001 |
+| `Repository/LockableHashChainRepositoryInterface.php` | Per-issuer chain lock around read-then-write (`withChainLock()`) | FR-PROC-001, FR-WORKER-002 |
 | `Repository/InMemoryHashChainRepository.php` | In-memory storage | FR-PROC-001, FR-WORKER-001 |
 | `Repository/DoctrineHashChainRepository.php` | Doctrine storage | FR-STORE-001, FR-WORKER-002 |
 | `Entity/BillingRecordHashChain.php` | Doctrine entity | FR-STORE-001 |
@@ -134,8 +135,8 @@ Every production artifact under `src/` is mapped below (54/54).
 
 | Category | Files | Mapped |
 | --- | ---: | ---: |
-| PHP classes | 40 | 40 |
+| PHP classes | 41 | 41 |
 | YAML config | 2 | 2 |
 | Translation locales | 7 | 7 |
 | XSD schemas | 5 | 5 |
-| **Total `src/` artifacts** | **54** | **54** |
+| **Total `src/` artifacts** | **55** | **55** |

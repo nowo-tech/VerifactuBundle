@@ -2,6 +2,16 @@
 
 Maintainers: follow this process before creating a new tag.
 
+## Table of contents
+
+- [Pre-release checklist](#pre-release-checklist)
+- [Tag and publish](#tag-and-publish)
+- [Current release (v1.0.9)](#current-release-v109)
+  - [Documentation reviewed for this release](#documentation-reviewed-for-this-release)
+  - [Example commands for this version](#example-commands-for-this-version)
+  - [Verify on GitHub](#verify-on-github)
+  - [Notes](#notes)
+
 ## Pre-release checklist
 
 1. **Update documentation**

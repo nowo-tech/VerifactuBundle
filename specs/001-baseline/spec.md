@@ -114,7 +114,7 @@ Symfony bundle for Spanish Veri*Factu (RD 1007/2023): SHA-256 hash chains, billi
 
 ## Success Criteria
 
-- **SC-001**: **54/54** artifacts mapped in [`code-inventory.md`](code-inventory.md).
+- **SC-001**: **55/55** artifacts mapped in [`code-inventory.md`](code-inventory.md).
 - **SC-002**: AEAT example hash test vector passes in PHPUnit.
 - **SC-003**: PHPUnit + PHPStan pass in CI; coverage target ~100% (minimum 80% enforced in CI).
 - **SC-004**: XSD validation passes for generated Alta and Anulación XML in tests.

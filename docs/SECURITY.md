@@ -1,5 +1,13 @@
 # Security policy
 
+## Table of contents
+
+- [Supported versions](#supported-versions)
+- [Reporting a vulnerability](#reporting-a-vulnerability)
+- [Security considerations for this bundle](#security-considerations-for-this-bundle)
+- [Release security checklist (12.4.1)](#release-security-checklist-1241)
+- [AI security audit (REQ-SEC-004)](#ai-security-audit-req-sec-004)
+
 ## Supported versions
 
 Security fixes are applied to the current major version line. Please upgrade to the latest patch release to receive security updates.

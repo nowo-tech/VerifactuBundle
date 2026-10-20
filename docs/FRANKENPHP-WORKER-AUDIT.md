@@ -9,6 +9,20 @@
 | Remediation (2026-09-23 / shipped in 1.0.9) | W-01 resolved (request-scoped in-memory storage via `src/EventSubscriber/WorkerStateResetSubscriber.php` + `kernel.reset`, non-debug warning, `hash_chain.repository` alias bug fixed); W-02/W-03 resolved in `src/Repository/DoctrineHashChainRepository.php` (fresh reads, detach, closed-manager reset); W-04 resolved; W-05 accepted. Tests: `tests/Integration/WorkerModeIntegrationTest.php`, `tests/Integration/DoctrineHashChainWorkerModeTest.php` |
 | **Verdict** | ✅ **Viable under scenario B** — the in-memory storage can no longer build per-worker chains (it is reset at the start of each main request, like classic mode, and warns outside debug); the Doctrine storage reads the last hash fresh from the database and recovers from a closed EntityManager. For a legally valid chain, `hash_chain.storage: doctrine` (or a persistent `hash_chain.repository`) is still required, and per-issuer serialization remains the application's responsibility (W-05) |
 
+## Table of contents
+
+- [Execution model assumed](#execution-model-assumed)
+- [Summary](#summary)
+- [Services reviewed](#services-reviewed)
+- [Findings](#findings)
+  - [W-01 — Default in-memory hash-chain storage carries fiscal state across requests and forks per worker (High)](#w-01--default-in-memory-hash-chain-storage-carries-fiscal-state-across-requests-and-forks-per-worker-high)
+  - [W-02 — Doctrine repository can read stale chain state from the identity map (Medium, scenario B)](#w-02--doctrine-repository-can-read-stale-chain-state-from-the-identity-map-medium-scenario-b)
+  - [W-03 — A failed flush closes the EntityManager for the rest of the worker's life (Medium, scenario B)](#w-03--a-failed-flush-closes-the-entitymanager-for-the-rest-of-the-workers-life-medium-scenario-b)
+  - [W-04 — `XsdValidator` forces the libxml internal-errors flag to `false` instead of restoring it (Low)](#w-04--xsdvalidator-forces-the-libxml-internal-errors-flag-to-false-instead-of-restoring-it-low)
+  - [W-05 — Hash-chain read-then-write is not atomic (Info)](#w-05--hash-chain-read-then-write-is-not-atomic-info)
+- [Usage recommendations in worker mode](#usage-recommendations-in-worker-mode)
+- [Re-audit triggers](#re-audit-triggers)
+
 ## Execution model assumed
 
 FrankenPHP worker mode boots the Symfony kernel once per worker and serves many requests with the same container. This audit assumes the **strict** variant: the kernel is **not** rebooted between requests, so every shared service, static property and PHP global survives from one request to the next. Two scenarios are evaluated:

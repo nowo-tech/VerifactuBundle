@@ -11,6 +11,10 @@ This directory contains three demo projects, one for each supported Symfony vers
 - Independent Docker containers for each demo
 - Complete test suites for each demo
 
+## FrankenPHP
+
+The demo runs on FrankenPHP (worker mode by default, `FRANKENPHP_MODE=classic` for request mode). Development vs production startup, timeouts and troubleshooting: [docs/DEMO-FRANKENPHP.md](../docs/DEMO-FRANKENPHP.md).
+
 ## Requirements
 
 - Docker and Docker Compose

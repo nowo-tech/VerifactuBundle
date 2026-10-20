@@ -7,7 +7,7 @@ Roadmap ideas for the Verifactu Bundle. Items marked ✅ are already in **1.0.0*
 - [Priority: High](#priority-high)
 - [Priority: Medium](#priority-medium)
 - [Priority: Low](#priority-low)
-- [Documentation / DX](#documentation-dx)
+- [Documentation / DX](#documentation--dx)
 - [Getting help](#getting-help)
 
 ## Priority: High

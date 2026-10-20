@@ -2,6 +2,13 @@
 
 The bundle includes a FrankenPHP demo for Symfony 8.
 
+## Table of contents
+
+- [Available demo](#available-demo)
+- [Quick start](#quick-start)
+- [What the demo shows](#what-the-demo-shows)
+- [Notes](#notes)
+
 ## Available demo
 
 - **Symfony 8 Demo**: `demo/symfony8/` (default port **8010**)

@@ -2,6 +2,20 @@
 
 This bundle is designed as a **compliance layer** for existing billing/ERP systems — not a full invoicing module.
 
+## Table of contents
+
+- [Architecture](#architecture)
+- [Step-by-step integration](#step-by-step-integration)
+  - [1. Install and configure](#1-install-and-configure)
+  - [2. Map your invoice to `InvoiceDraft`](#2-map-your-invoice-to-invoicedraft)
+  - [3. Persist results in your ERP](#3-persist-results-in-your-erp)
+  - [4. Render QR on PDF invoices](#4-render-qr-on-pdf-invoices)
+  - [5. Listen to events (audit, webhooks)](#5-listen-to-events-audit-webhooks)
+  - [6. Invoice cancellation](#6-invoice-cancellation)
+  - [7. Optional bundles](#7-optional-bundles)
+- [Demo reference implementation](#demo-reference-implementation)
+- [Service IDs](#service-ids)
+
 ## Architecture
 
 ```mermaid

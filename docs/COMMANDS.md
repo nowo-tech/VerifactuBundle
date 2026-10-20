@@ -2,6 +2,12 @@
 
 The bundle provides console commands for common Veri*Factu operations.
 
+## Table of contents
+
+- [Validate billing record](#validate-billing-record)
+- [Verify hash](#verify-hash)
+- [Submit to AEAT sandbox](#submit-to-aeat-sandbox)
+
 ## Validate billing record
 
 ```bash

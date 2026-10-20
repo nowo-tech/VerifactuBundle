@@ -13,6 +13,9 @@ Thank you for your interest in contributing to Verifactu Bundle! This document p
 - [Pull Request Process](#pull-request-process)
 - [Development Workflow](#development-workflow)
 - [Questions?](#questions)
+- [Igor worker audit (REQ-CS-008)](#igor-worker-audit-req-cs-008)
+- [Cursor Agent](#cursor-agent)
+- [AI co-author trailers](#ai-co-author-trailers)
 
 ## Code of Conduct
 
@@ -184,6 +187,21 @@ Thank you for contributing! 🎉
 ## Igor worker audit (REQ-CS-008)
 
 Run `make igor` (or `composer igor`) before release. Igor audits package `src/` for FrankenPHP worker-state issues. It is require-dev only.
+
+## Cursor Agent
+
+Contributors using Cursor Agent on this repository should enable these user-level settings (REQ-IDE-006):
+
+1. **Submit with Ctrl + Enter** (macOS: **⌘ + Enter**) — Cursor Settings → Agents / Chat. Enter inserts a newline; Ctrl/⌘+Enter submits.
+2. **Queue follow-ups** in user `settings.json` (Linux `~/.config/Cursor/User/settings.json`, Windows `%APPDATA%\Cursor\User\settings.json`, macOS `~/Library/Application Support/Cursor/User/settings.json`):
+
+```json
+{
+  "cursor.composer.queueMessageDefaultBehavior": "queue"
+}
+```
+
+Do not use `"steer"` as the default: it interrupts a running agent turn.
 
 ## AI co-author trailers
 
