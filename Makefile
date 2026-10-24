@@ -126,7 +126,8 @@ qa: ensure-up
 	$(COMPOSE) exec -T php composer qa
 
 # Pre-release: git hygiene, composer-sync, cs-fix, cs-check, rector-dry, phpstan, test-coverage, demos
-release-check: check-no-cursor-coauthor check-open-prs ensure-up composer-sync cs-fix cs-check rector-dry phpstan igor test-coverage-100 release-check-demos
+# check-no-raw-html-form (REQ-TWIG-005) is wired once the remaining raw form markup is migrated
+release-check: ensure-up check-no-cursor-coauthor check-open-prs composer-sync cs-fix cs-check rector-dry phpstan igor test-coverage-100 release-check-demos
 
 release-check-demos:
 	@$(MAKE) -C demo release-check
