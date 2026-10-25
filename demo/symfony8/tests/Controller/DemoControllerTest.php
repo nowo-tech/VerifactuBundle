@@ -20,9 +20,29 @@ final class DemoControllerTest extends WebTestCase
 
     public function testPostGeneratesBillingRecord(): void
     {
+        $client  = static::createClient();
+        $crawler = $client->request('GET', '/');
+        $form    = $crawler->selectButton('Emitir factura Veri*Factu')->form([
+            'numserie'    => 'FAC-TEST-001',
+            'fecha'       => '09-07-2026',
+            'cuota'       => '21.00',
+            'importe'     => '121.00',
+            'tipo'        => 'F1',
+            'record_type' => 'Alta',
+            'description' => 'Test invoice',
+        ]);
+        $client->submit($form);
+
+        self::assertResponseIsSuccessful();
+        self::assertStringContainsString('Registro generado', $client->getResponse()->getContent());
+        self::assertStringContainsString('Hash:', $client->getResponse()->getContent());
+    }
+
+    public function testPostWithoutCsrfTokenIsRejected(): void
+    {
         $client = static::createClient();
         $client->request('POST', '/', [
-            'numserie'    => 'FAC-TEST-001',
+            'numserie'    => 'FAC-TEST-002',
             'fecha'       => '09-07-2026',
             'cuota'       => '21.00',
             'importe'     => '121.00',
@@ -32,7 +52,6 @@ final class DemoControllerTest extends WebTestCase
         ]);
 
         self::assertResponseIsSuccessful();
-        self::assertStringContainsString('Registro generado', $client->getResponse()->getContent());
-        self::assertStringContainsString('Hash:', $client->getResponse()->getContent());
+        self::assertStringNotContainsString('Registro generado', $client->getResponse()->getContent());
     }
 }

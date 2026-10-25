@@ -1,7 +1,7 @@
 # Makefile for Verifactu Bundle
 # Simplifies Docker commands for development
 
-.PHONY: help up down build shell install test test-coverage coverage-php-percent coverage-check test-coverage-100 cs-check cs-fix qa clean assets ensure-up rector rector-dry phpstan igor release-check release-check-demos composer-sync update validate validate-translations setup-hooks check-no-cursor-coauthor strip-cursor-coauthor-from-history check-open-prs
+.PHONY: help up down build shell install test test-coverage coverage-php-percent coverage-check test-coverage-100 cs-check cs-fix qa clean assets ensure-up rector rector-dry phpstan igor release-check release-check-demos composer-sync update validate validate-translations setup-hooks check-no-cursor-coauthor strip-cursor-coauthor-from-history check-open-prs check-no-raw-html-form
 
 # Default target
 help:
@@ -25,6 +25,7 @@ help:
 	@echo "  phpstan         Run PHPStan static analysis"
 	@echo "  igor          Run Igor worker-state audit (REQ-CS-008)"
 	@echo "  qa              Run all QA checks (cs-check + test)"
+	@echo "  check-no-raw-html-form Fail on raw <form>/<input>/<textarea>/<select> in Twig (REQ-TWIG-005)"
 	@echo "  release-check   Pre-release: git hygiene, composer-sync, QA, demos"
 	@echo "  composer-sync   Validate composer.json and align composer.lock"
 	@echo "  clean           Remove vendor and cache"
@@ -126,8 +127,11 @@ qa: ensure-up
 	$(COMPOSE) exec -T php composer qa
 
 # Pre-release: git hygiene, composer-sync, cs-fix, cs-check, rector-dry, phpstan, test-coverage, demos
-# check-no-raw-html-form (REQ-TWIG-005) is wired once the remaining raw form markup is migrated
-release-check: ensure-up check-no-cursor-coauthor check-open-prs composer-sync cs-fix cs-check rector-dry phpstan igor test-coverage-100 release-check-demos
+release-check: ensure-up check-no-cursor-coauthor check-open-prs check-no-raw-html-form composer-sync cs-fix cs-check rector-dry phpstan igor test-coverage-100 release-check-demos
+
+check-no-raw-html-form:
+	@chmod +x .scripts/check-no-raw-html-form.sh
+	@./.scripts/check-no-raw-html-form.sh
 
 release-check-demos:
 	@$(MAKE) -C demo release-check

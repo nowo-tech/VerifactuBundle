@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controller;
 
+use App\Form\InvoiceType;
 use App\Model\Invoice;
 use App\Service\InvoiceBillingService;
 use Nowo\VerifactuBundle\Model\RecordType;
@@ -27,24 +28,36 @@ final class DemoController extends AbstractController
     #[Route('/', name: 'demo_index', methods: ['GET', 'POST'])]
     public function index(Request $request): Response
     {
-        $result = null;
+        $result         = null;
+        $aeatConfigured = $this->invoiceBillingService->isAeatConfigured();
+        $form           = $this->createForm(InvoiceType::class, [
+            'numserie'    => 'FAC-DEMO-001',
+            'fecha'       => date('d-m-Y'),
+            'record_type' => RecordType::Alta->value,
+            'tipo'        => 'F1',
+            'cuota'       => '21.00',
+            'importe'     => '121.00',
+            'description' => 'Servicios de consultoría demo',
+            'submit_aeat' => true,
+        ], ['aeat_configured' => $aeatConfigured]);
+        $form->handleRequest($request);
 
-        if ($request->isMethod('POST')) {
-            $recordType = RecordType::tryFrom((string) $request->request->get('record_type', 'Alta'))
-                ?? RecordType::Alta;
+        if ($form->isSubmitted() && $form->isValid()) {
+            /** @var array<string, mixed> $data */
+            $data       = $form->getData();
+            $recordType = RecordType::tryFrom((string) ($data['record_type'] ?? 'Alta')) ?? RecordType::Alta;
 
             $invoice = new Invoice(
-                (string) $request->request->get('numserie', 'FAC-DEMO-001'),
-                (string) $request->request->get('fecha', date('d-m-Y')),
-                (string) $request->request->get('cuota', '21.00'),
-                (string) $request->request->get('importe', '121.00'),
+                (string) ($data['numserie'] ?? 'FAC-DEMO-001'),
+                (string) ($data['fecha'] ?? date('d-m-Y')),
+                (string) ($data['cuota'] ?? '21.00'),
+                (string) ($data['importe'] ?? '121.00'),
                 $recordType,
-                (string) $request->request->get('tipo', 'F1'),
-                (string) $request->request->get('description', 'Demo invoice'),
+                (string) ($data['tipo'] ?? 'F1'),
+                (string) ($data['description'] ?? 'Demo invoice'),
             );
 
-            $submitToAeat = $request->request->getBoolean('submit_aeat')
-                && $this->invoiceBillingService->isAeatConfigured();
+            $submitToAeat = true === ($data['submit_aeat'] ?? false) && $aeatConfigured;
 
             $result = $this->invoiceBillingService->processInvoice($invoice, $submitToAeat);
         }
@@ -58,7 +71,8 @@ final class DemoController extends AbstractController
             'result'         => $result,
             'qrDataUri'      => $qrDataUri,
             'hashChainState' => $this->invoiceBillingService->getHashChainState(),
-            'aeatConfigured' => $this->invoiceBillingService->isAeatConfigured(),
+            'aeatConfigured' => $aeatConfigured,
+            'form'           => $form->createView(),
         ]);
     }
 }

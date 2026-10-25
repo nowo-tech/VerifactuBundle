@@ -7,7 +7,8 @@
     <style>
         body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
         form { display: grid; gap: 0.75rem; margin-bottom: 2rem; }
-        label { display: grid; gap: 0.25rem; font-weight: 600; }
+        form div:not(.grid-2) { display: grid; gap: 0.25rem; }
+        label { font-weight: 600; }
         input, select, button, textarea { padding: 0.5rem; font: inherit; }
         button { cursor: pointer; width: fit-content; }
         pre { background: #f5f5f5; padding: 1rem; overflow: auto; border-radius: 4px; font-size: 0.85rem; }
@@ -32,30 +33,27 @@
         </ul>
     </div>
 
-    <form method="post">
+    {{ form_start(form) }}
+        {{ form_errors(form) }}
         <div class="grid-2">
-            <label>Serie + número <input name="numserie" value="FAC-DEMO-001" required></label>
-            <label>Fecha expedición (dd-mm-yyyy) <input name="fecha" value="{{ 'now'|date('d-m-Y') }}" required></label>
+            {{ form_row(form.numserie) }}
+            {{ form_row(form.fecha) }}
         </div>
         <div class="grid-2">
-            <label>Tipo operación
-                <select name="record_type">
-                    <option value="Alta">Alta (nueva factura)</option>
-                    <option value="Anulacion">Anulación</option>
-                </select>
-            </label>
-            <label>Tipo factura <input name="tipo" value="F1" required></label>
+            {{ form_row(form.record_type) }}
+            {{ form_row(form.tipo) }}
         </div>
         <div class="grid-2">
-            <label>Cuota total <input name="cuota" value="21.00" required></label>
-            <label>Importe total <input name="importe" value="121.00" required></label>
+            {{ form_row(form.cuota) }}
+            {{ form_row(form.importe) }}
         </div>
-        <label>Descripción operación <textarea name="description" rows="2">Servicios de consultoría demo</textarea></label>
-        {% if aeatConfigured %}
-            <label><input type="checkbox" name="submit_aeat" value="1" checked> Enviar a AEAT sandbox</label>
-        {% endif %}
+        {% for child in form %}
+            {% if not child.rendered %}
+                {{ form_row(child) }}
+            {% endif %}
+        {% endfor %}
         <button type="submit">Emitir factura Veri*Factu</button>
-    </form>
+    {{ form_end(form) }}
 
     {% if result is not null %}
         {% if result.errors is not empty %}
