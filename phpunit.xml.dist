@@ -7,6 +7,7 @@
          executionOrder="depends,defects"
          beStrictAboutOutputDuringTests="true"
          failOnRisky="true"
+         failOnDeprecation="true"
          failOnWarning="false"
          displayDetailsOnTestsThatTriggerWarnings="true">
     <testsuites>
@@ -30,5 +31,10 @@
             <clover outputFile="coverage.xml"/>
         </report>
     </coverage>
+
+    <php>
+        <!-- REQ-SF-005: fail on direct deprecations from this package (with failOnDeprecation + restrictDeprecations) -->
+        <env name="SYMFONY_DEPRECATIONS_HELPER" value="max[direct]=0"/>
+    </php>
 </phpunit>
 

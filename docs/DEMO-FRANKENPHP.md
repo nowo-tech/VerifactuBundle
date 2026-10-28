@@ -112,10 +112,18 @@ Use the default Caddyfile (with worker). Set `APP_ENV=prod` and `APP_DEBUG=0`. D
 
 ## Switching between development and production
 
-- **Development:** `APP_ENV=dev`, `APP_DEBUG=1`. Entrypoint copies Caddyfile.dev (no worker, no-cache headers). Mount php-dev.ini and dev twig cache off.
-- **Production:** `APP_ENV=prod`, `APP_DEBUG=0`. Entrypoint leaves default Caddyfile (with worker). Do not mount php-dev.ini.
+The FrankenPHP runtime mode is chosen by **`FRANKENPHP_MODE`** in `demo/symfony8/.env` (template `.env.example`,
+REQ-DEMO-010), passed into the container by Compose (`FRANKENPHP_MODE=${FRANKENPHP_MODE:-worker}`), never baked into the
+image:
 
-After changing env or Caddyfile, restart: `docker-compose restart` or `make -C demo/symfony8 restart`.
+| `FRANKENPHP_MODE` | Effect (`docker/entrypoint.sh`) |
+| --- | --- |
+| `worker` (default) | Keeps the worker Caddyfile (`php_server { worker … }`): long-lived workers, as in production |
+| `classic` | Copies `Caddyfile.dev` over the active config: one PHP request per HTTP request (handy with hot reload) |
+| anything else | The entrypoint exits with `Unknown FRANKENPHP_MODE=… (expected classic|worker)` |
+
+`APP_ENV` / `APP_DEBUG` (`dev`/`1` or `prod`/`0`) are independent of the mode. After editing `.env`, **recreate** the
+container so the new environment is read: `docker compose up -d` (a plain `restart` keeps the old env).
 
 ---
 
