@@ -14,6 +14,7 @@ declare(strict_types=1);
  * @see https://getrector.com/documentation
  */
 use Rector\Config\RectorConfig;
+use Rector\Symfony\CodeQuality\Rector\Class_\EventSubscriberToAttributeRector;
 use Rector\Symfony\Symfony63\Rector\Class_\ParamAndEnvAttributeRector;
 use Rector\Symfony\Symfony73\Rector\Class_\CommandHelpToAttributeRector;
 use Rector\Symfony\Symfony73\Rector\Class_\GetFiltersAndFunctionsToAsTwigAttributeRector;
@@ -42,4 +43,6 @@ return RectorConfig::configure()
         GetFiltersAndFunctionsToAsTwigAttributeRector::class,
         // Keep #[Autowire('%param%')]: Autowire(param: …) needs Symfony 6.1+; bundle supports ^6.0.
         ParamAndEnvAttributeRector::class,
+        // Keep EventSubscriberInterface: #[AsEventListener] only registers autoconfigured services (rector 2.8.2+).
+        EventSubscriberToAttributeRector::class,
     ]);
