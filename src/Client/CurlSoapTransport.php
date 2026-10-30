@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Client;
 
+use SensitiveParameter;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
 use function in_array;
@@ -32,11 +33,15 @@ final class CurlSoapTransport implements SoapTransportInterface
 {
     public const SERVICE_NAME = 'nowo_verifactu.client.curl_soap_transport';
 
+    /**
+     * Posts the SOAP payload over mutual TLS with the client certificate and the configured timeout.
+     */
     public function send(
         string $endpoint,
         string $soapAction,
         string $payload,
         string $certificatePath,
+        #[SensitiveParameter]
         ?string $certificatePassword,
         int $timeout,
     ): array {
@@ -76,7 +81,7 @@ final class CurlSoapTransport implements SoapTransportInterface
         $body       = curl_exec($handle);
         $statusCode = curl_getinfo($handle, CURLINFO_HTTP_CODE);
         $error      = curl_error($handle);
-        curl_close($handle);
+        // No curl_close(): it has no effect since PHP 8.0 (the handle is freed with $handle) and is deprecated in 8.5.
 
         $result = [
             'status_code' => $statusCode,

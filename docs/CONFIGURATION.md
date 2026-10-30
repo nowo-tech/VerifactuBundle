@@ -21,7 +21,9 @@ nowo_verifactu:
     hash_chain:
         storage: memory          # memory | doctrine
         repository: null         # custom service id (optional)
-        table_prefix: verifactu_ # reserved (not applied: table is always verifactu_hash_chain)
+        table_prefix: verifactu_ # deprecated, no effect: use doctrine.table_prefix
+    doctrine:
+        table_prefix: ''         # prepended to the bundle table names (REQ-ORM-002)
     aeat:
         environment: sandbox     # sandbox | production
         submission_client: null  # custom client service id (optional)
@@ -48,7 +50,16 @@ Set `hash_chain.storage: doctrine` and install `doctrine/orm` + `doctrine/doctri
 
 **Concurrency.** `BillingRecordProcessor` reads the chain head, hashes the new record and stores the new head. When the repository implements `LockableHashChainRepositoryInterface`, that read-then-write runs inside `withChainLock()`, so concurrent requests for the same issuer NIF cannot chain onto the same previous record. The Doctrine repository opens a transaction and takes a pessimistic write lock (`SELECT … FOR UPDATE`) on the issuer row; for the first record of an issuer the unique constraint on `issuer_nif` makes a concurrent second insert fail instead of forking the chain. Custom repositories should implement the interface (database row lock, Symfony Lock, etc.). Note that SQLite ignores `FOR UPDATE`; use a server database in production.
 
-**Reserved options.** `hash_chain.table_prefix` and `aeat_spec_version` are accepted for forward compatibility but have no effect today.
+**Table prefix.** `doctrine.table_prefix` (default `''`; letters, digits and underscores only) is prepended to every table the bundle owns, to its unique constraint and to any many-to-many join table of bundle entities, so several applications can share one database. It is applied by a Doctrine `loadClassMetadata` listener scoped to the `Nowo\VerifactuBundle\Entity\` namespace (host entities are never renamed); the bundle only queries through DQL, so every query follows the prefixed name.
+
+| `doctrine.table_prefix` | Table | Unique constraint |
+| --- | --- | --- |
+| `''` (default) | `verifactu_hash_chain` | `uniq_verifactu_hash_chain_issuer` |
+| `app_` | `app_verifactu_hash_chain` | `app_uniq_verifactu_hash_chain_issuer` |
+
+Changing the prefix on an existing database requires renaming the table (see [UPGRADING.md](UPGRADING.md#unreleased)).
+
+**Deprecated / reserved options.** `hash_chain.table_prefix` is deprecated and has no effect (use `doctrine.table_prefix`). `aeat_spec_version` is accepted for forward compatibility but has no effect today.
 
 The default `memory` storage is **request-scoped** (cleared at the start of every main request, also in FrankenPHP worker mode without `services_resetter`): every request starts a new chain. It is meant for development and tests; with `kernel.debug: false` it logs a warning on every stored record. Full worker-mode notes: [FRANKENPHP-WORKER-AUDIT.md](FRANKENPHP-WORKER-AUDIT.md).
 

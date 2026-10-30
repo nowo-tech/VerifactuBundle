@@ -15,6 +15,8 @@ use Nowo\VerifactuBundle\Model\BillingRecord;
 interface AeatSubmissionClientInterface
 {
     /**
+     * Submits one billing record to the AEAT.
+     *
      * @return array{success: bool, reference?: string, errors?: list<string>}
      */
     public function submit(BillingRecord $record): array;

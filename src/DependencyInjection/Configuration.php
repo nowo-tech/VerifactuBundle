@@ -7,6 +7,8 @@ namespace Nowo\VerifactuBundle\DependencyInjection;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
 
+use function is_string;
+
 /**
  * Veri*Factu bundle configuration tree.
  *
@@ -17,6 +19,9 @@ final class Configuration implements ConfigurationInterface
 {
     public const ALIAS = 'nowo_verifactu';
 
+    /**
+     * Builds the `nowo_verifactu` configuration tree.
+     */
     public function getConfigTreeBuilder(): TreeBuilder
     {
         $treeBuilder = new TreeBuilder(self::ALIAS);
@@ -65,8 +70,24 @@ final class Configuration implements ConfigurationInterface
                         ->end()
                         ->scalarNode('repository')->defaultNull()->end()
                         ->scalarNode('table_prefix')
-                            ->info('Reserved: not applied yet. The Doctrine entity always maps to the "verifactu_hash_chain" table.')
+                            ->info('Deprecated: never read. Use doctrine.table_prefix to prefix the verifactu_hash_chain table.')
                             ->defaultValue('verifactu_')
+                            ->setDeprecated('nowo-tech/verifactu-bundle', '1.3', 'The "%path%.%node%" option is deprecated and has no effect: use "nowo_verifactu.doctrine.table_prefix" (prepended to the verifactu_hash_chain table name) instead.')
+                        ->end()
+                    ->end()
+                ->end()
+                ->arrayNode('doctrine')
+                    ->addDefaultsIfNotSet()
+                    ->info('Doctrine storage options (REQ-ORM-002)')
+                    ->children()
+                        ->scalarNode('table_prefix')
+                            ->info('Prefix prepended to every bundle table, index and unique constraint name (e.g. "app_" yields app_verifactu_hash_chain). Empty = historical verifactu_hash_chain name.')
+                            ->defaultValue('')
+                            ->example('app_')
+                            ->validate()
+                                ->ifTrue(static fn (mixed $v): bool => !is_string($v) || preg_match('/^[A-Za-z0-9_]*$/', $v) !== 1)
+                                ->thenInvalid('nowo_verifactu.doctrine.table_prefix may only contain letters, digits and underscores, got %s.')
+                            ->end()
                         ->end()
                     ->end()
                 ->end()

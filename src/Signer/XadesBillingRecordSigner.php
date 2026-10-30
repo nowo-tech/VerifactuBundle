@@ -23,6 +23,9 @@ final class XadesBillingRecordSigner implements BillingRecordSignerInterface
 {
     public const SERVICE_NAME = 'nowo_verifactu.signer.xades';
 
+    /**
+     * Receives the certificate loader and the configured certificate path and password.
+     */
     public function __construct(
         private readonly CertificateLoader $certificateLoader,
         private readonly ?string $certificatePath = null,
@@ -30,6 +33,9 @@ final class XadesBillingRecordSigner implements BillingRecordSignerInterface
     ) {
     }
 
+    /**
+     * Signs the billing record XML with an enveloped XML-DSig signature.
+     */
     public function sign(string $xml): string
     {
         if ($this->certificatePath === null || $this->certificatePath === '') {

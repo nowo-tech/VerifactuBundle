@@ -8,6 +8,7 @@ services:
         resource: '../../*'
         exclude:
             - '../../DependencyInjection/'
+            - '../../Doctrine/'
             - '../../Model/'
             - '../../Event/'
             - '../../Entity/'

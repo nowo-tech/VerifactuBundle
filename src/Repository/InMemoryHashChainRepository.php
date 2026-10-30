@@ -28,6 +28,8 @@ final class InMemoryHashChainRepository implements HashChainRepositoryInterface
     private array $states = [];
 
     /**
+     * Receives the optional logger and whether to warn that the state is not persistent.
+     *
      * @param bool $warnNotPersistent Log a warning on every store (enabled when kernel.debug is false)
      */
     public function __construct(
@@ -36,11 +38,17 @@ final class InMemoryHashChainRepository implements HashChainRepositoryInterface
     ) {
     }
 
+    /**
+     * Returns the current chain head (last record state) of the issuer, or null when the chain is empty.
+     */
     public function getLastState(string $issuerNif): ?HashChainState
     {
         return $this->states[$this->normalizeKey($issuerNif)] ?? null;
     }
 
+    /**
+     * Stores the new chain head of the issuer.
+     */
     public function storeLastState(HashChainState $state): void
     {
         if ($this->warnNotPersistent) {
@@ -59,6 +67,9 @@ final class InMemoryHashChainRepository implements HashChainRepositoryInterface
         );
     }
 
+    /**
+     * Removes the chain head of the issuer (the next record starts a new chain).
+     */
     public function reset(string $issuerNif): void
     {
         unset($this->states[$this->normalizeKey($issuerNif)]);
@@ -73,11 +84,17 @@ final class InMemoryHashChainRepository implements HashChainRepositoryInterface
         $this->states = [];
     }
 
+    /**
+     * Returns the hash of the current chain head of the issuer (deprecated: use getLastState()).
+     */
     public function getLastHash(string $issuerNif): ?string
     {
         return $this->getLastState($issuerNif)?->hash;
     }
 
+    /**
+     * Stores only a hash as chain head of the issuer (deprecated: use storeLastState()).
+     */
     public function storeLastHash(string $issuerNif, string $hash): void
     {
         $existing = $this->getLastState($issuerNif);

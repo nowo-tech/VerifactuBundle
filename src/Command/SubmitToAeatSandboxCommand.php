@@ -32,6 +32,8 @@ use function sprintf;
 final class SubmitToAeatSandboxCommand extends Command
 {
     /**
+     * Receives the invoice mapper, the record processor and the configured certificate path, environment and issuer.
+     *
      * @param array{nif: string, name?: string} $issuerConfig
      */
     public function __construct(

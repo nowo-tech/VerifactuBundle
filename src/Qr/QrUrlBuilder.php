@@ -30,6 +30,8 @@ final class QrUrlBuilder
     private const PATH_NO_VERIFACTU = 'ValidarQRNoVerifactu';
 
     /**
+     * Receives the default bundle mode.
+     *
      * @param string $mode Default bundle mode (verifactu|no_verifactu), wired from nowo_verifactu.mode
      */
     public function __construct(
@@ -38,6 +40,8 @@ final class QrUrlBuilder
     }
 
     /**
+     * Builds the AEAT verification URL encoded in the invoice QR code.
+     *
      * @param string|null $mode verifactu|no_verifactu; null uses the configured bundle mode
      */
     public function buildUrl(BillingRecord $record, string $environment = 'sandbox', ?string $mode = null): string

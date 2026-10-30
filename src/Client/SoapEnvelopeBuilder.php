@@ -22,6 +22,8 @@ final class SoapEnvelopeBuilder
     private const NS_SF   = 'https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/aplicaciones/es/aeat/tike/cont/ws/SuministroInformacion.xsd';
 
     /**
+     * Builds the SOAP envelope (RegFactuSistemaFacturacion) that wraps the billing record XML.
+     *
      * @param array<string, mixed> $issuerConfig
      */
     public function buildSubmissionEnvelope(BillingRecord $record, array $issuerConfig): string

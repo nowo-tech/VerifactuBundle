@@ -27,6 +27,9 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 )]
 final class ValidateBillingRecordCommand extends Command
 {
+    /**
+     * Receives the business rules validator and the hash chain generator.
+     */
     public function __construct(
         private readonly AeatBusinessRulesValidator $validator,
         private readonly HashChainGenerator $hashChainGenerator,

@@ -25,6 +25,8 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
     public const SERVICE_NAME = 'nowo_verifactu.client.soap_aeat_submission';
 
     /**
+     * Receives the envelope builder, endpoint resolver, transport, issuer configuration, mode, environment and certificate settings.
+     *
      * @param array{nif: string, name?: string} $issuerConfig
      */
     public function __construct(
@@ -41,6 +43,9 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
     ) {
     }
 
+    /**
+     * Sends the billing record to the AEAT SOAP service and parses the response.
+     */
     public function submit(BillingRecord $record): array
     {
         if ($this->certificatePath === null || $this->certificatePath === '') {

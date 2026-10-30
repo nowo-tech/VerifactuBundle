@@ -18,6 +18,9 @@ final class NullAeatSubmissionClient implements AeatSubmissionClientInterface
 {
     public const SERVICE_NAME = 'nowo_verifactu.client.null_aeat_submission';
 
+    /**
+     * Does not contact the AEAT; reports a successful sandbox submission with a `SANDBOX-<hash>` reference.
+     */
     public function submit(BillingRecord $record): array
     {
         return [

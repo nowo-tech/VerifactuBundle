@@ -21,6 +21,9 @@ final class QrCodeGenerator
 {
     public const SERVICE_NAME = 'nowo_verifactu.qr.code_generator';
 
+    /**
+     * Receives the QR URL builder.
+     */
     public function __construct(
         private readonly QrUrlBuilder $urlBuilder,
     ) {

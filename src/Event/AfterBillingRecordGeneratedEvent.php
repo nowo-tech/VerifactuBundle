@@ -15,11 +15,17 @@ use Symfony\Contracts\EventDispatcher\Event;
  */
 final class AfterBillingRecordGeneratedEvent extends Event
 {
+    /**
+     * Wraps the generated billing record.
+     */
     public function __construct(
         private readonly BillingRecord $record,
     ) {
     }
 
+    /**
+     * Returns the generated billing record (hashed, rendered and signed when applicable).
+     */
     public function getRecord(): BillingRecord
     {
         return $this->record;

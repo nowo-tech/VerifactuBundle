@@ -29,6 +29,19 @@
 
 ## Unreleased
 
+No change is required: with the default configuration the table keeps its name (`verifactu_hash_chain`).
+
+- **New `doctrine.table_prefix`.** To namespace the bundle table, set it and migrate the existing table:
+
+  ```yaml
+  nowo_verifactu:
+      doctrine:
+          table_prefix: app_   # verifactu_hash_chain -> app_verifactu_hash_chain
+  ```
+
+  Then rename the table (and its unique index `uniq_verifactu_hash_chain_issuer` -> `app_uniq_verifactu_hash_chain_issuer`) with a Doctrine migration (`bin/console doctrine:migrations:diff` generates it) or `ALTER TABLE verifactu_hash_chain RENAME TO app_verifactu_hash_chain`. Do not let `doctrine:schema:update` drop and recreate it: the table holds the head of the legal hash chain.
+- **`hash_chain.table_prefix` is deprecated.** It never had any effect; remove it from `config/packages/nowo_verifactu.yaml` to silence the deprecation.
+
 ## To 1.2.0
 
 From **1.1.0** — TaxBreakdown tax type emitted as DetalleDesglose/Impuesto; Symfony >=6.4.

@@ -2,9 +2,9 @@
 
 **Baseline spec**: [`spec.md`](spec.md)  
 **Package**: `nowo-tech/verifactu-bundle`  
-**Last audited**: 2026-10-20
+**Last audited**: 2026-10-30
 
-Every production artifact under `src/` is mapped below (55/55; audit: `git ls-files src | wc -l`).
+Every production artifact under `src/` is mapped below (56/56; audit: `git ls-files src | wc -l`).
 
 ## Bundle & DI
 
@@ -84,6 +84,7 @@ Every production artifact under `src/` is mapped below (55/55; audit: `git ls-fi
 | `Repository/InMemoryHashChainRepository.php` | In-memory storage | FR-PROC-001, FR-WORKER-001 |
 | `Repository/DoctrineHashChainRepository.php` | Doctrine storage | FR-STORE-001, FR-WORKER-002 |
 | `Entity/BillingRecordHashChain.php` | Doctrine entity | FR-STORE-001 |
+| `Doctrine/TablePrefixListener.php` | `doctrine.table_prefix` applied at metadata load (REQ-ORM-002) | FR-STORE-001 |
 
 ## Processing & events
 

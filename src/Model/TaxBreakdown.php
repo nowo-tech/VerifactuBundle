@@ -16,6 +16,9 @@ namespace Nowo\VerifactuBundle\Model;
  */
 final class TaxBreakdown
 {
+    /**
+     * Creates one tax breakdown entry (DetalleDesglose).
+     */
     public function __construct(
         public readonly string $taxType,
         public readonly string $taxRate,

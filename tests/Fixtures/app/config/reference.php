@@ -146,7 +146,10 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *     hash_chain?: array{
  *         storage?: "memory"|"doctrine"|Param, // Default: "memory"
  *         repository?: scalar|Param|null, // Default: null
- *         table_prefix?: scalar|Param|null, // Reserved: not applied yet. The Doctrine entity always maps to the "verifactu_hash_chain" table. // Default: "verifactu_"
+ *         table_prefix?: scalar|Param|null, // Deprecated: The "nowo_verifactu.hash_chain.table_prefix.table_prefix" option is deprecated and has no effect: use "nowo_verifactu.doctrine.table_prefix" (prepended to the verifactu_hash_chain table name) instead. // Deprecated: never read. Use doctrine.table_prefix to prefix the verifactu_hash_chain table. // Default: "verifactu_"
+ *     },
+ *     doctrine?: array{ // Doctrine storage options (REQ-ORM-002)
+ *         table_prefix?: scalar|Param|null, // Prefix prepended to every bundle table, index and unique constraint name (e.g. "app_" yields app_verifactu_hash_chain). Empty = historical verifactu_hash_chain name. // Default: ""
  *     },
  *     aeat?: array{
  *         environment?: "sandbox"|"production"|Param, // Default: "sandbox"
@@ -769,14 +772,6 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *     nowo_verifactu?: NowoVerifactuConfig,
  *     framework?: FrameworkConfig,
  *     twig?: TwigConfig,
- *     "when@dev"?: array{
- *         imports?: ImportsConfig,
- *         parameters?: ParametersConfig,
- *         services?: ServicesConfig,
- *         nowo_verifactu?: NowoVerifactuConfig,
- *         framework?: FrameworkConfig,
- *         twig?: TwigConfig,
- *     },
  *     "when@test"?: array{
  *         imports?: ImportsConfig,
  *         parameters?: ParametersConfig,
@@ -867,7 +862,6 @@ namespace Symfony\Component\Routing\Loader\Configurator;
  *     deprecated?: array{package:string, version:string, message?:string},
  * }
  * @psalm-type RoutesConfig = array{
- *     "when@dev"?: array<string, RouteConfig|ImportConfig|AliasConfig>,
  *     "when@test"?: array<string, RouteConfig|ImportConfig|AliasConfig>,
  *     ...<string, RouteConfig|ImportConfig|AliasConfig>
  * }

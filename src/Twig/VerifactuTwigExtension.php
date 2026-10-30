@@ -21,6 +21,8 @@ use function in_array;
 final class VerifactuTwigExtension extends AbstractExtension
 {
     /**
+     * Receives the QR services, the AEAT environment and the QR configuration.
+     *
      * @param array<string, mixed> $qrConfig
      */
     public function __construct(
@@ -31,6 +33,9 @@ final class VerifactuTwigExtension extends AbstractExtension
     ) {
     }
 
+    /**
+     * Registers the `verifactu_qr_data_uri()`, `verifactu_qr_url()` and `verifactu_legend()` Twig functions.
+     */
     public function getFunctions(): array
     {
         return [
@@ -40,16 +45,25 @@ final class VerifactuTwigExtension extends AbstractExtension
         ];
     }
 
+    /**
+     * Returns the QR code of the record as a PNG data URI.
+     */
     public function qrDataUri(BillingRecord $record): string
     {
         return $this->qrCodeGenerator->generateDataUri($record, $this->aeatEnvironment, $this->qrConfig);
     }
 
+    /**
+     * Returns the AEAT verification URL of the record.
+     */
     public function qrUrl(BillingRecord $record): string
     {
         return $this->qrUrlBuilder->buildUrl($record, $this->aeatEnvironment);
     }
 
+    /**
+     * Returns the mandatory invoice legend text.
+     */
     public function legend(): string
     {
         $legend = (string) ($this->qrConfig['legend'] ?? 'verifactu');
