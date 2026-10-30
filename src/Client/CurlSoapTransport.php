@@ -12,14 +12,20 @@ use function is_string;
 
 use const CURLINFO_HTTP_CODE;
 use const CURLOPT_CONNECTTIMEOUT;
+use const CURLOPT_FOLLOWLOCATION;
 use const CURLOPT_HTTPHEADER;
+use const CURLOPT_MAXFILESIZE;
 use const CURLOPT_POST;
 use const CURLOPT_POSTFIELDS;
+use const CURLOPT_PROTOCOLS;
 use const CURLOPT_RETURNTRANSFER;
+use const CURLOPT_SSL_VERIFYHOST;
+use const CURLOPT_SSL_VERIFYPEER;
 use const CURLOPT_SSLCERT;
 use const CURLOPT_SSLCERTPASSWD;
 use const CURLOPT_SSLCERTTYPE;
 use const CURLOPT_TIMEOUT;
+use const CURLPROTO_HTTPS;
 use const PATHINFO_EXTENSION;
 
 /**
@@ -32,6 +38,9 @@ use const PATHINFO_EXTENSION;
 final class CurlSoapTransport implements SoapTransportInterface
 {
     public const SERVICE_NAME = 'nowo_verifactu.client.curl_soap_transport';
+
+    /** Largest AEAT response accepted (bytes, when the server announces Content-Length). */
+    public const MAX_RESPONSE_BYTES = 10_485_760;
 
     /**
      * Posts the SOAP payload over mutual TLS with the client certificate and the configured timeout.
@@ -66,6 +75,13 @@ final class CurlSoapTransport implements SoapTransportInterface
             CURLOPT_TIMEOUT        => $timeout,
             CURLOPT_SSLCERT        => $certificatePath,
             CURLOPT_SSLCERTTYPE    => $certType,
+            // Explicit TLS policy: never follow redirects, HTTPS only, verify the AEAT certificate and host name,
+            // and cap the response size.
+            CURLOPT_PROTOCOLS      => CURLPROTO_HTTPS,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_MAXFILESIZE    => self::MAX_RESPONSE_BYTES,
             CURLOPT_HTTPHEADER     => [
                 'Content-Type: text/xml; charset=utf-8',
                 'SOAPAction: "' . $soapAction . '"',

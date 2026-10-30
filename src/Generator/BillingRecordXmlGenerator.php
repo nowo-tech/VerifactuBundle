@@ -13,6 +13,7 @@ use function htmlspecialchars;
 use function is_numeric;
 
 use const ENT_QUOTES;
+use const ENT_SUBSTITUTE;
 use const ENT_XML1;
 
 /**
@@ -231,6 +232,6 @@ final class BillingRecordXmlGenerator
 
     private function escape(string $value): string
     {
-        return htmlspecialchars(trim($value), ENT_XML1 | ENT_QUOTES, 'UTF-8');
+        return htmlspecialchars(trim($value), ENT_XML1 | ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     }
 }

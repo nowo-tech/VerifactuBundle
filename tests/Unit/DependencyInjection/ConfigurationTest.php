@@ -50,6 +50,13 @@ final class ConfigurationTest extends TestCase
         (new Processor())->processConfiguration(new Configuration(), [['doctrine' => ['table_prefix' => 'app-; DROP']]]);
     }
 
+    public function testDoctrineTablePrefixRejectsTrailingNewline(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+
+        (new Processor())->processConfiguration(new Configuration(), [['doctrine' => ['table_prefix' => "app_\n"]]]);
+    }
+
     public function testLegacyHashChainTablePrefixIsDeprecated(): void
     {
         $hashChain = (new Configuration())->getConfigTreeBuilder()->buildTree();

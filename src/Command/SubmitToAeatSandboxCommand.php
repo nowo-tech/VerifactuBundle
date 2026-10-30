@@ -61,7 +61,8 @@ final class SubmitToAeatSandboxCommand extends Command
             ->addOption('generated-at', null, InputOption::VALUE_REQUIRED, 'Generation timestamp (ISO 8601)')
             ->addOption('record-type', null, InputOption::VALUE_REQUIRED, 'Alta or Anulacion', 'Alta')
             ->addOption('submit', null, InputOption::VALUE_NONE, 'Submit to AEAT (requires certificate)')
-            ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Only validate and generate XML/hash without AEAT call');
+            ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Only validate and generate XML/hash without AEAT call')
+            ->addOption('allow-production', null, InputOption::VALUE_NONE, 'Allow --submit outside the sandbox environment (needs explicit --nif/--numserie and an interactive confirmation)');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -97,7 +98,10 @@ final class SubmitToAeatSandboxCommand extends Command
         }
 
         if ($submit && $this->environment !== 'sandbox') {
-            $io->warning(sprintf('Environment is "%s". Sandbox command is intended for sandbox testing.', $this->environment));
+            $refusal = $this->refuseNonSandboxSubmission($input, $io, $draft);
+            if ($refusal !== null) {
+                return $refusal;
+            }
         }
 
         // Without --submit (or with --dry-run) nothing is registered at the AEAT, so the configured
@@ -144,5 +148,34 @@ final class SubmitToAeatSandboxCommand extends Command
         }
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * A real AEAT registration cannot be undone: outside the sandbox, --submit needs --allow-production, explicit
+     * --nif / --numserie (the defaults are sandbox values) and an interactive confirmation.
+     */
+    private function refuseNonSandboxSubmission(InputInterface $input, SymfonyStyle $io, InvoiceDraft $draft): ?int
+    {
+        if (!(bool) $input->getOption('allow-production')) {
+            $io->error(sprintf('Refusing to submit to the AEAT "%s" environment: this command targets the sandbox. Pass --allow-production to override.', $this->environment));
+
+            return Command::FAILURE;
+        }
+
+        if (!$input->hasParameterOption('--nif', true) || !$input->hasParameterOption('--numserie', true)) {
+            $io->error('Outside the sandbox, pass --nif and --numserie explicitly.');
+
+            return Command::INVALID;
+        }
+
+        if (!$input->isInteractive() || !$io->confirm(sprintf('Register invoice "%s" of issuer %s at the AEAT "%s" environment? This cannot be undone.', $draft->invoiceSeriesNumber, $draft->issuerNif, $this->environment), false)) {
+            $io->error('Submission outside the sandbox was not confirmed.');
+
+            return Command::FAILURE;
+        }
+
+        $io->warning(sprintf('Submitting to the AEAT "%s" environment.', $this->environment));
+
+        return null;
     }
 }

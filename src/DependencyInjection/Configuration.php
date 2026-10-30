@@ -85,7 +85,7 @@ final class Configuration implements ConfigurationInterface
                             ->defaultValue('')
                             ->example('app_')
                             ->validate()
-                                ->ifTrue(static fn (mixed $v): bool => !is_string($v) || preg_match('/^[A-Za-z0-9_]*$/', $v) !== 1)
+                                ->ifTrue(static fn (mixed $v): bool => !is_string($v) || preg_match('/^[A-Za-z0-9_]*$/D', $v) !== 1)
                                 ->thenInvalid('nowo_verifactu.doctrine.table_prefix may only contain letters, digits and underscores, got %s.')
                             ->end()
                         ->end()

@@ -7,7 +7,7 @@ services:
     container_name: verifactu-demo-symfony8-php
     working_dir: /app
     ports:
-      - "${PORT:-8010}:80"
+      - "127.0.0.1:${PORT:-8010}:80"
     volumes:
       - .:/app
       - ../..:/var/verifactu-bundle

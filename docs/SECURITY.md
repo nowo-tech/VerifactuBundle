@@ -59,7 +59,9 @@ VerifactuBundle builds Spanish Veri*Factu billing records (registros de facturac
 | XXE / entity expansion when parsing XML | Low | Only bundle-generated XML is parsed with `DOMDocument::loadXML()` without `LIBXML_NOENT` / `LIBXML_DTDLOAD` (libxml ≥ 2.9 does not load external entities); AEAT responses are read with bounded regular expressions, not an XML parser. |
 | Hash chain tampering or forking | Yes (legal integrity) | The chain head is read and written inside `withChainLock()` (transaction + `SELECT … FOR UPDATE` in the Doctrine repository); a unique constraint on `issuer_nif` blocks a concurrent first insert; `nowo:verifactu:verify-hash` recomputes a record hash. Protect the table with database permissions. |
 | SSRF / request to an attacker-controlled host | No | Endpoints are fixed AEAT URLs chosen by `AeatEndpointResolver` from `mode` / `environment` / `certificate_type` (enums); no URL comes from input. |
-| Man-in-the-middle on AEAT submission | Low | cURL with default TLS peer and host verification plus client certificate (mTLS). |
+| Man-in-the-middle on AEAT submission | Low | cURL with explicit `CURLOPT_SSL_VERIFYPEER` / `CURLOPT_SSL_VERIFYHOST = 2`, HTTPS only (`CURLOPT_PROTOCOLS`), no redirects, a 10 MiB response cap, plus the client certificate (mTLS). |
+| Accidental production registration | Yes | `nowo:verifactu:submit-sandbox --submit` refuses non-sandbox environments unless `--allow-production`, explicit `--nif` / `--numserie` and an interactive confirmation are given. |
+| Chain lost between requests in production | Yes | The container refuses `aeat.environment: production` + an AEAT client + `hash_chain.storage: memory` without a custom repository. |
 | Denial of service (slow AEAT, huge payloads) | Yes | `aeat.timeout` (5–120 s, default 30) bounds `CURLOPT_TIMEOUT` and `CURLOPT_CONNECTTIMEOUT`; keep AEAT timeout < PHP `max_execution_time` < proxy timeout ([DEMO-FRANKENPHP](DEMO-FRANKENPHP.md)). |
 | XSS through Twig output | Low | `verifactu_qr_data_uri()` is marked safe but only returns `data:image/png;base64,…` built by the bundle; `verifactu_qr_url()` and `verifactu_legend()` are auto-escaped by Twig. |
 | CSRF / authorisation bypass | Not applicable | No HTTP endpoints, forms or routes. Hosts that expose invoice creation must protect their own routes. |
@@ -71,6 +73,9 @@ VerifactuBundle builds Spanish Veri*Factu billing records (registros de facturac
 
 ## Mitigations
 
+- **Business rules:** NIF / NIE letters and CIF control characters are checked; issue dates must be real calendar dates (`dd-mm-yyyy`); amounts must match the AEAT format (optional sign, up to 12 integer digits, up to 2 decimals). Invalid UTF-8 in text values is replaced (`ENT_SUBSTITUTE`) instead of producing an empty element. Field lengths are enforced by the XSD validation (enabled by default).
+- **Mutable record fields:** `BillingRecord::$previousHash`, `$hash`, `$xml` and `$signedXml` are public and writable (the `with*()` methods return copies). Treat a processed record as read-only; listeners of `BeforeBillingRecordGenerationEvent` may replace the record, listeners of the *after* event must not modify it.
+- **Host transaction:** the chain head is committed by `process()` before the host stores the invoice; store both in one transaction (see [CONFIGURATION.md](CONFIGURATION.md)).
 - **Validate, then hash:** `BillingRecordProcessor` validates business rules and (by default) the XSD before the record is chained and stored; do not disable `aeat.validate_xsd` or bypass `AeatBusinessRulesValidator` in production.
 - **Strict AEAT success detection:** a submission is successful only when the HTTP status is 2xx and `EstadoRegistro` = `Correcto`; missing status, `AceptadoConErrores`, `Incorrecto`, SOAP faults and non-2xx responses are failures.
 - **Dry runs do not advance the chain:** `nowo:verifactu:submit-sandbox` without `--submit` (or with `--dry-run`) never stores a new chain head.
@@ -80,10 +85,11 @@ VerifactuBundle builds Spanish Veri*Factu billing records (registros de facturac
 ## Secrets and cryptography
 
 - **Certificates and passwords** come from configuration backed by environment variables (`AEAT_CERT_PATH`, `AEAT_CERT_PASSWORD`) or Symfony secrets; never commit certificate files or passwords. Restrict certificate file permissions (e.g. `0600`) and rotate them before expiry.
-- Certificate passwords are `#[\SensitiveParameter]` in `CertificateLoader::load()` and `CurlSoapTransport::send()`, so they are redacted from stack traces.
+- Certificate passwords are `#[\SensitiveParameter]` in `CertificateLoader`, `CurlSoapTransport::send()`, `SoapAeatSubmissionClient` and `XadesBillingRecordSigner`, so they are redacted from stack traces; the loaded key material never carries the password. Configure `certificate_password: '%env(AEAT_CERT_PASSWORD)%'`; `scripts/aeat-sandbox-submit.php` reads `AEAT_CERT_PASSWORD` and warns when `--cert-password` is used (visible in the process list).
+- **PEM certificates:** a `.pem` file must contain the private key (optionally encrypted) and its certificate; the loader exports the private key and the first certificate separately and refuses a file without a certificate or with a certificate that does not match the key.
 - **Hash chain:** SHA-256 over the AEAT-defined fields (validated against the official AEAT vectors); the hash is integrity evidence, not a secret.
 - **Signing:** private keys are loaded in memory only while signing. **Known limitation:** `XadesBillingRecordSigner` emits a plain enveloped XML-DSig signature (RSA-SHA256, exclusive C14N), not full XAdES (no `QualifyingProperties` / `SignedProperties`), so No-Veri*Factu records signed by the bundle do not yet meet the AEAT XAdES requirement. Provide your own `BillingRecordSignerInterface` if you need XAdES today.
-- No secrets are hard-coded; test fixtures use throwaway certificates and placeholder passwords.
+- No secrets are hard-coded; test fixtures use throwaway certificates and placeholder passwords, PEM tests generate their keys at runtime, and `tests/`, `demo/`, `scripts/` and tooling are `export-ignore`d from dist archives.
 
 ## Logging
 
@@ -128,9 +134,11 @@ Record confirmation in the release PR or tag notes.
 
 | Field | Value |
 |-------|--------|
-| Date | 2026-07-30 |
-| Method | Cursor / Nowo static AI security review (diff + baseline AEAT/mTLS / certs / hash / XAdES / Twig) |
+| Date | 2026-10-30 |
+| Method | Independent static AI security review of `main` 9efb999 (1.3.0) |
 | Grade | **Pass (good)** |
-| Overall risk | **Medium** (host-owned certificates + AEAT network; unchanged by this remediation) |
+| Overall risk | **Low** |
 | Open Critical / High / Medium | None |
-| Notes | Certs via env only; mTLS to official AEAT endpoints; SOAP timeout hierarchy in demos; hash chain storage host-owned |
+| Low | L1 PEM loader returned the public key and the whole PEM file; L2 `submit-sandbox --submit` only warned outside the sandbox; L3 production + SOAP client + memory storage was accepted; L4 tests / demos / tooling shipped in dist archives → **Fixed in the next release** |
+| Notes | Info items addressed: CIF check digit, calendar dates, strict AEAT amounts, `ENT_SUBSTITUTE`, `table_prefix` regex anchored with `D`, `#[SensitiveParameter]` on every certificate password, explicit cURL TLS policy (HTTPS only, no redirects, peer/host verification, response size cap), demo bound to 127.0.0.1 with masked NIF logs, `twig/twig` ≥ 3.19, host transaction and `BillingRecord` mutability documented |
+| Record | Monorepo `BUNDLES_SECURITY_ANALYSIS.md`, Appendix BI |

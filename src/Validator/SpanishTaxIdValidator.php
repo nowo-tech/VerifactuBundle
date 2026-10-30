@@ -68,8 +68,35 @@ final class SpanishTaxIdValidator
         return $this->isValidNif($prefix . substr($taxId, 1));
     }
 
+    /**
+     * CIF: entity letter, 7 digits and a control character computed from the digits. P, Q, R, S, W and N entities
+     * use the control letter; A, B, E and H use the control digit; the other entity letters accept either.
+     */
     private function isValidCif(string $taxId): bool
     {
-        return (bool) preg_match('/^[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]$/', $taxId);
+        if (!preg_match('/^[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]$/', $taxId)) {
+            return false;
+        }
+
+        $sum = 0;
+        for ($position = 1; $position <= 7; ++$position) {
+            $digit = (int) $taxId[$position];
+            if ($position % 2 === 1) {
+                $doubled = $digit * 2;
+                $sum += intdiv($doubled, 10) + $doubled % 10;
+            } else {
+                $sum += $digit;
+            }
+        }
+
+        $controlDigit  = (10 - $sum % 10) % 10;
+        $controlLetter = 'JABCDEFGHI'[$controlDigit];
+        $control       = $taxId[8];
+
+        return match (true) {
+            str_contains('PQRSWN', $taxId[0]) => $control === $controlLetter,
+            str_contains('ABEH', $taxId[0])   => $control === (string) $controlDigit,
+            default                           => $control === (string) $controlDigit || $control === $controlLetter,
+        };
     }
 }

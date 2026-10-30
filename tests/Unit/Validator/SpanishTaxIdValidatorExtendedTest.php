@@ -27,7 +27,20 @@ final class SpanishTaxIdValidatorExtendedTest extends TestCase
 
     public function testValidCifIsAccepted(): void
     {
-        self::assertTrue($this->validator->isValid('B12345678'));
+        self::assertTrue($this->validator->isValid('B12345674'));
+        self::assertTrue($this->validator->isValid('Q2826000H'));
+        self::assertTrue($this->validator->isValid('P1234567D'));
+        self::assertTrue($this->validator->isValid('G12345674'));
+        self::assertTrue($this->validator->isValid('G1234567D'));
+    }
+
+    public function testCifWithWrongControlCharacterIsRejected(): void
+    {
+        self::assertFalse($this->validator->isValid('B12345678'));
+        self::assertFalse($this->validator->isValid('B1234567D'));
+        self::assertFalse($this->validator->isValid('P12345674'));
+        self::assertFalse($this->validator->isValid('Q2826000A'));
+        self::assertFalse($this->validator->isValid('G12345675'));
     }
 
     public function testInvalidTaxIdIsRejected(): void

@@ -27,7 +27,7 @@ final class CertificateLoader
     /**
      * Loads a PKCS#12 or PEM certificate and returns its private key and certificate in PEM.
      *
-     * @return array{private_key: string, certificate: string, path: string, password: string|null}
+     * @return array{private_key: string, certificate: string, path: string}
      */
     public function load(string $path, #[SensitiveParameter] ?string $password = null): array
     {
@@ -45,7 +45,7 @@ final class CertificateLoader
     }
 
     /**
-     * @return array{private_key: string, certificate: string, path: string, password: string|null}
+     * @return array{private_key: string, certificate: string, path: string}
      */
     private function loadPkcs12(string $path, #[SensitiveParameter] ?string $password): array
     {
@@ -65,34 +65,47 @@ final class CertificateLoader
             'private_key' => $certs['pkey'],
             'certificate' => $certs['cert'],
             'path'        => $path,
-            'password'    => $password,
         ];
     }
 
     /**
-     * @return array{private_key: string, certificate: string, path: string, password: string|null}
+     * @return array{private_key: string, certificate: string, path: string}
      */
     private function loadPem(string $path, #[SensitiveParameter] ?string $password): array
     {
-        $privateKey = openssl_pkey_get_private(file_get_contents($path) ?: '', $password ?? '');
-        if ($privateKey === false) {
-            throw new InvalidArgumentException('Unable to load PEM private key.');
-        }
-
-        $details = openssl_pkey_get_details($privateKey);
+        $contents = file_get_contents($path);
         // @codeCoverageIgnoreStart
-        if ($details === false || !isset($details['key'])) {
-            throw new InvalidArgumentException('Unable to export PEM private key.');
+        if ($contents === false) {
+            throw new InvalidArgumentException(sprintf('Unable to read certificate: %s', $path));
         }
         // @codeCoverageIgnoreEnd
 
-        $certificate = file_get_contents($path) ?: '';
+        $privateKey = openssl_pkey_get_private($contents, $password ?? '');
+        if ($privateKey === false) {
+            throw new InvalidArgumentException('Unable to load PEM private key. Check path and password.');
+        }
+
+        $certificate = str_contains($contents, '-----BEGIN CERTIFICATE-----') ? @openssl_x509_read($contents) : false;
+        if ($certificate === false) {
+            throw new InvalidArgumentException('The PEM file contains no X.509 certificate: put the certificate and its private key in the same file.');
+        }
+
+        if (!openssl_x509_check_private_key($certificate, $privateKey)) {
+            throw new InvalidArgumentException('The PEM certificate does not match its private key.');
+        }
+
+        $exportedKey         = '';
+        $exportedCertificate = '';
+        // @codeCoverageIgnoreStart
+        if (!openssl_pkey_export($privateKey, $exportedKey) || !openssl_x509_export($certificate, $exportedCertificate)) {
+            throw new InvalidArgumentException('Unable to export the PEM key material.');
+        }
+        // @codeCoverageIgnoreEnd
 
         return [
-            'private_key' => $details['key'],
-            'certificate' => $certificate,
+            'private_key' => $exportedKey,
+            'certificate' => $exportedCertificate,
             'path'        => $path,
-            'password'    => $password,
         ];
     }
 }

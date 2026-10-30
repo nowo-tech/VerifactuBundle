@@ -48,7 +48,7 @@
         "symfony/translation": "^6.4 || ^7.0 || ^8.0",
         "symfony/twig-bridge": "^6.4 || ^7.0 || ^8.0",
         "symfony/yaml": "^6.4 || ^7.0 || ^8.0",
-        "twig/twig": "^3.0"
+        "twig/twig": "^3.19"
     },
     "require-dev": {
         "doctrine/doctrine-bundle": "^2.18 || ^3.2",
@@ -95,7 +95,14 @@
     "archive": {
         "exclude": [
             "/demo",
-            "/.cursor"
+            "/.cursor",
+            "/.specify",
+            "/.github",
+            "/.githooks",
+            "/.scripts",
+            "/scripts",
+            "/specs",
+            "/tests"
         ]
     },
     "scripts": {

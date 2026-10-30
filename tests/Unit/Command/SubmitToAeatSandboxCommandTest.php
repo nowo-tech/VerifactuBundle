@@ -35,20 +35,68 @@ use function dirname;
  */
 final class SubmitToAeatSandboxCommandTest extends TestCase
 {
-    public function testWarnsWhenSubmitRunsOutsideSandboxEnvironment(): void
+    public function testRefusesSubmitOutsideSandboxWithoutAllowProduction(): void
     {
-        $tester = $this->createTester(
-            $this->createProcessor(new NullAeatSubmissionClient()),
-            certificatePath: '/tmp/cert.p12',
-            environment: 'production',
-        );
+        $tester = $this->createTester($this->createProcessor(new NullAeatSubmissionClient()), certificatePath: '/tmp/cert.p12', environment: 'production');
+
+        self::assertSame(1, $tester->execute([
+            '--nif'      => '89890001K',
+            '--numserie' => 'FAC-2026-001',
+            '--submit'   => true,
+        ]));
+        self::assertStringContainsString('Refusing to submit to the AEAT "production" environment', $tester->getDisplay());
+        self::assertStringNotContainsString('AEAT submission OK', $tester->getDisplay());
+    }
+
+    public function testRequiresExplicitIssuerAndNumberOutsideSandbox(): void
+    {
+        $tester = $this->createTester($this->createProcessor(new NullAeatSubmissionClient()), certificatePath: '/tmp/cert.p12', environment: 'production');
+
+        self::assertSame(2, $tester->execute(['--submit' => true, '--allow-production' => true]));
+        self::assertStringContainsString('pass --nif and --numserie explicitly', $tester->getDisplay());
+    }
+
+    public function testRefusesNonInteractiveSubmitOutsideSandbox(): void
+    {
+        $tester = $this->createTester($this->createProcessor(new NullAeatSubmissionClient()), certificatePath: '/tmp/cert.p12', environment: 'production');
+
+        self::assertSame(1, $tester->execute([
+            '--nif'              => '89890001K',
+            '--numserie'         => 'FAC-2026-001',
+            '--submit'           => true,
+            '--allow-production' => true,
+        ], ['interactive' => false]));
+        self::assertStringContainsString('was not confirmed', $tester->getDisplay());
+    }
+
+    public function testRefusesSubmitOutsideSandboxWhenNotConfirmed(): void
+    {
+        $tester = $this->createTester($this->createProcessor(new NullAeatSubmissionClient()), certificatePath: '/tmp/cert.p12', environment: 'production');
+        $tester->setInputs(['no']);
+
+        self::assertSame(1, $tester->execute([
+            '--nif'              => '89890001K',
+            '--numserie'         => 'FAC-2026-001',
+            '--submit'           => true,
+            '--allow-production' => true,
+        ]));
+        self::assertStringContainsString('was not confirmed', $tester->getDisplay());
+    }
+
+    public function testSubmitsOutsideSandboxWhenAllowedAndConfirmed(): void
+    {
+        $tester = $this->createTester($this->createProcessor(new NullAeatSubmissionClient()), certificatePath: '/tmp/cert.p12', environment: 'production');
+        $tester->setInputs(['yes']);
 
         self::assertSame(0, $tester->execute([
-            '--fecha'        => '09-07-2026',
-            '--generated-at' => '2026-07-09T16:00:00+02:00',
-            '--submit'       => true,
+            '--nif'              => '89890001K',
+            '--numserie'         => 'FAC-2026-001',
+            '--fecha'            => '09-07-2026',
+            '--generated-at'     => '2026-07-09T16:00:00+02:00',
+            '--submit'           => true,
+            '--allow-production' => true,
         ]));
-        self::assertStringContainsString('Environment is "production"', $tester->getDisplay());
+        self::assertStringContainsString('Submitting to the AEAT "production" environment', $tester->getDisplay());
         self::assertStringContainsString('AEAT submission OK', $tester->getDisplay());
     }
 

@@ -29,8 +29,9 @@ final class VerifactuAuditSubscriber implements EventSubscriberInterface
     public function onRecordGenerated(AfterBillingRecordGeneratedEvent $event): void
     {
         $record = $event->getRecord();
+        // The issuer NIF of a self-employed person is personal data: log only its last characters.
         $this->logger->info('Veri*Factu billing record generated', [
-            'nif'         => $record->issuerNif,
+            'nif'         => '***' . substr($record->issuerNif, -3),
             'numserie'    => $record->invoiceSeriesNumber,
             'hash'        => $record->hash,
             'record_type' => $record->recordType->value,

@@ -30,6 +30,15 @@
 
 ## Unreleased
 
+Behaviour changes (security hardening):
+
+- **Production with memory storage now fails at container build.** `aeat.environment: production` together with `aeat.certificate_path` (or `aeat.submission_client`) requires `hash_chain.storage: doctrine` or a persistent `hash_chain.repository`. Before, every request silently started a new hash chain.
+- **`nowo:verifactu:submit-sandbox --submit` refuses non-sandbox environments.** Add `--allow-production`, pass `--nif` and `--numserie` explicitly and confirm the prompt (scripts running non-interactively are refused).
+- **CIF check digit enforced.** Issuer CIFs with a wrong control character (e.g. the placeholder `B12345678`) are now reported as `validation.issuer_nif.invalid`.
+- **Stricter dates and amounts.** Impossible dates (`31-02-2026`) and amounts like `1e3`, `121.005` or with more than 12 integer digits are rejected. Format amounts with `number_format($value, 2, '.', '')`.
+- **PEM certificates** must contain both the private key and the matching certificate; `CertificateLoader::load()` no longer returns a `password` key.
+- `twig/twig` `^3.19` is required.
+
 ## To 1.3.0
 
 From **1.2.0**:

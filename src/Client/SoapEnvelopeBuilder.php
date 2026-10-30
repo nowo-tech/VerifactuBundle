@@ -7,6 +7,7 @@ namespace Nowo\VerifactuBundle\Client;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 
 use const ENT_QUOTES;
+use const ENT_SUBSTITUTE;
 use const ENT_XML1;
 
 /**
@@ -39,8 +40,8 @@ final class SoapEnvelopeBuilder
         $envelope .= '<sfLR:RegFactuSistemaFacturacion>';
         $envelope .= '<sfLR:Cabecera>';
         $envelope .= '<sf:ObligadoEmision>';
-        $envelope .= '<sf:NombreRazon>' . htmlspecialchars($issuerName, ENT_XML1 | ENT_QUOTES, 'UTF-8') . '</sf:NombreRazon>';
-        $envelope .= '<sf:NIF>' . htmlspecialchars($record->issuerNif, ENT_XML1 | ENT_QUOTES, 'UTF-8') . '</sf:NIF>';
+        $envelope .= '<sf:NombreRazon>' . htmlspecialchars($issuerName, ENT_XML1 | ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</sf:NombreRazon>';
+        $envelope .= '<sf:NIF>' . htmlspecialchars($record->issuerNif, ENT_XML1 | ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</sf:NIF>';
         $envelope .= '</sf:ObligadoEmision>';
         $envelope .= '</sfLR:Cabecera>';
         $envelope .= '<sfLR:RegistroFactura>';
