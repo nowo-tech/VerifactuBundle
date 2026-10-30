@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [[Unreleased]](#unreleased)
+- [[1.3.0] - 2026-10-30](#130---2026-10-30)
 - [[1.2.0] - 2026-10-13](#120---2026-10-13)
 - [[1.1.0] - 2026-10-13](#110---2026-10-13)
 - [[1.0.12] - 2026-10-13](#1012---2026-10-13)
@@ -25,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [[1.0.0] - 2026-07-18](#100---2026-07-18)
 
 ## [Unreleased]
+
+## [1.3.0] - 2026-10-30
+
+doctrine.table_prefix (TablePrefixListener), SECURITY.md threat model, SensitiveParameter on certificate passwords, PHP 8.5 curl_close deprecation See [UPGRADING](UPGRADING.md#to-130).
 
 ### Added
 
@@ -285,7 +290,8 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.12...v1.1.0
 [1.0.12]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.11...v1.0.12

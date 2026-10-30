@@ -3,6 +3,7 @@
 ## Table of contents
 
 - [Unreleased](#unreleased)
+- [To 1.3.0](#to-130)
 - [To 1.2.0](#to-120)
 - [To 1.1.0](#to-110)
 - [To 1.0.12](#to-1012)
@@ -28,6 +29,14 @@
 - [From 1.0.7 to 1.0.8](#from-107-to-108)
 
 ## Unreleased
+
+## To 1.3.0
+
+From **1.2.0**:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
 
 No change is required: with the default configuration the table keeps its name (`verifactu_hash_chain`).
 
