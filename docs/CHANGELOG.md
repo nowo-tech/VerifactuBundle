@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [[Unreleased]](#unreleased)
+- [[1.4.0] - 2026-10-30](#140---2026-10-30)
 - [[1.3.0] - 2026-10-30](#130---2026-10-30)
 - [[1.2.0] - 2026-10-13](#120---2026-10-13)
 - [[1.1.0] - 2026-10-13](#110---2026-10-13)
@@ -26,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [[1.0.0] - 2026-07-18](#100---2026-07-18)
 
 ## [Unreleased]
+
+## [1.4.0] - 2026-10-30
+
+SEC-004 hardening: PEM loader fix, submit-sandbox refuses production, production requires persistent hash chain, CIF check digit, strict dates/amounts, explicit cURL TLS policy, dist export-ignore See [UPGRADING](UPGRADING.md#to-140).
 
 Security hardening from the independent SEC-004 review of 1.3.0 (Pass (good) / Low, Appendix BI). See [UPGRADING](UPGRADING.md#unreleased).
 
@@ -314,7 +319,8 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.0.12...v1.1.0
