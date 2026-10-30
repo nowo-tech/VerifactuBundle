@@ -25,6 +25,9 @@ class XsdValidator
     public const SCHEMA_REGISTRO_ANULACION = 'registro_anulacion';
     public const SCHEMA_SOAP_SUBMISSION    = 'soap_submission';
 
+    /**
+     * Receives the translator and whether XSD validation is enabled.
+     */
     public function __construct(
         private readonly TranslatorInterface $translator,
         private readonly bool $enabled = true,
@@ -32,6 +35,8 @@ class XsdValidator
     }
 
     /**
+     * Validates the XML against the AEAT XSD schema of the given type.
+     *
      * @return list<string> Validation errors (empty when valid)
      */
     public function validate(string $xml, string $schemaType = self::SCHEMA_REGISTRO_ALTA): array
@@ -75,6 +80,9 @@ class XsdValidator
         return [$this->formatLibxmlErrors('validation.xml.xsd.failed', $schemaErrors)];
     }
 
+    /**
+     * Validates the XML and throws when it does not match the schema.
+     */
     public function assertValid(string $xml, string $schemaType = self::SCHEMA_REGISTRO_ALTA): void
     {
         $errors = $this->validate($xml, $schemaType);

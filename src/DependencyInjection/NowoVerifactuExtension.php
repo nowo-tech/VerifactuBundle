@@ -9,6 +9,7 @@ use LogicException;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
+use Nowo\VerifactuBundle\Doctrine\TablePrefixListener;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
@@ -17,6 +18,7 @@ use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
 use Symfony\Component\Config\Definition\Processor;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Extension\Extension;
 use Symfony\Component\DependencyInjection\Extension\PrependExtensionInterface;
 use Symfony\Component\DependencyInjection\Loader\YamlFileLoader;
@@ -30,6 +32,8 @@ use Symfony\Component\DependencyInjection\Loader\YamlFileLoader;
 final class NowoVerifactuExtension extends Extension implements PrependExtensionInterface
 {
     /**
+     * Loads the services and exposes the processed configuration as container parameters.
+     *
      * @param array<int, array<string, mixed>> $configs
      */
     public function load(array $configs, ContainerBuilder $container): void
@@ -64,12 +68,17 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         $container->setParameter('nowo_verifactu.aeat.timeout', $config['aeat']['timeout']);
         $container->setParameter('nowo_verifactu.aeat.validate_xsd', $config['aeat']['validate_xsd']);
         $container->setParameter('nowo_verifactu.aeat.sign_xades', $config['aeat']['sign_xades']);
+        $container->setParameter('nowo_verifactu.doctrine.table_prefix', $config['doctrine']['table_prefix']);
 
         $this->configureHashChainRepository($container, $config);
         $this->configureSubmissionClient($container, $config);
         $this->configureSigner($container, $config);
+        $this->registerTablePrefixListener($container);
     }
 
+    /**
+     * Registers the Doctrine attribute mapping of the bundle entities when DoctrineBundle is enabled.
+     */
     public function prepend(ContainerBuilder $container): void
     {
         if (!$container->hasExtension('doctrine')) {
@@ -91,6 +100,9 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         ]);
     }
 
+    /**
+     * Returns the configuration alias `nowo_verifactu`.
+     */
     public function getAlias(): string
     {
         return Configuration::ALIAS;
@@ -153,5 +165,17 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         ) {
             $container->setAlias(BillingRecordSignerInterface::class, XadesBillingRecordSigner::class);
         }
+    }
+
+    /**
+     * Applies doctrine.table_prefix to the bundle entity metadata (REQ-ORM-002); no-op while the prefix is empty.
+     * Without DoctrineBundle the `doctrine.event_listener` tag is never collected and the private service is removed.
+     */
+    private function registerTablePrefixListener(ContainerBuilder $container): void
+    {
+        $container->setDefinition(TablePrefixListener::class, (new Definition(TablePrefixListener::class))
+            ->setArgument('$tablePrefix', '%nowo_verifactu.doctrine.table_prefix%')
+            ->addTag('doctrine.event_listener', ['event' => 'loadClassMetadata'])
+            ->setPublic(false));
     }
 }

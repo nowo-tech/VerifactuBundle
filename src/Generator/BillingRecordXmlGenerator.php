@@ -29,6 +29,8 @@ final class BillingRecordXmlGenerator
     public const NS_SUMINISTRO = 'https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/aplicaciones/es/aeat/tike/cont/ws/SuministroInformacion.xsd';
 
     /**
+     * Renders the billing record XML (RegistroAlta or RegistroAnulacion).
+     *
      * @param array<string, mixed> $issuerConfig
      * @param array<string, mixed> $softwareConfig
      * @param array<string, mixed> $installationConfig

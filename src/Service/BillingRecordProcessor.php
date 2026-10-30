@@ -33,6 +33,8 @@ final class BillingRecordProcessor
     public const SERVICE_NAME = 'nowo_verifactu.service.billing_record_processor';
 
     /**
+     * Receives the generators, validators, signer, repository, submission client and bundle configuration.
+     *
      * @param array<string, mixed> $issuerConfig
      * @param array<string, mixed> $softwareConfig
      * @param array<string, mixed> $installationConfig
@@ -55,6 +57,8 @@ final class BillingRecordProcessor
     }
 
     /**
+     * Chains, renders, validates and signs the record, stores the new chain head and optionally submits it to the AEAT.
+     *
      * @param bool $persistChainState When false (dry runs), the record is chained onto the current head but
      *                                the new state is NOT stored, so the persistent hash chain is left untouched
      *

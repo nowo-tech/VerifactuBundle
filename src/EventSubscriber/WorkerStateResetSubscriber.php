@@ -21,12 +21,17 @@ use Symfony\Component\HttpKernel\KernelEvents;
  */
 final class WorkerStateResetSubscriber implements EventSubscriberInterface
 {
+    /**
+     * Receives the in-memory hash chain repository to clear.
+     */
     public function __construct(
         private readonly InMemoryHashChainRepository $inMemoryHashChainRepository,
     ) {
     }
 
     /**
+     * Subscribes to `kernel.request` with a high priority.
+     *
      * @return array<string, array{0: string, 1: int}>
      */
     public static function getSubscribedEvents(): array
@@ -36,6 +41,9 @@ final class WorkerStateResetSubscriber implements EventSubscriberInterface
         ];
     }
 
+    /**
+     * Clears the in-memory hash chain at the start of every main request.
+     */
     public function onKernelRequest(RequestEvent $event): void
     {
         if (!$event->isMainRequest()) {

@@ -26,6 +26,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`doctrine.table_prefix` (REQ-ORM-002).** New option `nowo_verifactu.doctrine.table_prefix` (default `''`, letters / digits / underscores only). A Doctrine `loadClassMetadata` listener (`Nowo\VerifactuBundle\Doctrine\TablePrefixListener`) prepends it to the `verifactu_hash_chain` table, its unique constraint and any many-to-many join table of bundle entities (e.g. `app_` yields `app_verifactu_hash_chain`). Host and third-party entities are never touched; the default keeps the historical name.
+
+### Security
+
+- Certificate passwords are `#[\SensitiveParameter]` in `CertificateLoader::load()` and `CurlSoapTransport::send()` (redacted from stack traces).
+
+### Fixed
+
+- `CurlSoapTransport` no longer calls `curl_close()` (no effect since PHP 8.0, deprecated in PHP 8.5).
+
+### Deprecated
+
+- `nowo_verifactu.hash_chain.table_prefix` was never applied; setting it now triggers a deprecation pointing to `doctrine.table_prefix`. It is still accepted and still has no effect.
 
 ### Changed
 
@@ -43,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- PHPDoc descriptions on every public method in `src/` (REQ-CS-001).
+- `docs/SECURITY.md` restructured as a security analysis: scope, attack surface, threat model (threat → mitigation), secrets and cryptography, logging policy, dependency policy, exposure (REQ-SEC-001).
+- `docs/CONFIGURATION.md` documents `doctrine.table_prefix` with the resulting table names.
 - Documentation: wave-1 REQ compliance — README documentation list order (canonical labels, PSR under Additional documentation), Symfony badge lists 7.4 explicitly and GitHub stars image uses the package name, canonical issue templates, demo README links DEMO-FRANKENPHP, per-variable comments in the demo `.env.example`, CONTRIBUTING Cursor Agent settings, TOCs for long docs, Spec Kit inventory refresh (55/55, LockableHashChainRepositoryInterface).
 
 ## [1.2.0] - 2026-10-13

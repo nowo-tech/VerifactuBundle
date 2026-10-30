@@ -39,12 +39,18 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
 
     private readonly ManagerRegistry $managerRegistry;
 
+    /**
+     * Receives the Doctrine registry managing the BillingRecordHashChain entity.
+     */
     public function __construct(ManagerRegistry $registry)
     {
         parent::__construct($registry, BillingRecordHashChain::class);
         $this->managerRegistry = $registry;
     }
 
+    /**
+     * Returns the current chain head (last record state) of the issuer, or null when the chain is empty.
+     */
     public function getLastState(string $issuerNif): ?HashChainState
     {
         $entityManager = $this->resolveEntityManager();
@@ -64,6 +70,9 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
         return $state;
     }
 
+    /**
+     * Runs the operation in a transaction holding a pessimistic write lock on the issuer chain row.
+     */
     public function withChainLock(string $issuerNif, callable $operation): mixed
     {
         $entityManager = $this->resolveEntityManager();
@@ -97,6 +106,9 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
         }
     }
 
+    /**
+     * Stores the new chain head of the issuer.
+     */
     public function storeLastState(HashChainState $state): void
     {
         $entityManager = $this->resolveEntityManager();
@@ -124,6 +136,9 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
         }
     }
 
+    /**
+     * Removes the chain head of the issuer (the next record starts a new chain).
+     */
     public function reset(string $issuerNif): void
     {
         $entityManager = $this->resolveEntityManager();
@@ -141,11 +156,17 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
         }
     }
 
+    /**
+     * Returns the hash of the current chain head of the issuer (deprecated: use getLastState()).
+     */
     public function getLastHash(string $issuerNif): ?string
     {
         return $this->getLastState($issuerNif)?->hash;
     }
 
+    /**
+     * Stores only a hash as chain head of the issuer (deprecated: use storeLastState()).
+     */
     public function storeLastHash(string $issuerNif, string $hash): void
     {
         $existing = $this->getLastState($issuerNif);

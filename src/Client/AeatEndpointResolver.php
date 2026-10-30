@@ -14,6 +14,9 @@ final class AeatEndpointResolver
 {
     public const SOAP_ACTION_ALTA = 'https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/aplicaciones/es/aeat/tike/cont/ws/SistemaFacturacion/altaRegistroFactura';
 
+    /**
+     * Returns the AEAT SOAP endpoint URL for the mode, environment and certificate type.
+     */
     public function resolve(string $mode, string $environment, string $certificateType = 'personal'): string
     {
         $isSandbox = $environment === 'sandbox';

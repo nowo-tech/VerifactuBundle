@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Certificate;
 
 use InvalidArgumentException;
+use SensitiveParameter;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
 use function in_array;
@@ -24,9 +25,11 @@ final class CertificateLoader
     public const SERVICE_NAME = 'nowo_verifactu.certificate.loader';
 
     /**
+     * Loads a PKCS#12 or PEM certificate and returns its private key and certificate in PEM.
+     *
      * @return array{private_key: string, certificate: string, path: string, password: string|null}
      */
-    public function load(string $path, ?string $password = null): array
+    public function load(string $path, #[SensitiveParameter] ?string $password = null): array
     {
         if (!is_file($path)) {
             throw new InvalidArgumentException(sprintf('Certificate file not found: %s', $path));
@@ -44,7 +47,7 @@ final class CertificateLoader
     /**
      * @return array{private_key: string, certificate: string, path: string, password: string|null}
      */
-    private function loadPkcs12(string $path, ?string $password): array
+    private function loadPkcs12(string $path, #[SensitiveParameter] ?string $password): array
     {
         $contents = file_get_contents($path);
         // @codeCoverageIgnoreStart
@@ -69,7 +72,7 @@ final class CertificateLoader
     /**
      * @return array{private_key: string, certificate: string, path: string, password: string|null}
      */
-    private function loadPem(string $path, ?string $password): array
+    private function loadPem(string $path, #[SensitiveParameter] ?string $password): array
     {
         $privateKey = openssl_pkey_get_private(file_get_contents($path) ?: '', $password ?? '');
         if ($privateKey === false) {

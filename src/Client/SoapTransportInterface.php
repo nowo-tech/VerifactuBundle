@@ -13,6 +13,8 @@ namespace Nowo\VerifactuBundle\Client;
 interface SoapTransportInterface
 {
     /**
+     * Sends a SOAP request with the client certificate and returns the HTTP status and body.
+     *
      * @return array{status_code: int, body: string, error?: string}
      */
     public function send(string $endpoint, string $soapAction, string $payload, string $certificatePath, ?string $certificatePassword, int $timeout): array;

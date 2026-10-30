@@ -18,6 +18,8 @@ use Nowo\VerifactuBundle\Model\TaxBreakdown;
 final class InvoiceDraft
 {
     /**
+     * Creates an invoice draft with the data needed to build a billing record.
+     *
      * @param list<\Nowo\VerifactuBundle\Model\InvoiceLine> $lines
      * @param list<TaxBreakdown> $taxBreakdown
      */

@@ -12,6 +12,9 @@ namespace Nowo\VerifactuBundle\Model;
  */
 final class InvoiceLine
 {
+    /**
+     * Creates one invoice line.
+     */
     public function __construct(
         public readonly string $description,
         public readonly string $quantity,

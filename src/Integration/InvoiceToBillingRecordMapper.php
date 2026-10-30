@@ -18,6 +18,9 @@ final class InvoiceToBillingRecordMapper
 {
     public const SERVICE_NAME = 'nowo_verifactu.integration.invoice_to_billing_record_mapper';
 
+    /**
+     * Maps a host invoice draft to a billing record.
+     */
     public function map(InvoiceDraft $invoice): BillingRecord
     {
         return new BillingRecord(

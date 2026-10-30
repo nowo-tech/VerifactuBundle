@@ -20,6 +20,9 @@ final class AeatBusinessRulesValidator
 {
     public const SERVICE_NAME = 'nowo_verifactu.validator.aeat_business_rules';
 
+    /**
+     * Receives the Spanish tax id validator and the translator.
+     */
     public function __construct(
         private readonly SpanishTaxIdValidator $taxIdValidator,
         private readonly TranslatorInterface $translator,
@@ -27,6 +30,8 @@ final class AeatBusinessRulesValidator
     }
 
     /**
+     * Checks the record against the AEAT business rules.
+     *
      * @return list<string> Validation error messages (empty when valid)
      */
     public function validate(BillingRecord $record): array

@@ -41,6 +41,9 @@ class BillingRecordHashChain
     #[ORM\Column(name: 'updated_at', type: Types::DATETIME_IMMUTABLE)]
     private DateTimeImmutable $updatedAt;
 
+    /**
+     * Creates the chain head row of an issuer.
+     */
     public function __construct(
         string $issuerNif,
         string $invoiceSeriesNumber,
@@ -54,36 +57,57 @@ class BillingRecordHashChain
         $this->updatedAt           = new DateTimeImmutable();
     }
 
+    /**
+     * Returns the database identifier (null before the first flush).
+     */
     public function getId(): ?int
     {
         return $this->id;
     }
 
+    /**
+     * Returns the issuer NIF (normalised, upper case).
+     */
     public function getIssuerNif(): string
     {
         return $this->issuerNif;
     }
 
+    /**
+     * Returns the series and number of the last chained invoice.
+     */
     public function getInvoiceSeriesNumber(): string
     {
         return $this->invoiceSeriesNumber;
     }
 
+    /**
+     * Returns the issue date of the last chained invoice (dd-mm-yyyy).
+     */
     public function getIssueDate(): string
     {
         return $this->issueDate;
     }
 
+    /**
+     * Returns the hash of the last chained record.
+     */
     public function getHash(): string
     {
         return $this->hash;
     }
 
+    /**
+     * Returns when the chain head was last written.
+     */
     public function getUpdatedAt(): DateTimeImmutable
     {
         return $this->updatedAt;
     }
 
+    /**
+     * Moves the chain head to a new record.
+     */
     public function update(string $invoiceSeriesNumber, string $issueDate, string $hash): void
     {
         // @igor-ignore - Doctrine entity field; instance-scoped, not a shared service.

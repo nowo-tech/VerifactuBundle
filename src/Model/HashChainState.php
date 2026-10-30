@@ -12,6 +12,9 @@ namespace Nowo\VerifactuBundle\Model;
  */
 final class HashChainState
 {
+    /**
+     * Creates the chain head state of an issuer.
+     */
     public function __construct(
         public readonly string $issuerNif,
         public readonly string $invoiceSeriesNumber,

@@ -26,6 +26,9 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 )]
 final class VerifyHashChainCommand extends Command
 {
+    /**
+     * Receives the hash chain generator used to recompute the hashes.
+     */
     public function __construct(
         private readonly HashChainGenerator $hashChainGenerator,
     ) {

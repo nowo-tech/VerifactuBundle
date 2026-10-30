@@ -17,6 +17,9 @@ final class SpanishTaxIdValidator
 {
     public const SERVICE_NAME = 'nowo_verifactu.validator.spanish_tax_id';
 
+    /**
+     * Whether the value is a valid Spanish NIF, NIE or CIF (format and check digit).
+     */
     public function isValid(string $taxId): bool
     {
         $taxId = strtoupper(trim($taxId));

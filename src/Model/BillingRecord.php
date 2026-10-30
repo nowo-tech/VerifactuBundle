@@ -13,6 +13,8 @@ namespace Nowo\VerifactuBundle\Model;
 final class BillingRecord
 {
     /**
+     * Creates a billing record (registro de facturación) value object.
+     *
      * @param list<InvoiceLine> $lines
      * @param list<TaxBreakdown> $taxBreakdown
      */
@@ -36,6 +38,9 @@ final class BillingRecord
     ) {
     }
 
+    /**
+     * Returns a copy with the record hash and the previous hash of the chain.
+     */
     public function withHash(string $hash, ?string $previousHash = null): self
     {
         return new self(
@@ -58,6 +63,9 @@ final class BillingRecord
         );
     }
 
+    /**
+     * Returns a copy carrying the signed XML.
+     */
     public function withSignedXml(string $signedXml): self
     {
         return new self(
@@ -80,6 +88,9 @@ final class BillingRecord
         );
     }
 
+    /**
+     * Returns a copy carrying the rendered XML.
+     */
     public function withXml(string $xml): self
     {
         return new self(

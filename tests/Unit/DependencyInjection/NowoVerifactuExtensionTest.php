@@ -10,6 +10,7 @@ use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
 use Nowo\VerifactuBundle\DependencyInjection\NowoVerifactuExtension;
+use Nowo\VerifactuBundle\Doctrine\TablePrefixListener;
 use Nowo\VerifactuBundle\EventSubscriber\WorkerStateResetSubscriber;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
@@ -75,6 +76,27 @@ final class NowoVerifactuExtensionTest extends TestCase
         $this->expectExceptionMessage('requires doctrine/doctrine-bundle');
 
         (new NowoVerifactuExtension())->load([['hash_chain' => ['storage' => 'doctrine']]], new ContainerBuilder());
+    }
+
+    public function testTablePrefixDefaultsToEmptyAndRegistersTheMetadataListener(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[]], $container);
+
+        self::assertSame('', $container->getParameter('nowo_verifactu.doctrine.table_prefix'));
+
+        $definition = $container->getDefinition(TablePrefixListener::class);
+        self::assertSame('%nowo_verifactu.doctrine.table_prefix%', $definition->getArgument('$tablePrefix'));
+        self::assertSame([['event' => 'loadClassMetadata']], $definition->getTag('doctrine.event_listener'));
+        self::assertFalse($definition->isPublic());
+    }
+
+    public function testTablePrefixIsExposedAsParameter(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['doctrine' => ['table_prefix' => 'app_']]], $container);
+
+        self::assertSame('app_', $container->getParameter('nowo_verifactu.doctrine.table_prefix'));
     }
 
     public function testGetAlias(): void

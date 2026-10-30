@@ -109,7 +109,7 @@ final class DoctrineHashChainWorkerModeTest extends KernelTestCase
     public function testFailedResetQueryResetsClosedEntityManager(): void
     {
         $repository = $this->repository();
-        $this->entityManager()->getConnection()->executeStatement('DROP TABLE verifactu_hash_chain');
+        $this->entityManager()->getConnection()->executeStatement('DROP TABLE ' . $this->tableName());
         $this->entityManager()->close();
 
         try {
@@ -124,7 +124,7 @@ final class DoctrineHashChainWorkerModeTest extends KernelTestCase
     private function simulateOtherWorkerWrite(string $invoiceSeriesNumber, string $hash): void
     {
         $this->entityManager()->getConnection()->executeStatement(
-            'UPDATE verifactu_hash_chain SET invoice_series_number = ?, hash = ? WHERE issuer_nif = ?',
+            'UPDATE ' . $this->tableName() . ' SET invoice_series_number = ?, hash = ? WHERE issuer_nif = ?',
             [$invoiceSeriesNumber, $hash, '89890001K'],
         );
     }
@@ -143,6 +143,14 @@ final class DoctrineHashChainWorkerModeTest extends KernelTestCase
             issuerName: 'Doctrine Test Issuer',
             operationDescription: 'Worker mode invoice',
         );
+    }
+
+    /**
+     * Native SQL follows the mapped (possibly prefixed, REQ-ORM-002) table name instead of hard-coding it.
+     */
+    private function tableName(): string
+    {
+        return $this->entityManager()->getClassMetadata(BillingRecordHashChain::class)->getTableName();
     }
 
     private function repository(): DoctrineHashChainRepository
