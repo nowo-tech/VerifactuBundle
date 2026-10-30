@@ -37,6 +37,21 @@ final class CurlSoapTransportTest extends TestCase
         self::assertArrayHasKey('error', $result);
     }
 
+    public function testSendRefusesPlainHttpEndpoints(): void
+    {
+        $result = $this->transport->send(
+            'http://127.0.0.1:9/soap',
+            'submit',
+            '<xml/>',
+            dirname(__DIR__, 2) . '/Fixtures/certs/test.p12',
+            'test',
+            2,
+        );
+
+        self::assertSame(0, $result['status_code']);
+        self::assertStringContainsStringIgnoringCase('protocol', $result['error'] ?? '');
+    }
+
     public function testSendReturnsErrorForInvalidEndpoint(): void
     {
         $certPath = dirname(__DIR__, 2) . '/Fixtures/certs/test.p12';

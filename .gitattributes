@@ -15,3 +15,26 @@
 *.ico binary
 *.svg binary
 
+# Not shipped in dist archives (GitHub zip / Composer --prefer-dist): tests (throwaway test.p12), demos, tooling.
+/.coderabbit.yaml export-ignore
+/.cursor export-ignore
+/.cursorignore export-ignore
+/.gitattributes export-ignore
+/.githooks export-ignore
+/.github export-ignore
+/.gitignore export-ignore
+/.php-cs-fixer.dist.php export-ignore
+/.scripts export-ignore
+/.scrutinizer.yml export-ignore
+/.specify export-ignore
+/Dockerfile export-ignore
+/Makefile export-ignore
+/demo export-ignore
+/docker-compose.yml export-ignore
+/igor.json export-ignore
+/phpstan.neon.dist export-ignore
+/phpunit.xml.dist export-ignore
+/rector.php export-ignore
+/scripts export-ignore
+/specs export-ignore
+/tests export-ignore

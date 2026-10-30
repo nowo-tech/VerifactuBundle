@@ -6,6 +6,7 @@ namespace Nowo\VerifactuBundle\Client;
 
 use InvalidArgumentException;
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use SensitiveParameter;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
 use function sprintf;
@@ -37,6 +38,7 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
         private readonly string $mode,
         private readonly string $environment,
         private readonly ?string $certificatePath,
+        #[SensitiveParameter]
         private readonly ?string $certificatePassword,
         private readonly string $certificateType = 'personal',
         private readonly int $timeout = 30,

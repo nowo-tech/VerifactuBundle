@@ -27,6 +27,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Security hardening from the independent SEC-004 review of 1.3.0 (Pass (good) / Low, Appendix BI). See [UPGRADING](UPGRADING.md#unreleased).
+
+### Security
+
+- **L1 — PEM certificates:** `CertificateLoader` returned the *public* key as `private_key` and the whole PEM file (private key block included) as `certificate`, so PEM signing failed and the key travelled with the certificate. It now exports the private key and the X.509 certificate separately, refuses a PEM file without a certificate or with a certificate that does not match the key, and no longer returns the password in the key material.
+- **L2 — `nowo:verifactu:submit-sandbox`:** `--submit` outside the sandbox environment is refused unless `--allow-production`, explicit `--nif` / `--numserie` and an interactive confirmation are given (it used to only print a warning).
+- **L3 — production chain storage:** the container refuses `aeat.environment: production` with an AEAT client (`certificate_path` or `submission_client`) while `hash_chain.storage` is `memory` and no `hash_chain.repository` is set.
+- **L4 — dist archives:** `.gitattributes` `export-ignore` and `composer.json` `archive.exclude` keep `tests/` (throwaway `test.p12`), `demo/`, `scripts/`, `specs/`, `.specify/`, `.cursor/` and tooling out of dist archives.
+- `#[\SensitiveParameter]` on the certificate password of `SoapAeatSubmissionClient` and `XadesBillingRecordSigner`; `scripts/aeat-sandbox-submit.php` reads `AEAT_CERT_PASSWORD` and warns when `--cert-password` is used.
+- `CurlSoapTransport` sets an explicit TLS policy: HTTPS only, no redirects, `CURLOPT_SSL_VERIFYPEER` / `CURLOPT_SSL_VERIFYHOST = 2`, 10 MiB response cap (`MAX_RESPONSE_BYTES`).
+- `twig/twig` floor raised to `^3.19` (patched line).
+- Demo: published port bound to `127.0.0.1`; the audit log masks the issuer NIF.
+
+### Fixed
+
+- `SpanishTaxIdValidator` now checks the CIF control character (digit or letter, by entity type); before, any CIF with a valid shape was accepted although the docs claimed a check digit.
+- `AeatBusinessRulesValidator` rejects impossible calendar dates (`31-02-2026`) and amounts outside the AEAT format (exponents, more than 2 decimals, more than 12 integer digits).
+- XML text values use `ENT_SUBSTITUTE`, so invalid UTF-8 no longer produces an empty element.
+- `doctrine.table_prefix` validation regex is anchored with `D` (a trailing newline is rejected).
+
+### Documentation
+
+- SECURITY.md: AI audit record 2026-10-30 (Pass (good) / Low, L1–L4 fixed), PEM file requirements, business rule details, host transaction around `BillingRecordProcessor::process()` and `BillingRecord` mutability. CONFIGURATION.md: production storage requirement and host transaction. COMMANDS.md: `--allow-production`.
+
 ## [1.3.0] - 2026-10-30
 
 doctrine.table_prefix (TablePrefixListener), SECURITY.md threat model, SensitiveParameter on certificate passwords, PHP 8.5 curl_close deprecation See [UPGRADING](UPGRADING.md#to-130).

@@ -72,14 +72,17 @@ final class AeatBusinessRulesValidator
     private function isValidDate(string $date): bool
     {
         $date = trim($date);
+        if (!preg_match('/^(\d{2})-(\d{2})-(\d{4})$/D', $date, $parts)) {
+            return false;
+        }
 
-        return (bool) preg_match('/^\d{2}-\d{2}-\d{4}$/', $date);
+        // A real calendar date (rejects 31-02-2026).
+        return checkdate((int) $parts[2], (int) $parts[1], (int) $parts[3]);
     }
 
     private function isValidAmount(string $amount): bool
     {
-        $amount = trim($amount);
-
-        return $amount !== '' && is_numeric($amount);
+        // AEAT ImporteSgn12.2: optional sign, up to 12 integer digits and up to 2 decimals (no exponent, no spaces).
+        return (bool) preg_match('/^-?\d{1,12}(\.\d{1,2})?$/D', trim($amount));
     }
 }

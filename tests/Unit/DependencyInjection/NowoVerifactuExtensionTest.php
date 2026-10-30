@@ -99,6 +99,39 @@ final class NowoVerifactuExtensionTest extends TestCase
         self::assertSame('app_', $container->getParameter('nowo_verifactu.doctrine.table_prefix'));
     }
 
+    public function testProductionSubmissionWithMemoryStorageIsRefused(): void
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('hash_chain.storage is "memory"');
+
+        (new NowoVerifactuExtension())->load([[
+            'aeat' => ['environment' => 'production', 'certificate_path' => '/run/secrets/aeat.p12'],
+        ]], new ContainerBuilder());
+    }
+
+    public function testProductionCustomSubmissionClientWithMemoryStorageIsRefused(): void
+    {
+        $this->expectException(LogicException::class);
+
+        (new NowoVerifactuExtension())->load([[
+            'aeat' => ['environment' => 'production', 'submission_client' => 'app.aeat_client'],
+        ]], new ContainerBuilder());
+    }
+
+    public function testProductionIsAcceptedWithCustomRepositoryOrWithoutSubmission(): void
+    {
+        $withRepository = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[
+            'aeat'       => ['environment' => 'production', 'certificate_path' => '/run/secrets/aeat.p12'],
+            'hash_chain' => ['repository' => 'app.hash_chain'],
+        ]], $withRepository);
+        self::assertSame('app.hash_chain', (string) $withRepository->getAlias(HashChainRepositoryInterface::class));
+
+        $withoutCertificate = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['aeat' => ['environment' => 'production']]], $withoutCertificate);
+        self::assertSame(InMemoryHashChainRepository::class, (string) $withoutCertificate->getAlias('nowo_verifactu.hash_chain_repository'));
+    }
+
     public function testGetAlias(): void
     {
         self::assertSame('nowo_verifactu', (new NowoVerifactuExtension())->getAlias());

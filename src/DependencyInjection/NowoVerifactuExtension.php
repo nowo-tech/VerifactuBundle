@@ -70,6 +70,7 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         $container->setParameter('nowo_verifactu.aeat.sign_xades', $config['aeat']['sign_xades']);
         $container->setParameter('nowo_verifactu.doctrine.table_prefix', $config['doctrine']['table_prefix']);
 
+        $this->assertPersistentChainForProduction($config);
         $this->configureHashChainRepository($container, $config);
         $this->configureSubmissionClient($container, $config);
         $this->configureSigner($container, $config);
@@ -106,6 +107,26 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
     public function getAlias(): string
     {
         return Configuration::ALIAS;
+    }
+
+    /**
+     * Production submissions chain each record onto the previous one: with the request-scoped memory storage every
+     * request would start a new chain, so a production AEAT client without persistent storage is refused here.
+     *
+     * @param array<string, mixed> $config
+     */
+    private function assertPersistentChainForProduction(array $config): void
+    {
+        $submitsToAeat = $config['aeat']['submission_client'] !== null
+            || ($config['aeat']['certificate_path'] !== null && $config['aeat']['certificate_path'] !== '');
+
+        if ($config['aeat']['environment'] === 'production'
+            && $submitsToAeat
+            && $config['hash_chain']['repository'] === null
+            && $config['hash_chain']['storage'] === 'memory'
+        ) {
+            throw new LogicException('nowo_verifactu.aeat.environment "production" submits records to the AEAT, but nowo_verifactu.hash_chain.storage is "memory" (request-scoped: every request would start a new hash chain). Set hash_chain.storage: doctrine or a persistent hash_chain.repository.');
+        }
     }
 
     /**

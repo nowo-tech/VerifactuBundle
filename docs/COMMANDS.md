@@ -62,3 +62,12 @@ php bin/console nowo:verifactu:submit-sandbox \
 ```
 
 See [SANDBOX.md](SANDBOX.md) for certificate setup and expected output.
+
+**Outside the sandbox** (`aeat.environment: production`) `--submit` is refused: a real registration cannot be undone. To submit anyway, pass `--allow-production`, give `--nif` and `--numserie` explicitly and confirm the interactive prompt (non-interactive runs are refused):
+
+```bash
+php bin/console nowo:verifactu:submit-sandbox \
+  --nif=YOUR_NIF \
+  --numserie=FAC-2026-001 \
+  --submit --allow-production
+```

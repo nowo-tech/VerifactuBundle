@@ -35,9 +35,14 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 $options = parseArguments($argv);
 
 $certPath     = $options['cert-path'] ?? getenv('AEAT_CERT_PATH') ?: null;
-$certPassword = $options['cert-password'] ?? getenv('AEAT_CERT_PASSWORD') ?: null;
-$submit       = (bool) ($options['submit'] ?? false);
-$dryRun       = (bool) ($options['dry-run'] ?? false) || !$submit;
+$certPassword = getenv('AEAT_CERT_PASSWORD') ?: null;
+if (isset($options['cert-password'])) {
+    // A password on the command line ends up in the shell history and the process list.
+    fwrite(\STDERR, "WARNING: --cert-password is visible in the process list and shell history; prefer AEAT_CERT_PASSWORD.\n");
+    $certPassword = $options['cert-password'];
+}
+$submit = (bool) ($options['submit'] ?? false);
+$dryRun = (bool) ($options['dry-run'] ?? false) || !$submit;
 
 if ($submit && ($certPath === null || $certPath === '' || !is_file($certPath))) {
     fwrite(\STDERR, "ERROR: AEAT certificate not found.\n");

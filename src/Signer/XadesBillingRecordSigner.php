@@ -10,6 +10,7 @@ use InvalidArgumentException;
 use Nowo\VerifactuBundle\Certificate\CertificateLoader;
 use RobRichards\XMLSecLibs\XMLSecurityDSig;
 use RobRichards\XMLSecLibs\XMLSecurityKey;
+use SensitiveParameter;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
 /**
@@ -29,6 +30,7 @@ final class XadesBillingRecordSigner implements BillingRecordSignerInterface
     public function __construct(
         private readonly CertificateLoader $certificateLoader,
         private readonly ?string $certificatePath = null,
+        #[SensitiveParameter]
         private readonly ?string $certificatePassword = null,
     ) {
     }
