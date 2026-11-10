@@ -3,6 +3,7 @@
 ## Table of contents
 
 - [Unreleased](#unreleased)
+- [To 1.4.1](#to-141)
 - [To 1.4.0](#to-140)
 - [To 1.3.0](#to-130)
 - [To 1.2.0](#to-120)
@@ -30,6 +31,23 @@
 - [From 1.0.7 to 1.0.8](#from-107-to-108)
 
 ## Unreleased
+
+## To 1.4.1
+
+From **1.4.0** — fix, no configuration change:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- Listeners on `VerifactuEvents::BEFORE_AEAT_SUBMISSION` / `AFTER_AEAT_SUBMISSION` now run when
+  `process(..., submitToAeat: true)` submits a record (they never ran before). They receive
+  `BeforeAeatSubmissionEvent` / `AfterAeatSubmissionEvent`. If you registered a listener on those names expecting a
+  different event class, update its type hint.
+- The events cannot veto the submission and carry a copy of the record; what is sent to the AEAT is unchanged.
+- An exception thrown by one of your listeners now propagates from `process()`: in `BEFORE_AEAT_SUBMISSION` the record
+  is then **not** submitted (the hash chain has already advanced, as for any failure after generation); in
+  `AFTER_AEAT_SUBMISSION` the record was already submitted. Keep these listeners free of failures (log and continue).
 
 ## To 1.4.0
 

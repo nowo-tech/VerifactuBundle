@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Target 1.4.1.
+
+### Fixed
+
+- **AEAT submission events are dispatched.** `VerifactuEvents::BEFORE_AEAT_SUBMISSION` and `AFTER_AEAT_SUBMISSION` were
+  declared (and the README advertised "AEAT submission hooks") but never dispatched. `BillingRecordProcessor::process()`
+  with `submitToAeat: true` now dispatches `BeforeAeatSubmissionEvent` right before the AEAT client is called and
+  `AfterAeatSubmissionEvent` (record + submission result, `isSuccessful()`) after it returned. Both are informational
+  (no veto) and carry a copy of the record, so listeners cannot change what is sent to the AEAT nor what `process()`
+  returns. The XML, the hash chain and the AEAT request are unchanged. No certificate or password in the payloads.
+
 ## [1.4.0] - 2026-10-30
 
 SEC-004 hardening: PEM loader fix, submit-sandbox refuses production, production requires persistent hash chain, CIF check digit, strict dates/amounts, explicit cURL TLS policy, dist export-ignore See [UPGRADING](UPGRADING.md#to-140).

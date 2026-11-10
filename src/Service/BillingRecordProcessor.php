@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Service;
 
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
+use Nowo\VerifactuBundle\Event\AfterAeatSubmissionEvent;
 use Nowo\VerifactuBundle\Event\AfterBillingRecordGeneratedEvent;
+use Nowo\VerifactuBundle\Event\BeforeAeatSubmissionEvent;
 use Nowo\VerifactuBundle\Event\BeforeBillingRecordGenerationEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
@@ -94,7 +96,18 @@ final class BillingRecordProcessor
         $result = ['record' => $record, 'errors' => []];
 
         if ($submitToAeat) {
+            // Listeners receive copies: they observe the submission but cannot change what is sent to the AEAT.
+            $this->eventDispatcher->dispatch(
+                new BeforeAeatSubmissionEvent(clone $record),
+                VerifactuEvents::BEFORE_AEAT_SUBMISSION,
+            );
+
             $result['submission'] = $this->submissionClient->submit($record);
+
+            $this->eventDispatcher->dispatch(
+                new AfterAeatSubmissionEvent(clone $record, $result['submission']),
+                VerifactuEvents::AFTER_AEAT_SUBMISSION,
+            );
         }
 
         return $result;

@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Unit\Service;
 
+use ArrayObject;
 use Nowo\VerifactuBundle\Certificate\CertificateLoader;
+use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
+use Nowo\VerifactuBundle\Event\AfterAeatSubmissionEvent;
 use Nowo\VerifactuBundle\Event\AfterBillingRecordGeneratedEvent;
+use Nowo\VerifactuBundle\Event\BeforeAeatSubmissionEvent;
 use Nowo\VerifactuBundle\Event\BeforeBillingRecordGenerationEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
@@ -19,6 +23,7 @@ use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
 use Nowo\VerifactuBundle\Tests\Support\FailingXsdValidator;
+use Nowo\VerifactuBundle\Tests\Support\RecordingAeatSubmissionClient;
 use Nowo\VerifactuBundle\Tests\Support\RecordingLockableHashChainRepository;
 use Nowo\VerifactuBundle\Tests\Unit\Helper\TranslationHelper;
 use Nowo\VerifactuBundle\Validator\AeatBusinessRulesValidator;
@@ -320,6 +325,92 @@ final class BillingRecordProcessorTest extends TestCase
         self::assertSame(['get'], $repository->calls);
     }
 
+    public function testAeatSubmissionEventsAreDispatchedAroundTheSubmission(): void
+    {
+        $log        = new ArrayObject();
+        $client     = new RecordingAeatSubmissionClient($log, ['success' => false, 'errors' => ['AEAT registration status "Incorrecto".']]);
+        $dispatcher = new EventDispatcher();
+        $before     = null;
+        $after      = null;
+        $dispatcher->addListener(
+            VerifactuEvents::BEFORE_AEAT_SUBMISSION,
+            static function (BeforeAeatSubmissionEvent $event) use ($log, &$before): void {
+                $log->append('before');
+                $before = $event;
+            },
+        );
+        $dispatcher->addListener(
+            VerifactuEvents::AFTER_AEAT_SUBMISSION,
+            static function (AfterAeatSubmissionEvent $event) use ($log, &$after): void {
+                $log->append('after');
+                $after = $event;
+            },
+        );
+
+        $result = $this->createProcessor(eventDispatcher: $dispatcher, submissionClient: $client)
+            ->process($this->createValidRecord('FAC-2026-401'), submitToAeat: true);
+
+        self::assertSame(['before', 'submit', 'after'], $log->getArrayCopy());
+        self::assertInstanceOf(BeforeAeatSubmissionEvent::class, $before);
+        self::assertInstanceOf(AfterAeatSubmissionEvent::class, $after);
+        self::assertSame($result['record']->hash, $before->getRecord()->hash);
+        self::assertSame($result['record']->xml, $after->getRecord()->xml);
+        self::assertArrayHasKey('submission', $result);
+        self::assertSame($result['submission'], $after->getSubmission());
+        self::assertFalse($after->isSuccessful());
+    }
+
+    public function testAeatSubmissionListenersCannotChangeWhatIsSentOrReturned(): void
+    {
+        $log        = new ArrayObject();
+        $client     = new RecordingAeatSubmissionClient($log);
+        $dispatcher = new EventDispatcher();
+        $dispatcher->addListener(
+            VerifactuEvents::BEFORE_AEAT_SUBMISSION,
+            static function (BeforeAeatSubmissionEvent $event): void {
+                $event->getRecord()->xml       = '<tampered/>';
+                $event->getRecord()->signedXml = '<tampered/>';
+                $event->getRecord()->hash      = 'tampered';
+            },
+        );
+        $dispatcher->addListener(
+            VerifactuEvents::AFTER_AEAT_SUBMISSION,
+            static function (AfterAeatSubmissionEvent $event): void {
+                $event->getRecord()->hash = 'tampered';
+            },
+        );
+
+        $result = $this->createProcessor(eventDispatcher: $dispatcher, submissionClient: $client)
+            ->process($this->createValidRecord('FAC-2026-402'), submitToAeat: true);
+
+        self::assertCount(1, $client->sent);
+        self::assertNotNull($result['record']->xml);
+        self::assertSame($result['record']->xml, $client->sent[0]['xml']);
+        self::assertNull($client->sent[0]['signedXml']);
+        self::assertNotSame('tampered', $client->sent[0]['hash']);
+        self::assertNotSame('tampered', $result['record']->hash);
+        self::assertSame($result['record']->hash, $this->repository->getLastState('89890001K')?->hash);
+        self::assertSame(['success' => true, 'reference' => 'CSV-1'], $result['submission'] ?? null);
+    }
+
+    public function testAeatSubmissionEventsAreNotDispatchedWithoutSubmission(): void
+    {
+        $log        = new ArrayObject();
+        $client     = new RecordingAeatSubmissionClient($log);
+        $dispatcher = new EventDispatcher();
+        $listener   = static function () use ($log): void {
+            $log->append('event');
+        };
+        $dispatcher->addListener(VerifactuEvents::BEFORE_AEAT_SUBMISSION, $listener);
+        $dispatcher->addListener(VerifactuEvents::AFTER_AEAT_SUBMISSION, $listener);
+
+        $processor = $this->createProcessor(eventDispatcher: $dispatcher, submissionClient: $client);
+        $processor->process($this->createValidRecord('FAC-2026-403'));
+        $processor->process($this->createValidRecord(''), submitToAeat: true);
+
+        self::assertSame([], $log->getArrayCopy());
+    }
+
     private function createValidRecord(string $seriesNumber): BillingRecord
     {
         return new BillingRecord(
@@ -342,6 +433,7 @@ final class BillingRecordProcessorTest extends TestCase
         ?BillingRecordSignerInterface $recordSigner = null,
         ?EventDispatcher $eventDispatcher = null,
         ?HashChainRepositoryInterface $repository = null,
+        ?AeatSubmissionClientInterface $submissionClient = null,
     ): BillingRecordProcessor {
         $translator = $this->createMock(TranslatorInterface::class);
         $translator->method('trans')->willReturnCallback(TranslationHelper::createTranslatorCallback());
@@ -352,7 +444,7 @@ final class BillingRecordProcessorTest extends TestCase
             new BillingRecordXmlGenerator(),
             new XsdValidator($translator, true),
             $repository ?? $this->repository,
-            new NullAeatSubmissionClient(),
+            $submissionClient ?? new NullAeatSubmissionClient(),
             $eventDispatcher ?? new EventDispatcher(),
             ['nif' => '89890001K', 'name' => 'Test Issuer'],
             [

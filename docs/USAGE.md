@@ -8,6 +8,7 @@
 - [QR in Twig](#qr-in-twig)
 - [Console](#console)
 - [Events](#events)
+- [Using it from a DDD / hexagonal application](#using-it-from-a-ddd--hexagonal-application)
 - [Forms in Twig (REQ-TWIG-005)](#forms-in-twig-req-twig-005)
 
 ## Process a billing record
@@ -90,7 +91,96 @@ php bin/console nowo:verifactu:verify-hash \
 
 ## Events
 
-Listen to `VerifactuEvents::BEFORE_BILLING_RECORD_GENERATION` to mutate the record before hash/XML generation, or `VerifactuEvents::AFTER_BILLING_RECORD_GENERATED` for post-processing.
+| Event name (`VerifactuEvents::`) | Event class | When | Can change the outcome |
+|---|---|---|---|
+| `BEFORE_BILLING_RECORD_GENERATION` | `BeforeBillingRecordGenerationEvent` | Before validation, hash and XML | Yes: `setRecord()` replaces the record |
+| `AFTER_BILLING_RECORD_GENERATED` | `AfterBillingRecordGeneratedEvent` | After hash, XML (and signature); chain state stored | No |
+| `BEFORE_AEAT_SUBMISSION` | `BeforeAeatSubmissionEvent` | Right before the AEAT client is called (`submitToAeat: true` only) | No |
+| `AFTER_AEAT_SUBMISSION` | `AfterAeatSubmissionEvent` | After the AEAT client returned | No |
+
+The two AEAT submission events are informational (audit log, metrics, outbox): there is **no veto**. Whether a record is
+submitted is decided by the caller (`process(..., submitToAeat: true)`), not by a listener, so a listener can never
+silently keep a registered record away from the AEAT. Both events carry a **copy** of the `BillingRecord`: changing it
+does not change the XML sent to the AEAT nor the record returned by `process()`.
+`AfterAeatSubmissionEvent::getSubmission()` returns the same array as `$result['submission']` (`success`, `reference`,
+`errors` and, for the SOAP client, `endpoint`, `status_code`, `raw_response`); `isSuccessful()` reads `success`. Neither
+event carries the certificate or its password. The submission events are not dispatched when validation fails, when
+`submitToAeat` is false, or when the client throws.
+
+```php
+use Nowo\VerifactuBundle\Event\AfterAeatSubmissionEvent;
+use Nowo\VerifactuBundle\Event\VerifactuEvents;
+use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
+
+#[AsEventListener(event: VerifactuEvents::AFTER_AEAT_SUBMISSION)]
+public function onSubmitted(AfterAeatSubmissionEvent $event): void
+{
+    $this->audit->record(
+        $event->getRecord()->invoiceSeriesNumber,
+        $event->isSuccessful(),
+        $event->getSubmission()['reference'] ?? null,
+    );
+}
+```
+
+## Using it from a DDD / hexagonal application
+
+VerifactuBundle is an **infrastructure adapter** for the AEAT VERI*FACTU system. It knows nothing about your invoice
+model: it takes a DTO, returns a chained, validated (and optionally signed / submitted) `BillingRecord`. It has no
+relation to your entities; Doctrine is optional and only stores the last hash per issuer NIF. See also the
+[integration guide](INTEGRATION-NOWO.md).
+
+### Keep the domain free of it
+
+Define your own port in the application layer (e.g. `InvoiceRegistrar`) and implement it in infrastructure:
+
+```php
+final readonly class VerifactuInvoiceRegistrar implements InvoiceRegistrar
+{
+    public function __construct(
+        private InvoiceToBillingRecordMapper $mapper,
+        private BillingRecordProcessor $processor,
+        private ClockInterface $clock,
+    ) {}
+
+    public function register(Invoice $invoice): RegistrationResult
+    {
+        $record = $this->mapper->map(new InvoiceDraft(
+            issuerNif: $invoice->issuer()->nif(),
+            invoiceSeriesNumber: $invoice->number(),
+            issueDate: $invoice->issuedOn()->format('d-m-Y'),
+            totalTaxAmount: $invoice->taxTotal()->toDecimalString(),
+            totalAmount: $invoice->total()->toDecimalString(),
+            generatedAt: $this->clock->now()->format(DATE_ATOM),
+        ));
+
+        $result = $this->processor->process($record, submitToAeat: true);
+
+        return new RegistrationResult(
+            $result['record']->hash,
+            $result['record']->signedXml ?? $result['record']->xml,
+            $result['errors'],
+            $result['submission']['success'] ?? false,
+        );
+    }
+}
+```
+
+Store the hash, XML and AEAT response in your own model; the bundle does not keep billing records. To raise your own
+domain event when the AEAT answers, either map `$result['submission']` in the adapter above or listen to
+`VerifactuEvents::AFTER_AEAT_SUBMISSION` (see [Events](#events)).
+
+### Ports you can replace
+
+- `Repository\HashChainRepositoryInterface` (or `LockableHashChainRepositoryInterface`) via `hash_chain.repository`,
+  to keep the chain in your own persistence.
+- `Client\AeatSubmissionClientInterface` via `aeat.submission_client`; `Signer\BillingRecordSignerInterface`.
+
+### Known limitations
+
+- Results are arrays, not typed DTOs.
+- The hash chain advances when `process()` runs: call it inside the transaction that stores your invoice (same
+  connection), or implement the lockable repository in your own persistence.
 
 ## Forms in Twig (REQ-TWIG-005)
 
