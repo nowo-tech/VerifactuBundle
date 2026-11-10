@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Tests\Unit\EventSubscriber;
 
 use Nowo\VerifactuBundle\EventSubscriber\WorkerStateResetSubscriber;
+use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\HashChainState;
+use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Request;
@@ -51,6 +54,17 @@ final class WorkerStateResetSubscriberTest extends TestCase
         $subscriber->onKernelRequest($this->createEvent(HttpKernelInterface::SUB_REQUEST));
 
         self::assertNotNull($repository->getLastState('89890001K'));
+    }
+
+    public function testMainRequestAlsoClearsTheInMemoryRecordStore(): void
+    {
+        $store      = new InMemoryBillingRecordStore();
+        $subscriber = new WorkerStateResetSubscriber(new InMemoryHashChainRepository(), $store);
+        $store->append(new BillingRecord(RecordType::Alta, '89890001K', 'F-1', '09-07-2026', 'F1', '1.00', '2.00', '2026-07-09T16:00:00+02:00'));
+
+        $subscriber->onKernelRequest($this->createEvent(HttpKernelInterface::MAIN_REQUEST));
+
+        self::assertSame([], $store->findByIssuer('89890001K'));
     }
 
     private function createEvent(int $requestType): RequestEvent

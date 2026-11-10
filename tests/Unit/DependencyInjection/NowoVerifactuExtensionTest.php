@@ -9,12 +9,21 @@ use LogicException;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
+use Nowo\VerifactuBundle\Command\VerifyChainCommand;
 use Nowo\VerifactuBundle\DependencyInjection\NowoVerifactuExtension;
 use Nowo\VerifactuBundle\Doctrine\TablePrefixListener;
 use Nowo\VerifactuBundle\EventSubscriber\WorkerStateResetSubscriber;
+use Nowo\VerifactuBundle\Provider\ConfigIssuerProvider;
+use Nowo\VerifactuBundle\Provider\ConfigSoftwareIdentityProvider;
+use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
+use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
+use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
+use Nowo\VerifactuBundle\Repository\DoctrineBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
+use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
+use Nowo\VerifactuBundle\Service\ChainVerifier;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
@@ -364,5 +373,105 @@ final class NowoVerifactuExtensionTest extends TestCase
         });
 
         return $requested;
+    }
+
+    public function testProvidersDefaultToTheStaticConfiguration(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[]], $container);
+
+        self::assertSame(ConfigIssuerProvider::class, (string) $container->getAlias(IssuerProviderInterface::class));
+        self::assertSame(ConfigSoftwareIdentityProvider::class, (string) $container->getAlias(SoftwareIdentityProviderInterface::class));
+    }
+
+    public function testProvidersCanPointAtHostServices(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['providers' => ['issuer' => 'app.issuer', 'software_identity' => 'app.software']]], $container);
+
+        self::assertSame('app.issuer', (string) $container->getAlias(IssuerProviderInterface::class));
+        self::assertSame('app.software', (string) $container->getAlias(SoftwareIdentityProviderInterface::class));
+    }
+
+    public function testWithoutRecordStoreTheChainVerifierIsRemoved(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[]], $container);
+
+        self::assertFalse($container->hasDefinition(ChainVerifier::class));
+        self::assertFalse($container->hasDefinition(VerifyChainCommand::class));
+        self::assertFalse($container->hasAlias(ChainVerifier::SERVICE_NAME));
+        self::assertFalse($container->hasAlias(BillingRecordStoreInterface::class));
+    }
+
+    public function testMemoryRecordStore(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'memory']]], $container);
+
+        self::assertSame(InMemoryBillingRecordStore::class, (string) $container->getAlias(BillingRecordStoreInterface::class));
+        self::assertSame(InMemoryBillingRecordStore::class, (string) $container->getAlias('nowo_verifactu.billing_record_store'));
+        self::assertTrue($container->hasDefinition(ChainVerifier::class));
+        self::assertSame([['method' => 'clear']], $container->getDefinition(InMemoryBillingRecordStore::class)->getTag('kernel.reset'));
+    }
+
+    public function testDoctrineRecordStore(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'doctrine']]], $container);
+
+        self::assertSame(DoctrineBillingRecordStore::class, (string) $container->getAlias(BillingRecordStoreInterface::class));
+        self::assertFalse($container->getDefinition(DoctrineBillingRecordStore::class)->hasTag('container.excluded'));
+        self::assertSame(DoctrineBillingRecordStore::class, (string) $container->getAlias(DoctrineBillingRecordStore::SERVICE_NAME));
+    }
+
+    public function testCustomRecordStoreServiceWins(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'doctrine', 'service' => 'app.record_store']]], $container);
+
+        self::assertSame('app.record_store', (string) $container->getAlias(BillingRecordStoreInterface::class));
+        self::assertFalse($container->hasAlias(DoctrineBillingRecordStore::SERVICE_NAME));
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testDoctrineRecordStoreWithoutDoctrineInstalledFailsWithClearMessage(): void
+    {
+        $this->hideDoctrineBundleFromAutoloader();
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('record_store.storage "doctrine" requires doctrine/doctrine-bundle');
+
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'doctrine']]], new ContainerBuilder());
+    }
+
+    public function testPrependUsesTheXmlMappingWhenRequested(): void
+    {
+        $container = new ContainerBuilder();
+        $container->registerExtension(new class extends Extension {
+            public function load(array $configs, ContainerBuilder $container): void
+            {
+            }
+
+            public function getAlias(): string
+            {
+                return 'doctrine';
+            }
+        });
+        $container->registerExtension(new NowoVerifactuExtension());
+        $container->prependExtensionConfig('nowo_verifactu', ['doctrine' => ['mapping' => 'xml']]);
+        $container->prependExtensionConfig('nowo_verifactu', ['mode' => 'verifactu']);
+
+        (new NowoVerifactuExtension())->prepend($container);
+
+        /** @var array{orm: array{mappings: array{NowoVerifactuBundle: array{type: string, dir: string}}}} $config */
+        $config = $container->getExtensionConfig('doctrine')[0];
+        self::assertSame('xml', $config['orm']['mappings']['NowoVerifactuBundle']['type']);
+        self::assertSame('Resources/config/doctrine', $config['orm']['mappings']['NowoVerifactuBundle']['dir']);
+
+        $loaded = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['doctrine' => ['mapping' => 'xml']]], $loaded);
+        self::assertSame('xml', $loaded->getParameter('nowo_verifactu.doctrine.mapping'));
     }
 }

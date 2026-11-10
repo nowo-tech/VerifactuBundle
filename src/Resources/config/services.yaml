@@ -13,6 +13,8 @@ services:
             - '../../Event/'
             - '../../Entity/'
             - '../../Repository/DoctrineHashChainRepository.php'
+            - '../../Repository/DoctrineBillingRecordStore.php'
+            - '../../Clock/'
 
     Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface:
         alias: Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository
@@ -22,6 +24,25 @@ services:
             $logger: '@?logger'
         tags:
             - { name: kernel.reset, method: clear }
+
+    Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore:
+        tags:
+            - { name: kernel.reset, method: clear }
+
+    Nowo\VerifactuBundle\Provider\ConfigIssuerProvider:
+        arguments:
+            $issuerConfig: '%nowo_verifactu.issuer%'
+
+    Nowo\VerifactuBundle\Provider\ConfigSoftwareIdentityProvider:
+        arguments:
+            $softwareConfig: '%nowo_verifactu.software%'
+            $installationConfig: '%nowo_verifactu.installation%'
+
+    Nowo\VerifactuBundle\Provider\IssuerProviderInterface:
+        alias: Nowo\VerifactuBundle\Provider\ConfigIssuerProvider
+
+    Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface:
+        alias: Nowo\VerifactuBundle\Provider\ConfigSoftwareIdentityProvider
 
     Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface:
         alias: Nowo\VerifactuBundle\Client\NullAeatSubmissionClient
@@ -39,6 +60,7 @@ services:
             $certificatePassword: '%nowo_verifactu.aeat.certificate_password%'
             $certificateType: '%nowo_verifactu.aeat.certificate_type%'
             $timeout: '%nowo_verifactu.aeat.timeout%'
+            $issuerProvider: '@Nowo\VerifactuBundle\Provider\IssuerProviderInterface'
 
     Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner:
         arguments:
@@ -54,6 +76,9 @@ services:
             $signRecords: '%nowo_verifactu.aeat.sign_xades%'
             $recordSigner: '@?Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface'
             $logger: '@?logger'
+            $recordStore: '@?nowo_verifactu.billing_record_store'
+            $issuerProvider: '@Nowo\VerifactuBundle\Provider\IssuerProviderInterface'
+            $softwareIdentityProvider: '@Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface'
 
     Nowo\VerifactuBundle\Qr\QrUrlBuilder:
         arguments:

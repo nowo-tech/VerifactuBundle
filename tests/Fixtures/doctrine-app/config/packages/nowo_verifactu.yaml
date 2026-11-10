@@ -12,6 +12,8 @@ nowo_verifactu:
         number: '001'
     hash_chain:
         storage: doctrine
+    record_store:
+        storage: doctrine
     aeat:
         validate_xsd: true
 

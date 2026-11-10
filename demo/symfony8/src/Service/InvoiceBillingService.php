@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Service;
 
 use App\Model\Invoice;
-use DateTimeImmutable;
+use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
 use Nowo\VerifactuBundle\Integration\InvoiceDraft;
 use Nowo\VerifactuBundle\Integration\InvoiceToBillingRecordMapper;
 use Nowo\VerifactuBundle\Model\HashChainState;
@@ -40,7 +40,7 @@ final class InvoiceBillingService
             $invoice->issueDate,
             $invoice->totalTaxAmount,
             $invoice->totalAmount,
-            (new DateTimeImmutable())->format('c'),
+            GenerationTimestamp::now(),
             $invoice->recordType,
             $invoice->invoiceType,
             isset($this->issuerConfig['name']) ? (string) $this->issuerConfig['name'] : null,

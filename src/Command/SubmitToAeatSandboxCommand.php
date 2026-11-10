@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Command;
 
+use DateTimeImmutable;
+use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
 use Nowo\VerifactuBundle\Integration\InvoiceDraft;
 use Nowo\VerifactuBundle\Integration\InvoiceToBillingRecordMapper;
 use Nowo\VerifactuBundle\Model\RecordType;
@@ -58,7 +60,7 @@ final class SubmitToAeatSandboxCommand extends Command
             ->addOption('tipo', null, InputOption::VALUE_REQUIRED, 'Invoice type', 'F1')
             ->addOption('cuota', null, InputOption::VALUE_REQUIRED, 'Total tax amount', '21.00')
             ->addOption('importe', null, InputOption::VALUE_REQUIRED, 'Total amount', '121.00')
-            ->addOption('generated-at', null, InputOption::VALUE_REQUIRED, 'Generation timestamp (ISO 8601)')
+            ->addOption('generated-at', null, InputOption::VALUE_REQUIRED, 'Generation timestamp (Y-m-d\\TH:i:sP; default: now in Europe/Madrid)')
             ->addOption('record-type', null, InputOption::VALUE_REQUIRED, 'Alta or Anulacion', 'Alta')
             ->addOption('submit', null, InputOption::VALUE_NONE, 'Submit to AEAT (requires certificate)')
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Only validate and generate XML/hash without AEAT call')
@@ -79,10 +81,10 @@ final class SubmitToAeatSandboxCommand extends Command
         $draft = new InvoiceDraft(
             (string) $input->getOption('nif'),
             (string) $input->getOption('numserie'),
-            (string) ($input->getOption('fecha') ?: date('d-m-Y')),
+            (string) ($input->getOption('fecha') ?: GenerationTimestamp::issueDate(new DateTimeImmutable())),
             (string) $input->getOption('cuota'),
             (string) $input->getOption('importe'),
-            (string) ($input->getOption('generated-at') ?: date('c')),
+            (string) ($input->getOption('generated-at') ?: GenerationTimestamp::now()),
             $recordType,
             (string) $input->getOption('tipo'),
             isset($this->issuerConfig['name']) ? $this->issuerConfig['name'] : null,

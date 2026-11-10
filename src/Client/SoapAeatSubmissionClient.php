@@ -6,6 +6,7 @@ namespace Nowo\VerifactuBundle\Client;
 
 use InvalidArgumentException;
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use SensitiveParameter;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
@@ -28,6 +29,8 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
     /**
      * Receives the envelope builder, endpoint resolver, transport, issuer configuration, mode, environment and certificate settings.
      *
+     * With an issuer provider, the issuer is resolved on every submission and the static `$issuerConfig` is ignored.
+     *
      * @param array{nif: string, name?: string} $issuerConfig
      */
     public function __construct(
@@ -42,6 +45,7 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
         private readonly ?string $certificatePassword,
         private readonly string $certificateType = 'personal',
         private readonly int $timeout = 30,
+        private readonly ?IssuerProviderInterface $issuerProvider = null,
     ) {
     }
 
@@ -54,7 +58,7 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
             throw new InvalidArgumentException('AEAT certificate path is required for SOAP submission.');
         }
 
-        $payload  = $this->envelopeBuilder->buildSubmissionEnvelope($record, $this->issuerConfig);
+        $payload  = $this->envelopeBuilder->buildSubmissionEnvelope($record, $this->issuerProvider?->getIssuer()->toArray() ?? $this->issuerConfig);
         $endpoint = $this->endpointResolver->resolve($this->mode, $this->environment, $this->certificateType);
 
         $response = $this->transport->send(

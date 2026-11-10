@@ -7,7 +7,9 @@ namespace Nowo\VerifactuBundle\Tests\Unit\Repository;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\Persistence\ManagerRegistry;
 use LogicException;
+use Nowo\VerifactuBundle\Entity\BillingRecordEntry;
 use Nowo\VerifactuBundle\Entity\BillingRecordHashChain;
+use Nowo\VerifactuBundle\Repository\DoctrineBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -40,5 +42,15 @@ final class DoctrineHashChainRepositoryTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         (new DoctrineHashChainRepository($registry))->reset('89890001K');
+    }
+
+    public function testRecordStoreThrowsWhenNoOrmManagerIsConfigured(): void
+    {
+        $registry = $this->createMock(ManagerRegistry::class);
+        $registry->method('getManagerForClass')->with(BillingRecordEntry::class)->willReturn(null);
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage(BillingRecordEntry::class);
+        (new DoctrineBillingRecordStore($registry))->findByIssuer('89890001K');
     }
 }

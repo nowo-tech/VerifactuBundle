@@ -4,6 +4,10 @@
 
 - [Process a billing record](#process-a-billing-record)
 - [Production AEAT submission](#production-aeat-submission)
+- [Amounts: one string in the XML, the hash and the QR](#amounts-one-string-in-the-xml-the-hash-and-the-qr)
+- [Dates in Europe/Madrid](#dates-in-europemadrid)
+- [Issuer and software identity at runtime](#issuer-and-software-identity-at-runtime)
+- [Record store and chain verification](#record-store-and-chain-verification)
 - [Hash only](#hash-only)
 - [QR in Twig](#qr-in-twig)
 - [Console](#console)
@@ -14,6 +18,7 @@
 ## Process a billing record
 
 ```php
+use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
@@ -26,7 +31,7 @@ $result = $processor->process(new BillingRecord(
     invoiceType: 'F1',
     totalTaxAmount: '21.00',
     totalAmount: '121.00',
-    generatedAt: '2026-07-09T16:00:00+02:00',
+    generatedAt: GenerationTimestamp::now(), // e.g. 2026-07-09T16:00:00+02:00
 ), submitToAeat: true);
 ```
 
@@ -59,6 +64,93 @@ nowo_verifactu:
         sign_xades: true
 ```
 
+## Amounts: one string in the XML, the hash and the QR
+
+Pass amounts as decimal strings (`'12.3'`, `'12.30'`, `'0'`, never through float). `process()` writes them in their
+canonical form, `Model\Amount::canonical()`: two decimals, no leading zeros, no `+` (`12.30`, `0.00`, `-5.00`). The
+same string goes into `<CuotaTotal>` / `<ImporteTotal>`, the fingerprint, the QR `importe` and the returned record.
+The AEAT hash specification (v0.1.2, §3) asks for the hashed value to hold the same information as the XML field and
+treats `123.1` and `123.10` as equal; writing the same string in both places is correct however the AEAT reads it.
+`HashChainGenerator::verifyHash()` also accepts a fingerprint over amounts without trailing zeros (what
+VerifactuBundle 1.0 – 1.4.1 hashed).
+
+## Dates in Europe/Madrid
+
+The AEAT expects `FechaHoraHusoGenRegistro` with its offset (`2024-01-01T19:20:30+01:00`). `format('c')` uses the PHP
+default time zone of the server; use the helper instead:
+
+```php
+use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
+
+$generatedAt = GenerationTimestamp::now($clock);              // PSR-20 clock (Symfony's `clock` service), or now()
+$issueDate   = GenerationTimestamp::issueDate($invoice->issuedAt()); // d-m-Y, the Madrid calendar day
+```
+
+## Issuer and software identity at runtime
+
+Standard Symfony project: keep `nowo_verifactu.issuer`, `software` and `installation` in the configuration; nothing
+else to do.
+
+Host that keeps them in its database (an admin form, several tenants) or a DDD host: implement the providers and point
+the configuration at them. The bundle calls them on every `process()` and every SOAP submission, so an edit applies
+to the next record without a cache clear or a worker restart. Do not cache the values in the provider across requests
+(FrankenPHP worker mode keeps the service alive).
+
+```php
+use Nowo\VerifactuBundle\Model\IssuerIdentity;
+use Nowo\VerifactuBundle\Model\SoftwareIdentity;
+use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
+use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
+
+final readonly class BillingSettingsIdentityProvider implements IssuerProviderInterface, SoftwareIdentityProviderInterface
+{
+    public function __construct(private BillingSettingsRepository $settings) {}
+
+    public function getIssuer(): IssuerIdentity
+    {
+        $s = $this->settings->current();
+
+        return new IssuerIdentity($s->issuerTaxId(), $s->issuerName());
+    }
+
+    public function getSoftwareIdentity(): SoftwareIdentity
+    {
+        $s = $this->settings->current();
+
+        // producer name, producer NIF, software name, IdSistemaInformatico (≤ 2 chars), version, NumeroInstalacion
+        return new SoftwareIdentity($s->producerName(), $s->producerNif(), 'Beacon', 'SB', $s->appVersion(), '1');
+    }
+}
+```
+
+```yaml
+nowo_verifactu:
+    providers:
+        issuer: App\Billing\BillingSettingsIdentityProvider
+        software_identity: App\Billing\BillingSettingsIdentityProvider
+```
+
+A record passed with an empty `issuerNif` takes the provider's NIF; a record with its own NIF keeps it. The producer
+(`SistemaInformatico/NombreRazon` and `NIF`) is the company that makes the software, not the issuer.
+
+## Record store and chain verification
+
+With `record_store.storage: doctrine` (or `memory`, or your own `record_store.service`) every chained record is stored
+with its hash, previous hash, XML and submission state, in the same transaction as the chain head:
+
+```php
+foreach ($recordStore->findByIssuer('89890001K') as $stored) {   // BillingRecordStoreInterface, chain order
+    $stored->position; $stored->record->hash; $stored->record->xml; $stored->submissionStatus; // pending|accepted|failed
+}
+
+$result = $chainVerifier->verify('89890001K');                    // Service\ChainVerifier
+$result->isValid(); $result->problems;
+```
+
+`process(..., submitToAeat: true)` marks the record `accepted` (with the AEAT CSV) or `failed`. If that update fails,
+the submission result is still returned and the exception is in `$result['store_errors']`. Your invoice references the
+record by issuer NIF and hash (or position); there is no Doctrine relation to your entities.
+
 ## Hash only
 
 ```php
@@ -87,6 +179,9 @@ php bin/console nowo:verifactu:verify-hash \
   --nif=89890001K --numserie=12345678/G33 --fecha=01-01-2024 \
   --cuota=12.35 --importe=123.45 --generated-at=2024-01-01T19:20:30+01:00 \
   --hash=3C464DAF61ACB827C65FDA19F352A4E3BDC2C640E9E9FC4CC058073F38F12F60
+
+# with a record store
+php bin/console nowo:verifactu:verify-chain --issuer=89890001K
 ```
 
 ## Events
@@ -145,8 +240,9 @@ public function onSubmitted(AfterAeatSubmissionEvent $event): void
 
 VerifactuBundle is an **infrastructure adapter** for the AEAT VERI*FACTU system. It knows nothing about your invoice
 model: it takes a DTO, returns a chained, validated (and optionally signed / submitted) `BillingRecord`. It has no
-relation to your entities; Doctrine is optional and only stores the last hash per issuer NIF. See also the
-[integration guide](INTEGRATION-NOWO.md).
+relation to your entities; Doctrine is optional and stores the chain head per issuer NIF and, with a record store, the
+record log. It never flushes your EntityManager (it writes with DBAL inside your transaction) and can map its own
+entities from XML (`doctrine.mapping: xml`). See also the [integration guide](INTEGRATION-NOWO.md).
 
 ### Keep the domain free of it
 
@@ -166,10 +262,10 @@ final readonly class VerifactuInvoiceRegistrar implements InvoiceRegistrar
         $record = $this->mapper->map(new InvoiceDraft(
             issuerNif: $invoice->issuer()->nif(),
             invoiceSeriesNumber: $invoice->number(),
-            issueDate: $invoice->issuedOn()->format('d-m-Y'),
+            issueDate: GenerationTimestamp::issueDate($invoice->issuedOn()),
             totalTaxAmount: $invoice->taxTotal()->toDecimalString(),
             totalAmount: $invoice->total()->toDecimalString(),
-            generatedAt: $this->clock->now()->format(DATE_ATOM),
+            generatedAt: GenerationTimestamp::now($this->clock),
         ));
 
         $result = $this->processor->process($record, submitToAeat: true);
@@ -184,7 +280,8 @@ final readonly class VerifactuInvoiceRegistrar implements InvoiceRegistrar
 }
 ```
 
-Store the hash, XML and AEAT response in your own model; the bundle does not keep billing records. To raise your own
+Store the hash, XML and AEAT response in your own model, or enable the record store and reference its records by
+issuer NIF and hash. To raise your own
 domain event when the AEAT answers, either map `$result['submission']` in the adapter above or listen to
 `VerifactuEvents::AFTER_AEAT_SUBMISSION` (see [Events](#events)).
 
@@ -192,6 +289,8 @@ domain event when the AEAT answers, either map `$result['submission']` in the ad
 
 - `Repository\HashChainRepositoryInterface` (or `LockableHashChainRepositoryInterface`) via `hash_chain.repository`,
   to keep the chain in your own persistence.
+- `Repository\BillingRecordStoreInterface` via `record_store.service`, to keep the record log in your own persistence.
+- `Provider\IssuerProviderInterface` / `Provider\SoftwareIdentityProviderInterface` via `providers.*`.
 - `Client\AeatSubmissionClientInterface` via `aeat.submission_client`; `Signer\BillingRecordSignerInterface`.
 
 ### Known limitations

@@ -29,6 +29,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The XML, the fingerprint and the QR carry one canonical amount string; the bundle never flushes the host
+EntityManager; an optional record store with a chain verifier; runtime issuer / software-identity providers; a Madrid
+time helper. See [UPGRADING](UPGRADING.md#unreleased).
+
+### Fixed
+
+- **XML amount = fingerprint amount (V1).** Up to 1.4.1 the Huella hashed the amount without insignificant zeros
+  (`12.30` → `12.3`, `0.00` → `0`) while `<CuotaTotal>` / `<ImporteTotal>` carried the caller's string unchanged. The
+  AEAT hash specification v0.1.2 (27/08/2024, §3) requires the hashed values to hold the same information as the XML
+  field and treats one or two decimals as equivalent, so `12.30` vs `12.3` was within the rule, but whole amounts
+  (`0.00` → `0`, `29.00` → `29`) were hashed with zero decimals, outside the "una o dos posiciones" wording. Now
+  `Model\Amount::canonical()` gives one string, always two decimals (`12.30`, `0.00`, `-5.00`), used by
+  `HashChainGenerator`, `BillingRecordXmlGenerator`, `QrUrlBuilder` (`importe`) and the record returned by
+  `process()`. `HashChainGenerator::verifyHash()` accepts both the canonical hash and the hash 1.0 – 1.4.1 computed, so
+  stored records still verify. A Huella that does not match the AEAT's calculation is never rejected: it is an
+  "aceptado con errores" warning to correct (AEAT validations v1.2.2, §3.1.3 item 23).
+- **The bundle never flushes or resets the host's EntityManager (V2, KS-V-I4, architecture rule 6).**
+  `DoctrineHashChainRepository::storeLastState()` called `flush()` on the manager of the chain entity, usually the
+  host's default one, so the host's pending entities were written too (`process()` is meant to run before the host
+  stores its invoice). The chain head is now written with DBAL (`Doctrine\DbalRowWriter`, table and columns from the
+  class metadata, so `doctrine.table_prefix` still applies) and read with array-hydrated DQL: nothing enters the
+  identity map. The repository no longer resets a closed manager (it was the host's); it only uses its connection, so
+  it keeps working after the host's manager was closed. `withChainLock()` nests in the host's transaction when one is
+  open (head and record commit or roll back with the host's data).
+- **`process()` docblock (KS-V-I5)** lists `AFTER_BILLING_RECORD_GENERATED` with the other contained listeners.
+
+### Added
+
+- **Record store (V6):** `nowo_verifactu.record_store.storage: none|memory|doctrine` or `record_store.service`
+  (`Repository\BillingRecordStoreInterface`). Every chained record (fields, hash, previous hash, XML, signed XML) is
+  appended inside the chain lock, in the same transaction as the chain head; `process(..., submitToAeat: true)` then
+  records `accepted` / `failed` and the AEAT reference (a store failure there is logged and returned in
+  `store_errors`, never thrown). Doctrine table `verifactu_billing_record` (primary key issuer NIF + position, unique
+  issuer NIF + hash), written with DBAL, no flush.
+- **Chain verifier:** `Service\ChainVerifier` and `nowo:verifactu:verify-chain --issuer=NIF` (registered only with a
+  record store): consecutive positions, fingerprint, previous-hash link, XML `Huella` / `CuotaTotal` / `ImporteTotal`
+  equal to the hashed values, chain head on the last record.
+- **XML mapping for DDD hosts:** `nowo_verifactu.doctrine.mapping: attribute|xml` (default `attribute`). With `xml`
+  the bundle entities are mapped from `src/Resources/config/doctrine/*.orm.xml`.
+- **Runtime providers (V5, issuer and software identity):** `Provider\IssuerProviderInterface` (NIF, name) and
+  `Provider\SoftwareIdentityProviderInterface` (producer name and NIF, software name, IdSistemaInformatico, version,
+  NumeroInstalacion, solo-VERI*FACTU), resolved on every `process()` call and every SOAP submission. Defaults
+  `ConfigIssuerProvider` / `ConfigSoftwareIdentityProvider` read today's configuration; point
+  `nowo_verifactu.providers.issuer` / `providers.software_identity` at your service to read them from your database.
+  A record with an empty issuer NIF takes the provider's NIF.
+- **Generation time helper (V8):** `Clock\GenerationTimestamp::now(?ClockInterface)`, `format()` and `issueDate()`
+  give `FechaHoraHusoGenRegistro` (`Y-m-d\TH:i:sP`) and `FechaExpedicionFactura` (`d-m-Y`) in Europe/Madrid whatever
+  the server time zone (PSR-20, `psr/clock` is now required). `nowo:verifactu:submit-sandbox` uses it for its defaults.
+- **Worker mode without kernel reset:** tests run 1,000 records for two issuers in one kernel without reset (flat
+  memory, no managed entity, no open transaction, chains kept apart) and change the provider values between two calls.
+
+### Changed
+
+- **QR (V10):** `importe` is the canonical amount, the same string as `ImporteTotal` in the XML and the fingerprint.
+- **Docs:** INTEGRATION-NOWO and USAGE use `GenerationTimestamp` instead of `format('c')` in the server time zone.
+
 ## [1.4.1] - 2026-11-10
 
 The AEAT submission events are dispatched, and a failing listener after chaining no longer loses or duplicates a fiscal record (failures in `event_errors`). See [UPGRADING](https://github.com/nowo-tech/VerifactuBundle/blob/v1.4.1/docs/UPGRADING.md#to-141).

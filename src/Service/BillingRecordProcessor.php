@@ -12,9 +12,17 @@ use Nowo\VerifactuBundle\Event\BeforeBillingRecordGenerationEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
+use Nowo\VerifactuBundle\Model\Amount;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\HashChainState;
+use Nowo\VerifactuBundle\Model\IssuerIdentity;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Model\SoftwareIdentity;
+use Nowo\VerifactuBundle\Provider\ConfigIssuerProvider;
+use Nowo\VerifactuBundle\Provider\ConfigSoftwareIdentityProvider;
+use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
+use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
+use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\LockableHashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
@@ -24,6 +32,8 @@ use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 use Throwable;
+
+use function is_string;
 
 /**
  * Orchestrates validation, hash chaining, XML generation, XSD validation, signing, and AEAT submission.
@@ -38,6 +48,9 @@ final class BillingRecordProcessor
 
     /**
      * Receives the generators, validators, signer, repository, submission client and bundle configuration.
+     *
+     * The issuer and the software identity come from the providers on every process() call (a host can keep them in
+     * its database); without providers (manual construction) the static arrays are used, as before 1.5.
      *
      * @param array<string, mixed> $issuerConfig
      * @param array<string, mixed> $softwareConfig
@@ -58,6 +71,9 @@ final class BillingRecordProcessor
         private readonly bool $signRecords,
         private readonly ?BillingRecordSignerInterface $recordSigner = null,
         private readonly ?LoggerInterface $logger = null,
+        private readonly ?BillingRecordStoreInterface $recordStore = null,
+        private readonly ?IssuerProviderInterface $issuerProvider = null,
+        private readonly ?SoftwareIdentityProviderInterface $softwareIdentityProvider = null,
     ) {
     }
 
@@ -65,15 +81,27 @@ final class BillingRecordProcessor
      * Chains, renders, validates and signs the record, stores the new chain head and optionally submits it to the AEAT.
      *
      * @param bool $persistChainState when false (dry runs), the record is chained onto the current head but
-     *                                the new state is NOT stored, so the persistent hash chain is left untouched
+     *                                the new state is NOT stored (nor appended to the record store), so the persistent
+     *                                hash chain is left untouched
      *
-     * An exception thrown by a `BEFORE_AEAT_SUBMISSION` or `AFTER_AEAT_SUBMISSION` listener never stops the submission
-     * nor hides its result: it is logged (event name and exception class only) and returned in `event_errors`
+     * A record without an issuer NIF takes the NIF of the issuer provider. The amounts are written in their canonical
+     * form (Amount::canonical()), the same string in the XML, the fingerprint and the returned record.
      *
-     * @return array{record: BillingRecord, errors: list<string>, submission?: array<string, mixed>, event_errors?: list<array{event: string, exception: Throwable}>}
+     * An exception thrown by an `AFTER_BILLING_RECORD_GENERATED`, `BEFORE_AEAT_SUBMISSION` or `AFTER_AEAT_SUBMISSION`
+     * listener never stops the submission nor hides the record or its result: it is logged (event name and exception
+     * class only) and returned in `event_errors`. A failure to record the submission outcome in the record store is
+     * contained the same way and returned in `store_errors`.
+     *
+     * @return array{record: BillingRecord, errors: list<string>, submission?: array<string, mixed>, event_errors?: list<array{event: string, exception: Throwable}>, store_errors?: list<Throwable>}
      */
     public function process(BillingRecord $record, bool $submitToAeat = false, bool $persistChainState = true): array
     {
+        $issuer   = $this->resolveIssuer();
+        $software = $this->resolveSoftwareIdentity();
+        if (trim($record->issuerNif) === '' && trim($issuer->nif) !== '') {
+            $record = $this->copy($record, issuerNif: $issuer->nif);
+        }
+
         $beforeEvent = new BeforeBillingRecordGenerationEvent($record);
         $this->eventDispatcher->dispatch($beforeEvent, VerifactuEvents::BEFORE_BILLING_RECORD_GENERATION);
         $record = $beforeEvent->getRecord();
@@ -83,7 +111,7 @@ final class BillingRecordProcessor
             return ['record' => $record, 'errors' => $errors];
         }
 
-        $operation = fn (): array => $this->chainRecord($record, $persistChainState);
+        $operation = fn (): array => $this->chainRecord($record, $persistChainState, $issuer, $software);
         $chained   = $persistChainState && $this->hashChainRepository instanceof LockableHashChainRepositoryInterface
             ? $this->hashChainRepository->withChainLock($record->issuerNif, $operation)
             : $operation();
@@ -114,10 +142,15 @@ final class BillingRecordProcessor
                 $eventErrors,
             );
 
-            $result['submission'] = $this->submissionClient->submit($record);
+            $submission           = $this->submissionClient->submit($record);
+            $result['submission'] = $submission;
+            $storeError           = $this->recordSubmission($record, $submission, $persistChainState);
+            if ($storeError instanceof Throwable) {
+                $result['store_errors'] = [$storeError];
+            }
 
             $this->dispatchObserverEvent(
-                new AfterAeatSubmissionEvent(clone $record, $result['submission']),
+                new AfterAeatSubmissionEvent(clone $record, $submission),
                 VerifactuEvents::AFTER_AEAT_SUBMISSION,
                 $eventErrors,
             );
@@ -133,36 +166,28 @@ final class BillingRecordProcessor
     /**
      * Reads the chain head, hashes, renders, validates and signs the record, then stores the new head.
      *
-     * Runs inside the repository chain lock when available (read-then-write must be atomic per issuer).
+     * Runs inside the repository chain lock when available (read-then-write must be atomic per issuer), so the
+     * record store append joins the same transaction as the chain head.
      *
      * @return array{record: BillingRecord, errors: list<string>}
      */
-    private function chainRecord(BillingRecord $record, bool $persistChainState): array
+    private function chainRecord(BillingRecord $record, bool $persistChainState, IssuerIdentity $issuer, SoftwareIdentity $software): array
     {
         $previousState = $this->hashChainRepository->getLastState($record->issuerNif);
-        $record        = new BillingRecord(
-            $record->recordType,
-            $record->issuerNif,
-            $record->invoiceSeriesNumber,
-            $record->issueDate,
-            $record->invoiceType,
-            $record->totalTaxAmount,
-            $record->totalAmount,
-            $record->generatedAt,
-            $record->lines,
-            $record->taxBreakdown,
-            $previousState?->hash,
-            issuerName: $record->issuerName,
-            operationDescription: $record->operationDescription,
+        $record        = $this->copy(
+            $record,
+            totalTaxAmount: Amount::canonical($record->totalTaxAmount),
+            totalAmount: Amount::canonical($record->totalAmount),
+            chainTo: $previousState,
         );
 
         $hash   = $this->hashChainGenerator->computeHash($record);
         $record = $record->withHash($hash, $previousState?->hash);
         $xml    = $this->xmlGenerator->generate(
             $record,
-            $this->issuerConfig,
-            $this->softwareConfig,
-            $this->installationConfig,
+            $issuer->toArray(),
+            $software->toSoftwareConfig(),
+            $software->toInstallationConfig(),
             $previousState,
         );
         $record = $record->withXml($xml);
@@ -190,9 +215,80 @@ final class BillingRecordProcessor
                 $record->issueDate,
                 $hash,
             ));
+            $this->recordStore?->append($record);
         }
 
         return ['record' => $record, 'errors' => []];
+    }
+
+    /**
+     * Stores the AEAT outcome in the record store; a store failure is logged and returned, never thrown (the record is
+     * already registered at the AEAT).
+     *
+     * @param array<string, mixed> $submission
+     */
+    private function recordSubmission(BillingRecord $record, array $submission, bool $persistChainState): ?Throwable
+    {
+        if (!$persistChainState || !$this->recordStore instanceof BillingRecordStoreInterface) {
+            return null;
+        }
+        try {
+            $reference = $submission['reference'] ?? null;
+            $this->recordStore->markSubmitted(
+                $record->issuerNif,
+                (string) $record->hash,
+                ($submission['success'] ?? false) === true,
+                is_string($reference) ? $reference : null,
+            );
+        } catch (Throwable $exception) {
+            $this->logger?->error('The record store could not save the AEAT submission outcome ({exception_class}); the submission result is kept.', [
+                'exception_class' => $exception::class,
+            ]);
+
+            return $exception;
+        }
+
+        return null;
+    }
+
+    private function resolveIssuer(): IssuerIdentity
+    {
+        return ($this->issuerProvider ?? new ConfigIssuerProvider($this->issuerConfig))->getIssuer();
+    }
+
+    private function resolveSoftwareIdentity(): SoftwareIdentity
+    {
+        return ($this->softwareIdentityProvider ?? new ConfigSoftwareIdentityProvider($this->softwareConfig, $this->installationConfig))
+            ->getSoftwareIdentity();
+    }
+
+    /**
+     * Copies a record before chaining (no hash, XML or signature yet), changing the given fields.
+     *
+     * @param false|HashChainState|null $chainTo false keeps the record's previous hash; null or a state replaces it
+     */
+    private function copy(
+        BillingRecord $record,
+        ?string $issuerNif = null,
+        ?string $totalTaxAmount = null,
+        ?string $totalAmount = null,
+        HashChainState|false|null $chainTo = false,
+    ): BillingRecord {
+        return new BillingRecord(
+            $record->recordType,
+            $issuerNif ?? $record->issuerNif,
+            $record->invoiceSeriesNumber,
+            $record->issueDate,
+            $record->invoiceType,
+            $totalTaxAmount ?? $record->totalTaxAmount,
+            $totalAmount ?? $record->totalAmount,
+            $record->generatedAt,
+            $record->lines,
+            $record->taxBreakdown,
+            $chainTo === false ? $record->previousHash : $chainTo?->hash,
+            issuerName: $record->issuerName,
+            operationDescription: $record->operationDescription,
+        );
     }
 
     /**

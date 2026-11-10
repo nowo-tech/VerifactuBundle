@@ -18,12 +18,19 @@ nowo_verifactu:
         solo_verifactu: true
     installation:
         number: '001'
+    providers:
+        issuer: null             # service id of your IssuerProviderInterface (null = the issuer block above)
+        software_identity: null  # service id of your SoftwareIdentityProviderInterface (null = software + installation)
     hash_chain:
         storage: memory          # memory | doctrine
         repository: null         # custom service id (optional)
         table_prefix: verifactu_ # deprecated, no effect: use doctrine.table_prefix
+    record_store:
+        storage: none            # none | memory | doctrine
+        service: null            # custom BillingRecordStoreInterface service id (optional, wins over storage)
     doctrine:
         table_prefix: ''         # prepended to the bundle table names (REQ-ORM-002)
+        mapping: attribute       # attribute | xml (bundle entities from Resources/config/doctrine/*.orm.xml)
     aeat:
         environment: sandbox     # sandbox | production
         submission_client: null  # custom client service id (optional)
@@ -50,22 +57,48 @@ Set `hash_chain.storage: doctrine` and install `doctrine/orm` + `doctrine/doctri
 
 **Production requires persistent storage.** With `aeat.environment: production` and an AEAT client (a `certificate_path` or a custom `submission_client`), the container refuses to compile while `hash_chain.storage` is `memory` and no `hash_chain.repository` is set: the memory storage is request-scoped, so every request would start a new chain.
 
-**Host transaction.** `BillingRecordProcessor::process()` commits the new chain head before your application stores the invoice. Store the invoice in the same database transaction as the chain head (wrap both in `EntityManager::wrapInTransaction()` with the Doctrine storage), or be ready to re-issue the record: a chain head without a stored invoice breaks the next record's `previousHash` audit trail. Inside your transaction the chain row lock is held until it ends, including the AEAT call and the event listeners of `process()`.
+**No flush, and your transaction.** The Doctrine repository and record store never call `flush()`, `clear()` or `resetManager()` on an EntityManager: they write with DBAL on the connection of the manager that maps the bundle entities and read with array-hydrated DQL, so your pending entities are never written by the bundle and nothing stays managed. `withChainLock()` opens a transaction on that connection; when you already opened one, it nests (savepoint or nesting level), so the chain head and the stored record commit or roll back with your invoice. Without your transaction it commits on its own. Store the invoice in the same transaction as the chain head (`EntityManager::wrapInTransaction()`), or be ready to re-issue the record: a chain head without a stored invoice breaks the next record's `previousHash` audit trail. Inside your transaction the chain row lock is held until it ends, including the AEAT call and the event listeners of `process()`.
 
 **Concurrency.** `BillingRecordProcessor` reads the chain head, hashes the new record and stores the new head. When the repository implements `LockableHashChainRepositoryInterface`, that read-then-write runs inside `withChainLock()`, so concurrent requests for the same issuer NIF cannot chain onto the same previous record. The Doctrine repository opens a transaction and takes a pessimistic write lock (`SELECT … FOR UPDATE`) on the issuer row; for the first record of an issuer the unique constraint on `issuer_nif` makes a concurrent second insert fail instead of forking the chain. Custom repositories should implement the interface (database row lock, Symfony Lock, etc.). Note that SQLite ignores `FOR UPDATE`; use a server database in production.
 
-**Table prefix.** `doctrine.table_prefix` (default `''`; letters, digits and underscores only) is prepended to every table the bundle owns, to its unique constraint and to any many-to-many join table of bundle entities, so several applications can share one database. It is applied by a Doctrine `loadClassMetadata` listener scoped to the `Nowo\VerifactuBundle\Entity\` namespace (host entities are never renamed); the bundle only queries through DQL, so every query follows the prefixed name.
+**Table prefix.** `doctrine.table_prefix` (default `''`; letters, digits and underscores only) is prepended to every table the bundle owns, to its unique constraint and to any many-to-many join table of bundle entities, so several applications can share one database. It is applied by a Doctrine `loadClassMetadata` listener scoped to the `Nowo\VerifactuBundle\Entity\` namespace (host entities are never renamed); the bundle reads through DQL and writes with DBAL using the table and column names of the class metadata, so every statement follows the prefixed name.
 
 | `doctrine.table_prefix` | Table | Unique constraint |
 | --- | --- | --- |
 | `''` (default) | `verifactu_hash_chain` | `uniq_verifactu_hash_chain_issuer` |
 | `app_` | `app_verifactu_hash_chain` | `app_uniq_verifactu_hash_chain_issuer` |
 
+The record store table follows the same rule (`verifactu_billing_record`, `uniq_verifactu_billing_record_hash`).
+
 Changing the prefix on an existing database requires renaming the table (see [UPGRADING.md](UPGRADING.md#unreleased)).
 
 **Deprecated / reserved options.** `hash_chain.table_prefix` is deprecated and has no effect (use `doctrine.table_prefix`). `aeat_spec_version` is accepted for forward compatibility but has no effect today.
 
 The default `memory` storage is **request-scoped** (cleared at the start of every main request, also in FrankenPHP worker mode without `services_resetter`): every request starts a new chain. It is meant for development and tests; with `kernel.debug: false` it logs a warning on every stored record. Full worker-mode notes: [FRANKENPHP-WORKER-AUDIT.md](FRANKENPHP-WORKER-AUDIT.md).
+
+### Record store and chain verification
+
+`record_store.storage: doctrine` keeps every chained record in `verifactu_billing_record` (issuer NIF, position, the
+hashed fields, previous hash, hash, XML, signed XML, submission status and AEAT reference), appended inside the chain
+lock so the head and the log never diverge. `memory` is request-scoped (development and tests). `record_store.service`
+plugs your own `Repository\BillingRecordStoreInterface`. With a store, `Service\ChainVerifier` and
+`nowo:verifactu:verify-chain` are available ([COMMANDS](COMMANDS.md#verify-a-stored-chain)); without one they are not
+registered.
+
+### Doctrine mapping (standard and DDD hosts)
+
+The bundle entities (`BillingRecordHashChain`, `BillingRecordEntry`) are bundle-owned and referenced by IDs (issuer NIF,
+position, hash), never by a relation to your entities. `doctrine.mapping: attribute` (default) maps them with PHP
+attributes; `doctrine.mapping: xml` maps them from `src/Resources/config/doctrine/*.orm.xml`, for hosts whose ORM
+configuration only loads XML mappings.
+
+### Runtime issuer and software identity
+
+By default the issuer and the `SistemaInformatico` block come from `issuer`, `software` and `installation`. To keep them
+in your database (and edit them without a cache clear), implement `Provider\IssuerProviderInterface` and/or
+`Provider\SoftwareIdentityProviderInterface` and set `providers.issuer` / `providers.software_identity` to the service
+ids. They are called on every `process()` and every SOAP submission, never cached by the bundle. `IdSistemaInformatico`
+is up to two characters and `NumeroInstalacion` free text (for example `SB` and `1`).
 
 ### XAdES signing (No-Veri*Factu)
 

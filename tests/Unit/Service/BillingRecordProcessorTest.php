@@ -17,8 +17,15 @@ use Nowo\VerifactuBundle\Event\VerifactuEvents;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Model\IssuerIdentity;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Model\SoftwareIdentity;
+use Nowo\VerifactuBundle\Model\StoredBillingRecord;
+use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
+use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
+use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
+use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
@@ -620,6 +627,128 @@ final class BillingRecordProcessorTest extends TestCase
         self::assertSame($result['record']->hash, $this->repository->getLastState('89890001K')?->hash);
     }
 
+    public function testXmlFingerprintAndRecordCarryTheSameCanonicalAmounts(): void
+    {
+        $record = new BillingRecord(RecordType::Alta, '89890001K', 'FAC-2026-500', '09-07-2026', 'F1', '2.1', '12.30', '2026-07-09T16:00:00+02:00', issuerName: 'Test Issuer');
+
+        $result = $this->processor->process($record);
+        $xml    = (string) $result['record']->xml;
+
+        self::assertSame([], $result['errors']);
+        self::assertSame('2.10', $result['record']->totalTaxAmount);
+        self::assertSame('12.30', $result['record']->totalAmount);
+        self::assertStringContainsString('<CuotaTotal>2.10</CuotaTotal>', $xml);
+        self::assertStringContainsString('<ImporteTotal>12.30</ImporteTotal>', $xml);
+        self::assertStringContainsString('CuotaTotal=2.10&ImporteTotal=12.30', (new HashChainGenerator())->buildInputString($result['record']));
+    }
+
+    public function testProvidersAreResolvedOnEveryCall(): void
+    {
+        $issuer = new class implements IssuerProviderInterface {
+            public IssuerIdentity $identity;
+
+            public function getIssuer(): IssuerIdentity
+            {
+                return $this->identity;
+            }
+        };
+        $software = new class implements SoftwareIdentityProviderInterface {
+            public SoftwareIdentity $identity;
+
+            public function getSoftwareIdentity(): SoftwareIdentity
+            {
+                return $this->identity;
+            }
+        };
+        $issuer->identity   = new IssuerIdentity('89890001K', 'First Issuer');
+        $software->identity = new SoftwareIdentity('Producer One', '89890001K', 'Beacon', 'SB', '1.0.0', '1');
+        $processor          = $this->createProcessor(issuerProvider: $issuer, softwareIdentityProvider: $software);
+
+        $first = $processor->process($this->recordWithoutIssuer('FAC-P-1'), persistChainState: false);
+
+        $issuer->identity   = new IssuerIdentity('B12345674', 'Second Issuer');
+        $software->identity = new SoftwareIdentity('Producer Two', 'B12345674', 'Beacon', 'S2', '2.0.0', '7', false);
+
+        $second = $processor->process($this->recordWithoutIssuer('FAC-P-1'), persistChainState: false);
+
+        self::assertSame([], $first['errors']);
+        self::assertSame([], $second['errors']);
+        self::assertSame('89890001K', $first['record']->issuerNif);
+        self::assertSame('B12345674', $second['record']->issuerNif);
+        self::assertNotSame($first['record']->hash, $second['record']->hash);
+        self::assertStringContainsString('<NombreRazonEmisor>First Issuer</NombreRazonEmisor>', (string) $first['record']->xml);
+        self::assertStringContainsString('<NombreRazon>Producer One</NombreRazon>', (string) $first['record']->xml);
+        self::assertStringContainsString('<IdSistemaInformatico>SB</IdSistemaInformatico>', (string) $first['record']->xml);
+        self::assertStringContainsString('<NombreRazonEmisor>Second Issuer</NombreRazonEmisor>', (string) $second['record']->xml);
+        self::assertStringContainsString('<NombreRazon>Producer Two</NombreRazon>', (string) $second['record']->xml);
+        self::assertStringContainsString('<NIF>B12345674</NIF>', (string) $second['record']->xml);
+        self::assertStringContainsString('<Version>2.0.0</Version>', (string) $second['record']->xml);
+        self::assertStringContainsString('<NumeroInstalacion>7</NumeroInstalacion>', (string) $second['record']->xml);
+        self::assertStringContainsString('<TipoUsoPosibleSoloVerifactu>N</TipoUsoPosibleSoloVerifactu>', (string) $second['record']->xml);
+    }
+
+    public function testARecordWithItsOwnIssuerKeepsIt(): void
+    {
+        $issuer = $this->createMock(IssuerProviderInterface::class);
+        $issuer->method('getIssuer')->willReturn(new IssuerIdentity('B12345674', 'Provider Issuer'));
+
+        $result = $this->createProcessor(issuerProvider: $issuer)->process($this->createValidRecord('FAC-OWN-1'));
+
+        self::assertSame('89890001K', $result['record']->issuerNif);
+    }
+
+    public function testRecordStoreReceivesTheChainedRecordAndTheSubmissionOutcome(): void
+    {
+        $store     = new InMemoryBillingRecordStore();
+        $processor = $this->createProcessor(recordStore: $store);
+
+        $first  = $processor->process($this->createValidRecord('FAC-S-1'), true);
+        $second = $processor->process($this->createValidRecord('FAC-S-2'));
+        $processor->process($this->createValidRecord('FAC-S-3'), true, false);
+
+        $stored = $store->findByIssuer('89890001K');
+        self::assertCount(2, $stored);
+        self::assertSame($first['record'], $stored[0]->record);
+        self::assertSame(StoredBillingRecord::STATUS_ACCEPTED, $stored[0]->submissionStatus);
+        self::assertSame('SANDBOX-' . $first['record']->hash, $stored[0]->submissionReference);
+        self::assertSame($second['record'], $stored[1]->record);
+        self::assertSame(StoredBillingRecord::STATUS_PENDING, $stored[1]->submissionStatus);
+    }
+
+    public function testRejectedSubmissionIsStoredAsFailed(): void
+    {
+        $store  = new InMemoryBillingRecordStore();
+        $client = $this->createMock(AeatSubmissionClientInterface::class);
+        $client->method('submit')->willReturn(['success' => false, 'errors' => ['rejected'], 'reference' => 123]);
+
+        $this->createProcessor(submissionClient: $client, recordStore: $store)->process($this->createValidRecord('FAC-R-1'), true);
+
+        $stored = $store->findByIssuer('89890001K');
+        self::assertSame(StoredBillingRecord::STATUS_FAILED, $stored[0]->submissionStatus);
+        self::assertNull($stored[0]->submissionReference);
+    }
+
+    public function testAFailingStoreUpdateKeepsTheSubmissionResult(): void
+    {
+        $failure = new RuntimeException('database gone');
+        $store   = $this->createMock(BillingRecordStoreInterface::class);
+        $store->expects(self::once())->method('append')->willReturn(1);
+        $store->method('markSubmitted')->willThrowException($failure);
+        $logger = new RecordingLogger();
+
+        $result = $this->createProcessor(logger: $logger, recordStore: $store)->process($this->createValidRecord('FAC-F-1'), true);
+
+        self::assertArrayHasKey('submission', $result);
+        self::assertTrue($result['submission']['success']);
+        self::assertSame([$failure], $result['store_errors'] ?? null);
+        self::assertStringNotContainsString('database gone', json_encode($logger->records, JSON_THROW_ON_ERROR));
+    }
+
+    private function recordWithoutIssuer(string $seriesNumber): BillingRecord
+    {
+        return new BillingRecord(RecordType::Alta, '', $seriesNumber, '09-07-2026', 'F1', '21.00', '121.00', '2026-07-09T16:00:00+02:00');
+    }
+
     private function createValidRecord(string $seriesNumber): BillingRecord
     {
         return new BillingRecord(
@@ -644,6 +773,9 @@ final class BillingRecordProcessorTest extends TestCase
         ?HashChainRepositoryInterface $repository = null,
         ?AeatSubmissionClientInterface $submissionClient = null,
         ?LoggerInterface $logger = null,
+        ?BillingRecordStoreInterface $recordStore = null,
+        ?IssuerProviderInterface $issuerProvider = null,
+        ?SoftwareIdentityProviderInterface $softwareIdentityProvider = null,
     ): BillingRecordProcessor {
         $translator = $this->createMock(TranslatorInterface::class);
         $translator->method('trans')->willReturnCallback(TranslationHelper::createTranslatorCallback());
@@ -669,6 +801,9 @@ final class BillingRecordProcessorTest extends TestCase
             $signRecords,
             $recordSigner,
             $logger,
+            $recordStore,
+            $issuerProvider,
+            $softwareIdentityProvider,
         );
     }
 }
