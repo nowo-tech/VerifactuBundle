@@ -20,8 +20,10 @@ use Nowo\VerifactuBundle\Repository\LockableHashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Validator\AeatBusinessRulesValidator;
 use Nowo\VerifactuBundle\Validator\XsdValidator;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
+use Throwable;
 
 /**
  * Orchestrates validation, hash chaining, XML generation, XSD validation, signing, and AEAT submission.
@@ -55,16 +57,20 @@ final class BillingRecordProcessor
         private readonly string $mode,
         private readonly bool $signRecords,
         private readonly ?BillingRecordSignerInterface $recordSigner = null,
+        private readonly ?LoggerInterface $logger = null,
     ) {
     }
 
     /**
      * Chains, renders, validates and signs the record, stores the new chain head and optionally submits it to the AEAT.
      *
-     * @param bool $persistChainState When false (dry runs), the record is chained onto the current head but
+     * @param bool $persistChainState when false (dry runs), the record is chained onto the current head but
      *                                the new state is NOT stored, so the persistent hash chain is left untouched
      *
-     * @return array{record: BillingRecord, errors: list<string>, submission?: array<string, mixed>}
+     * An exception thrown by a `BEFORE_AEAT_SUBMISSION` or `AFTER_AEAT_SUBMISSION` listener never stops the submission
+     * nor hides its result: it is logged (event name and exception class only) and returned in `event_errors`
+     *
+     * @return array{record: BillingRecord, errors: list<string>, submission?: array<string, mixed>, event_errors?: list<array{event: string, exception: Throwable}>}
      */
     public function process(BillingRecord $record, bool $submitToAeat = false, bool $persistChainState = true): array
     {
@@ -88,8 +94,9 @@ final class BillingRecordProcessor
 
         $record = $chained['record'];
 
+        // Listeners receive a copy: they cannot change the hash, XML or signed XML that is submitted and returned.
         $this->eventDispatcher->dispatch(
-            new AfterBillingRecordGeneratedEvent($record),
+            new AfterBillingRecordGeneratedEvent(clone $record),
             VerifactuEvents::AFTER_BILLING_RECORD_GENERATED,
         );
 
@@ -97,17 +104,26 @@ final class BillingRecordProcessor
 
         if ($submitToAeat) {
             // Listeners receive copies: they observe the submission but cannot change what is sent to the AEAT.
-            $this->eventDispatcher->dispatch(
+            // The chain head already points at this record, so a failing (informational) listener must neither stop
+            // the submission nor hide its result: either would lose a fiscal record or fork the chain on a retry.
+            $eventErrors = [];
+            $this->dispatchSubmissionEvent(
                 new BeforeAeatSubmissionEvent(clone $record),
                 VerifactuEvents::BEFORE_AEAT_SUBMISSION,
+                $eventErrors,
             );
 
             $result['submission'] = $this->submissionClient->submit($record);
 
-            $this->eventDispatcher->dispatch(
+            $this->dispatchSubmissionEvent(
                 new AfterAeatSubmissionEvent(clone $record, $result['submission']),
                 VerifactuEvents::AFTER_AEAT_SUBMISSION,
+                $eventErrors,
             );
+
+            if ($eventErrors !== []) {
+                $result['event_errors'] = $eventErrors;
+            }
         }
 
         return $result;
@@ -176,6 +192,25 @@ final class BillingRecordProcessor
         }
 
         return ['record' => $record, 'errors' => []];
+    }
+
+    /**
+     * Dispatches an AEAT submission event and contains any listener failure.
+     *
+     * @param list<array{event: string, exception: Throwable}> $eventErrors
+     */
+    private function dispatchSubmissionEvent(object $event, string $eventName, array &$eventErrors): void
+    {
+        try {
+            $this->eventDispatcher->dispatch($event, $eventName);
+        } catch (Throwable $exception) {
+            // No record data and no exception message in the log: both may carry personal data (NIF, names).
+            $this->logger?->error('A {event} listener failed ({exception_class}); the AEAT submission and its result are kept.', [
+                'event'           => $eventName,
+                'exception_class' => $exception::class,
+            ]);
+            $eventErrors[] = ['event' => $eventName, 'exception' => $exception];
+        }
     }
 
     private function shouldSign(): bool

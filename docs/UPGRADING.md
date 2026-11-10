@@ -45,9 +45,15 @@ composer update nowo-tech/verifactu-bundle
   `BeforeAeatSubmissionEvent` / `AfterAeatSubmissionEvent`. If you registered a listener on those names expecting a
   different event class, update its type hint.
 - The events cannot veto the submission and carry a copy of the record; what is sent to the AEAT is unchanged.
-- An exception thrown by one of your listeners now propagates from `process()`: in `BEFORE_AEAT_SUBMISSION` the record
-  is then **not** submitted (the hash chain has already advanced, as for any failure after generation); in
-  `AFTER_AEAT_SUBMISSION` the record was already submitted. Keep these listeners free of failures (log and continue).
+- An exception thrown by one of your `BEFORE_AEAT_SUBMISSION` / `AFTER_AEAT_SUBMISSION` listeners does **not** propagate
+  from `process()`: the record is still submitted and returned with `submission`, and the failure is reported in
+  `$result['event_errors']` (list of `['event' => …, 'exception' => Throwable]`) and logged. Read that key if a listener
+  does work you rely on.
+- `AFTER_BILLING_RECORD_GENERATED` listeners now receive a **copy** of the record. If a listener wrote to
+  `$event->getRecord()->xml`, `signedXml` or `hash` (which corrupted what was sent to the AEAT), that write no longer
+  has any effect. Reading the record is unchanged.
+- If you construct `BillingRecordProcessor` yourself, nothing changes: the new `?LoggerInterface $logger` argument is
+  optional and last.
 
 ## To 1.4.0
 

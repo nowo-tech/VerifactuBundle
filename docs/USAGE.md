@@ -94,18 +94,34 @@ php bin/console nowo:verifactu:verify-hash \
 | Event name (`VerifactuEvents::`) | Event class | When | Can change the outcome |
 |---|---|---|---|
 | `BEFORE_BILLING_RECORD_GENERATION` | `BeforeBillingRecordGenerationEvent` | Before validation, hash and XML | Yes: `setRecord()` replaces the record |
-| `AFTER_BILLING_RECORD_GENERATED` | `AfterBillingRecordGeneratedEvent` | After hash, XML (and signature); chain state stored | No |
+| `AFTER_BILLING_RECORD_GENERATED` | `AfterBillingRecordGeneratedEvent` | After hash, XML (and signature); chain state stored | No: the event carries a copy of the record |
 | `BEFORE_AEAT_SUBMISSION` | `BeforeAeatSubmissionEvent` | Right before the AEAT client is called (`submitToAeat: true` only) | No |
 | `AFTER_AEAT_SUBMISSION` | `AfterAeatSubmissionEvent` | After the AEAT client returned | No |
 
 The two AEAT submission events are informational (audit log, metrics, outbox): there is **no veto**. Whether a record is
 submitted is decided by the caller (`process(..., submitToAeat: true)`), not by a listener, so a listener can never
-silently keep a registered record away from the AEAT. Both events carry a **copy** of the `BillingRecord`: changing it
-does not change the XML sent to the AEAT nor the record returned by `process()`.
+silently keep a registered record away from the AEAT. `AfterBillingRecordGeneratedEvent` and both submission events
+carry a **copy** of the `BillingRecord`: changing it does not change the hash or the XML sent to the AEAT, the record
+returned by `process()`, nor the stored chain head.
 `AfterAeatSubmissionEvent::getSubmission()` returns the same array as `$result['submission']` (`success`, `reference`,
 `errors` and, for the SOAP client, `endpoint`, `status_code`, `raw_response`); `isSuccessful()` reads `success`. Neither
 event carries the certificate or its password. The submission events are not dispatched when validation fails, when
 `submitToAeat` is false, or when the client throws.
+
+**A failing submission listener never loses or duplicates a record.** When these events run, the chain head already
+points at the record. An exception from a `BEFORE_AEAT_SUBMISSION` or `AFTER_AEAT_SUBMISSION` listener is caught: the
+record is still submitted, `process()` still returns the record and `submission`, and the failure is added to
+`$result['event_errors']` (a list of `['event' => <event name>, 'exception' => <Throwable>]`; the key is absent when every
+listener succeeded). It is also logged at `error` level with the event name and the exception class only (no record
+data, no exception message). Listener failures never go into `errors`. As with any Symfony event, the remaining
+listeners of that event are skipped once one throws. Check `event_errors` if your listener does work you rely on (e.g.
+an outbox write).
+
+**Personal data in the payloads.** The record copy holds the issuer NIF and name (personal data for a self-employed
+issuer), the invoice data and the full XML / signed XML (with the public certificate, which names its holder).
+`getSubmission()` holds `raw_response`, the AEAT answer, which echoes the issuer and presenter, and `errors`, which for
+transport failures can contain the local certificate file path from cURL. Do not log the record or the submission
+wholesale: log identifiers such as the invoice number and the CSV, and mask the NIF as the demo subscriber does.
 
 ```php
 use Nowo\VerifactuBundle\Event\AfterAeatSubmissionEvent;
@@ -180,7 +196,10 @@ domain event when the AEAT answers, either map `$result['submission']` in the ad
 
 - Results are arrays, not typed DTOs.
 - The hash chain advances when `process()` runs: call it inside the transaction that stores your invoice (same
-  connection), or implement the lockable repository in your own persistence.
+  connection), or implement the lockable repository in your own persistence. With the Doctrine storage inside your
+  transaction, the chain row lock (`SELECT … FOR UPDATE` on the issuer row) is held until your transaction ends: across
+  the AEAT HTTP call and while every event listener runs. Keep listeners short, and other `process()` calls for the
+  same issuer wait meanwhile.
 
 ## Forms in Twig (REQ-TWIG-005)
 

@@ -38,6 +38,20 @@ Target 1.4.1.
   `AfterAeatSubmissionEvent` (record + submission result, `isSuccessful()`) after it returned. Both are informational
   (no veto) and carry a copy of the record, so listeners cannot change what is sent to the AEAT nor what `process()`
   returns. The XML, the hash chain and the AEAT request are unchanged. No certificate or password in the payloads.
+- **A failing submission listener cannot lose or duplicate a fiscal record.** An exception from a
+  `BEFORE_AEAT_SUBMISSION` / `AFTER_AEAT_SUBMISSION` listener is caught: the record is still submitted, `process()`
+  still returns the record and `submission`, and the failure goes to the new `$result['event_errors']` key (event name
+  + exception) and to the optional logger (`error`, event name and exception class only). Letting it propagate would
+  lose the CSV, hash and XML of a record the AEAT accepted, and a retry would duplicate it or fork the chain.
+  `BillingRecordProcessor` takes an optional `?LoggerInterface $logger` as its last constructor argument (`@?logger`).
+- **`AFTER_BILLING_RECORD_GENERATED` carries a copy of the record.** It passed the same `BillingRecord` instance that is
+  then submitted and returned, so a listener that set `xml`, `signedXml` or `hash` changed what the AEAT received while
+  the stored chain head kept the real hash. Listeners now get `clone $record`.
+
+### Changed
+
+- **Docs:** USAGE lists the personal data in the event payloads (issuer NIF / name, XML, `raw_response`, a certificate
+  path in cURL errors) and that the chain row lock is held while listeners run inside a host transaction.
 
 ## [1.4.0] - 2026-10-30
 
