@@ -110,6 +110,8 @@ public function onGenerated(AfterBillingRecordGeneratedEvent $event): void
 }
 ```
 
+`VerifactuEvents::BEFORE_AEAT_SUBMISSION` / `AFTER_AEAT_SUBMISSION` (`AfterAeatSubmissionEvent::getSubmission()`) report each AEAT submission; see [USAGE — Events](USAGE.md#events).
+
 See `demo/symfony8/src/EventSubscriber/VerifactuAuditSubscriber.php` for a working example.
 
 ### 6. Invoice cancellation

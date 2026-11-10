@@ -3,6 +3,7 @@
 ## Table of contents
 
 - [Unreleased](#unreleased)
+- [To 1.4.1](#to-141)
 - [To 1.4.0](#to-140)
 - [To 1.3.0](#to-130)
 - [To 1.2.0](#to-120)
@@ -30,6 +31,33 @@
 - [From 1.0.7 to 1.0.8](#from-107-to-108)
 
 ## Unreleased
+
+## To 1.4.1
+
+From **1.4.0** — fix, no configuration change:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- Listeners on `VerifactuEvents::BEFORE_AEAT_SUBMISSION` / `AFTER_AEAT_SUBMISSION` now run when
+  `process(..., submitToAeat: true)` submits a record (they never ran before). They receive
+  `BeforeAeatSubmissionEvent` / `AfterAeatSubmissionEvent`. If you registered a listener on those names expecting a
+  different event class, update its type hint.
+- The events cannot veto the submission and carry a copy of the record; what is sent to the AEAT is unchanged.
+- An exception thrown by one of your `AFTER_BILLING_RECORD_GENERATED`, `BEFORE_AEAT_SUBMISSION` or
+  `AFTER_AEAT_SUBMISSION` listeners does **not** propagate from `process()` any more (for `AFTER_BILLING_RECORD_GENERATED`
+  it did since 1.0.0, after the hash chain had already advanced): the record is still submitted (when requested) and
+  returned, and the failure is reported in `$result['event_errors']` (list of `['event' => …, 'exception' => Throwable]`)
+  and logged. Read that key if a listener does work you rely on.
+- **To veto a record, use `BEFORE_BILLING_RECORD_GENERATION`**: it runs before validation and chaining, and an exception
+  thrown there still propagates from `process()` with nothing chained. Throwing from the post-chaining events no longer
+  stops anything.
+- `AFTER_BILLING_RECORD_GENERATED` listeners now receive a **copy** of the record. If a listener wrote to
+  `$event->getRecord()->xml`, `signedXml` or `hash` (which corrupted what was sent to the AEAT), that write no longer
+  has any effect. Reading the record is unchanged.
+- If you construct `BillingRecordProcessor` yourself, nothing changes: the new `?LoggerInterface $logger` argument is
+  optional and last.
 
 ## To 1.4.0
 

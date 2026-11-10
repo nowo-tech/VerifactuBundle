@@ -28,6 +28,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Target 1.4.1.
+
+### Fixed
+
+- **AEAT submission events are dispatched.** `VerifactuEvents::BEFORE_AEAT_SUBMISSION` and `AFTER_AEAT_SUBMISSION` were
+  declared (and the README advertised "AEAT submission hooks") but never dispatched. `BillingRecordProcessor::process()`
+  with `submitToAeat: true` now dispatches `BeforeAeatSubmissionEvent` right before the AEAT client is called and
+  `AfterAeatSubmissionEvent` (record + submission result, `isSuccessful()`) after it returned. Both are informational
+  (no veto) and carry a copy of the record, so listeners cannot change what is sent to the AEAT nor what `process()`
+  returns. The XML, the hash chain and the AEAT request are unchanged. No certificate or password in the payloads.
+- **A failing listener after chaining cannot lose or duplicate a fiscal record.** An exception from an
+  `AFTER_BILLING_RECORD_GENERATED`, `BEFORE_AEAT_SUBMISSION` or `AFTER_AEAT_SUBMISSION` listener is caught, with or
+  without submission: the record is still submitted (when requested), `process()` still returns the record (and
+  `submission`), and the failure goes to the new `$result['event_errors']` key (event name
+  + exception) and to the optional logger (`error`, event name and exception class only). Letting it propagate would
+  lose the CSV, hash and XML of a record the AEAT accepted (or of a record already chained), and a retry would
+  duplicate it or chain onto a record nobody stored. For `AFTER_BILLING_RECORD_GENERATED` this was the case since
+  1.0.0. `psr/log` is now declared in `require` (it was already used through Symfony).
+  `BillingRecordProcessor` takes an optional `?LoggerInterface $logger` as its last constructor argument (`@?logger`).
+- **`AFTER_BILLING_RECORD_GENERATED` carries a copy of the record.** It passed the same `BillingRecord` instance that is
+  then submitted and returned, so a listener that set `xml`, `signedXml` or `hash` changed what the AEAT received while
+  the stored chain head kept the real hash. Listeners now get `clone $record`.
+
+### Changed
+
+- **Docs:** USAGE lists the personal data in the event payloads (issuer NIF / name, XML, `raw_response`, a certificate
+  path in cURL errors) and that the chain row lock is held while listeners run inside a host transaction.
+
 ## [1.4.0] - 2026-10-30
 
 SEC-004 hardening: PEM loader fix, submit-sandbox refuses production, production requires persistent hash chain, CIF check digit, strict dates/amounts, explicit cURL TLS policy, dist export-ignore See [UPGRADING](UPGRADING.md#to-140).
