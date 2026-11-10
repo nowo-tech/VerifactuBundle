@@ -15,6 +15,7 @@ services:
             - '../../Repository/DoctrineHashChainRepository.php'
             - '../../Repository/DoctrineBillingRecordStore.php'
             - '../../Clock/'
+            - '../../Exception/'
 
     Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface:
         alias: Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository

@@ -44,6 +44,19 @@ final class ConcurrencyKernel extends Kernel
         return sys_get_temp_dir() . '/verifactu-concurrency/log';
     }
 
+    /**
+     * A valid DNI per issuer number (the single-issuer scenarios keep the AEAT example NIF).
+     */
+    public static function issuerNif(int $issuer, int $issuers): string
+    {
+        if ($issuers === 1) {
+            return '89890001K';
+        }
+        $number = 10000000 + $issuer;
+
+        return $number . 'TRWAGMYFPDXBNJZSQVHLCKE'[$number % 23];
+    }
+
     public static function databaseUrl(): string
     {
         return (string) getenv('VERIFACTU_TEST_DATABASE_URL');

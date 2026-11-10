@@ -306,6 +306,10 @@ domain event when the AEAT answers, either map `$result['submission']` in the ad
   transaction, the chain row lock (`SELECT … FOR UPDATE` on the issuer row) is held until your transaction ends: across
   the AEAT HTTP call and while every event listener runs. Keep listeners short, and other `process()` calls for the
   same issuer wait meanwhile.
+- Retrying: outside a transaction of yours, retry `process()` on a DBAL `RetryableException`. Inside your transaction,
+  roll back and retry the whole unit of work; on `ChainTransactionLostException` (MySQL / MariaDB deadlock) your
+  transaction is already gone and the connection was closed, so just start the unit of work again
+  ([CONFIGURATION](CONFIGURATION.md#hash-chain-persistence)).
 
 ## Forms in Twig (REQ-TWIG-005)
 

@@ -25,7 +25,8 @@ interface LockableHashChainRepositoryInterface extends HashChainRepositoryInterf
      * sees the latest committed head whatever the transaction's snapshot), and pass it to $operation (null for an
      * empty chain). A plain read inside the lock can return a stale head (MySQL / MariaDB REPEATABLE READ) and fork
      * the chain. When an implementation calls $operation() without an argument, BillingRecordProcessor falls back to
-     * getLastState() (behaviour of 1.1 – 1.4).
+     * getLastState() (behaviour of 1.1 – 1.4): that plain read CAN FORK THE CHAIN on MySQL / MariaDB inside a host
+     * transaction. Always pass the locked head.
      *
      * @template T
      *

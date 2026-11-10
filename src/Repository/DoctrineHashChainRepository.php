@@ -12,6 +12,7 @@ use Doctrine\Persistence\ManagerRegistry;
 use LogicException;
 use Nowo\VerifactuBundle\Doctrine\DbalRowWriter;
 use Nowo\VerifactuBundle\Entity\BillingRecordHashChain;
+use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 use Throwable;
@@ -69,13 +70,18 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
      * Runs the operation in a transaction holding a pessimistic write lock on the issuer chain row, and passes it the
      * head read under that lock (null for an empty chain).
      *
-     * The transaction nests into the host's transaction when one is open on the same connection.
+     * The transaction nests into the host's transaction when one is open on the same connection. When the database
+     * ends the host's whole transaction meanwhile (MySQL / MariaDB deadlock), the connection is closed and
+     * ChainTransactionLostException is thrown: retry the host's whole unit of work.
+     *
+     * @throws ChainTransactionLostException
      */
     public function withChainLock(string $issuerNif, callable $operation): mixed
     {
         $entityManager = $this->resolveEntityManager();
         $connection    = $entityManager->getConnection();
         $connection->beginTransaction();
+        $nested = $connection->getTransactionNestingLevel() > 1;
 
         try {
             $this->ensureRow($entityManager, $issuerNif);
@@ -90,8 +96,16 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
                 try {
                     $connection->rollBack();
                 } catch (Throwable) {
-                    // A deadlock or a lost connection already ended the transaction on the server: the original error is
-                    // the one the caller must see (it may be retryable).
+                    if ($nested) {
+                        // The server already rolled back the host's WHOLE transaction (MySQL / MariaDB deadlock), so the
+                        // savepoint is gone and DBAL's nesting level can never return to 0: every later statement on this
+                        // (kept-alive) connection would run in autocommit without the row lock. Close it and tell the
+                        // host to restart its unit of work.
+                        $connection->close();
+
+                        throw new ChainTransactionLostException($exception);
+                    }
+                    // Top level: DBAL already reset the nesting level; the original error is the one that matters.
                 }
             }
 

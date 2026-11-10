@@ -55,10 +55,18 @@ composer update nowo-tech/verifactu-bundle
   With DBAL 4 the nested transaction is a savepoint. With DBAL 3 without savepoints, an exception inside the lock marks
   your transaction rollback-only (your `commit()` then throws): roll back and retry.
 - **Chain lock.** The Doctrine repository now creates the issuer row before the first record and reads the head once
-  under the lock. Under contention the database may report a deadlock or lock wait timeout (DBAL
-  `RetryableException`) instead of forking the chain: retry the call. If you implement
-  `LockableHashChainRepositoryInterface`, pass the head you read under the lock to `$operation($head)`; calling
-  `$operation()` without it still works (the processor then calls `getLastState()`).
+  under the lock. Under contention the database may report a deadlock or lock wait timeout instead of forking the
+  chain. Without a transaction of yours, retry `process()` (DBAL `RetryableException`). **Inside your transaction,
+  roll back and retry the whole unit of work** (transaction, your writes, `process()`), never `process()` alone. On
+  MySQL / MariaDB a deadlock rolls back your whole transaction on the server: the bundle then closes the connection
+  (so DBAL never keeps a nesting level for a transaction that no longer exists, which in FrankenPHP worker mode would
+  let later requests write without the lock) and throws `Nowo\VerifactuBundle\Exception\ChainTransactionLostException`
+  wrapping the database error; do not call `rollBack()` after it. On PostgreSQL, a `lock_timeout` (SQLSTATE 55P03)
+  arrives as a plain `DriverException`, not a `RetryableException`: treat it as retryable if you set one.
+- **Custom lockable repositories.** If you implement `LockableHashChainRepositoryInterface`, pass the head you read
+  under the lock to `$operation($head)`. Calling `$operation()` without it still runs (the processor then calls
+  `getLastState()`, a plain read), but on MySQL / MariaDB (REPEATABLE READ) inside your transaction that read can be
+  stale and **fork the chain**.
 - **Record store on an existing chain.** When you enable `record_store` for an issuer that already has records, the
   first stored record continues from the old head; `verify-chain` accepts it and prints the hash it continues from
   (pass `--anchor=<old head>` to require it). Records before that are not in the store.

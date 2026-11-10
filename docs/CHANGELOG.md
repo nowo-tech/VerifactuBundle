@@ -55,8 +55,16 @@ time helper. See [UPGRADING](UPGRADING.md#unreleased).
   that head to the operation (`LockableHashChainRepositoryInterface` documents it; a custom repository that passes
   nothing keeps the old behaviour), `storeLastState()` only updates the locked row, and the record store takes its
   position from locking reads. A new CI job runs several PHP processes against MySQL 8.4, MariaDB 11.4 and
-  PostgreSQL 17 (`tests/Concurrency`). If several processes created records for the same issuer concurrently with
-  1.1 – 1.4.1, check the chain (two records with the same previous hash, or a head that does not reach every record).
+  PostgreSQL 17 (`tests/Concurrency`), including 8 processes racing on the first record of 30 new issuers.
+- **A MySQL / MariaDB deadlock inside the host's transaction left the connection writing without the lock (affected
+  1.1.0 – 1.4.1 and 1.5 before release).** InnoDB rolls back the victim's whole transaction, so the savepoint of the
+  chain lock no longer exists, its rollback failed and DBAL's nesting level never went back to 0: on a kept-alive
+  connection (FrankenPHP worker mode) every later record ran in autocommit while DBAL believed it was in a
+  transaction, without the row lock (audit: most chains corrupted under contention). `withChainLock()` now closes the
+  connection in that case and throws `Exception\ChainTransactionLostException`: roll back nothing more and retry the
+  whole unit of work. Tested with a forced deadlock on a kept-alive connection and in the concurrency suite.
+- If several processes created records for the same issuer concurrently with 1.1 – 1.4.1, check the chain (two
+  records with the same previous hash, or a head that does not reach every record).
 - **The bundle never flushes or resets the host's EntityManager (V2, KS-V-I4, architecture rule 6).**
   `DoctrineHashChainRepository::storeLastState()` called `flush()` on the manager of the chain entity, usually the
   host's default one, so the host's pending entities were written too (`process()` is meant to run before the host
