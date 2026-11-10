@@ -79,6 +79,7 @@ services:
             $recordStore: '@?nowo_verifactu.billing_record_store'
             $issuerProvider: '@Nowo\VerifactuBundle\Provider\IssuerProviderInterface'
             $softwareIdentityProvider: '@Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface'
+            $clock: '@?clock'
 
     Nowo\VerifactuBundle\Qr\QrUrlBuilder:
         arguments:

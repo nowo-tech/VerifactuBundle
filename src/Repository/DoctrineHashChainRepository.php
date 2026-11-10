@@ -28,8 +28,13 @@ use Throwable;
  * (DBAL savepoint or nesting level), so the chain head (and the record log, when enabled) commit or roll back with the
  * host's own data; without a host transaction it commits on its own, as before.
  *
- * Locking: the issuer row is read with SELECT … FOR UPDATE. For the very first record of an issuer there is no row to
- * lock; the unique constraint on issuer_nif makes a concurrent second insert fail instead of forking the chain.
+ * Locking: withChainLock() first makes sure the issuer row exists (an insert-if-absent of an empty head, so the first
+ * record of an issuer is serialised like every other one), then reads it once with SELECT … FOR UPDATE and passes that
+ * state to the operation. A locking read returns the latest committed head on every isolation level that matters
+ * (MySQL / MariaDB REPEATABLE READ inside a host transaction that already read something, PostgreSQL READ COMMITTED),
+ * so two processes can never chain onto the same predecessor; storeLastState() then only UPDATEs the locked row.
+ * SQLite has no row locks: its database lock serialises writers (a concurrent writer fails with "database is locked",
+ * it never forks), so SQLite is a single-writer store for development and tests only.
  *
  * @extends ServiceEntityRepository<BillingRecordHashChain>
  *
@@ -57,36 +62,37 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
      */
     public function getLastState(string $issuerNif): ?HashChainState
     {
-        $row = $this->findRow($this->resolveEntityManager(), $issuerNif, false);
-
-        return $row === null ? null : new HashChainState(
-            (string) $row['issuerNif'],
-            (string) $row['invoiceSeriesNumber'],
-            (string) $row['issueDate'],
-            (string) $row['hash'],
-        );
+        return $this->toState($this->findRow($this->resolveEntityManager(), $issuerNif, false));
     }
 
     /**
-     * Runs the operation in a transaction holding a pessimistic write lock on the issuer chain row.
+     * Runs the operation in a transaction holding a pessimistic write lock on the issuer chain row, and passes it the
+     * head read under that lock (null for an empty chain).
      *
      * The transaction nests into the host's transaction when one is open on the same connection.
      */
     public function withChainLock(string $issuerNif, callable $operation): mixed
     {
-        $connection = $this->resolveEntityManager()->getConnection();
+        $entityManager = $this->resolveEntityManager();
+        $connection    = $entityManager->getConnection();
         $connection->beginTransaction();
 
         try {
-            $this->findRow($this->resolveEntityManager(), $issuerNif, true);
+            $this->ensureRow($entityManager, $issuerNif);
+            $locked = $this->toState($this->findRow($entityManager, $issuerNif, true));
 
-            $result = $operation();
+            $result = $operation($locked);
             $connection->commit();
 
             return $result;
         } catch (Throwable $exception) {
             if ($connection->isTransactionActive()) {
-                $connection->rollBack();
+                try {
+                    $connection->rollBack();
+                } catch (Throwable) {
+                    // A deadlock or a lost connection already ended the transaction on the server: the original error is
+                    // the one the caller must see (it may be retryable).
+                }
             }
 
             throw $exception;
@@ -94,26 +100,22 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     }
 
     /**
-     * Stores the new chain head of the issuer (DBAL insert or update; never a flush).
+     * Stores the new chain head of the issuer (DBAL insert-if-absent and update; never a flush).
+     *
+     * Inside withChainLock() the row already exists and is locked, so this is a plain UPDATE of the locked row.
      */
     public function storeLastState(HashChainState $state): void
     {
         $entityManager = $this->resolveEntityManager();
         $key           = $this->normalizeKey($state->issuerNif);
-        $fields        = [
+
+        $this->ensureRow($entityManager, $key);
+        DbalRowWriter::update($entityManager, BillingRecordHashChain::class, [
             'invoiceSeriesNumber' => trim($state->invoiceSeriesNumber),
             'issueDate'           => trim($state->issueDate),
             'hash'                => strtoupper(trim($state->hash)),
             'updatedAt'           => new DateTimeImmutable(),
-        ];
-
-        if ($this->findRow($entityManager, $key, false) === null) {
-            DbalRowWriter::insert($entityManager, BillingRecordHashChain::class, ['issuerNif' => $key] + $fields);
-
-            return;
-        }
-
-        DbalRowWriter::update($entityManager, BillingRecordHashChain::class, $fields, ['issuerNif' => $key]);
+        ], ['issuerNif' => $key]);
     }
 
     /**
@@ -148,6 +150,39 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
             $existing instanceof HashChainState ? $existing->issueDate : '',
             $hash,
         ));
+    }
+
+    /**
+     * Creates the issuer row with an empty head when it does not exist yet (never fails on a concurrent creation).
+     */
+    private function ensureRow(EntityManagerInterface $entityManager, string $issuerNif): void
+    {
+        DbalRowWriter::insertIfAbsent($entityManager, BillingRecordHashChain::class, [
+            'issuerNif'           => $this->normalizeKey($issuerNif),
+            'invoiceSeriesNumber' => '',
+            'issueDate'           => '',
+            'hash'                => '',
+            'updatedAt'           => new DateTimeImmutable(),
+        ], 'issuerNif');
+    }
+
+    /**
+     * An empty head (the row created by ensureRow() before the first record) is an empty chain.
+     *
+     * @param array<string, mixed>|null $row
+     */
+    private function toState(?array $row): ?HashChainState
+    {
+        if ($row === null || (string) $row['hash'] === '') {
+            return null;
+        }
+
+        return new HashChainState(
+            (string) $row['issuerNif'],
+            (string) $row['invoiceSeriesNumber'],
+            (string) $row['issueDate'],
+            (string) $row['hash'],
+        );
     }
 
     /**

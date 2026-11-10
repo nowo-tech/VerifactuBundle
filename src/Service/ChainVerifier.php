@@ -24,6 +24,11 @@ use function sprintf;
  * ('' for the first), and the stored XML carries the same Huella and, for an alta, the same CuotaTotal / ImporteTotal
  * strings that were hashed. Finally the chain head of the repository must point at the last stored record.
  *
+ * A log enabled on an issuer that already had a chain (records chained by 1.0 – 1.4 or before the store was turned
+ * on) starts with a record whose previous hash is the old head, not ''. That record is accepted as the start of the
+ * log and its previous hash is returned as `continuesFrom`; pass `$anchor` (the head before the log started) to
+ * require that exact value.
+ *
  * @author Nowo.tech
  * @copyright 2026 Nowo.tech
  */
@@ -45,12 +50,13 @@ final class ChainVerifier
     /**
      * Verifies the stored chain of the issuer.
      */
-    public function verify(string $issuerNif): ChainVerificationResult
+    public function verify(string $issuerNif, ?string $anchor = null): ChainVerificationResult
     {
-        $problems     = [];
-        $previousHash = '';
-        $expected     = 1;
-        $checked      = 0;
+        $problems      = [];
+        $previousHash  = strtoupper(trim($anchor ?? ''));
+        $expected      = 1;
+        $checked       = 0;
+        $continuesFrom = null;
 
         foreach ($this->recordStore->findByIssuer($issuerNif) as $stored) {
             ++$checked;
@@ -65,6 +71,11 @@ final class ChainVerifier
             }
             if (!$this->hashChainGenerator->verifyHash($record, $hash)) {
                 $report('The hash does not match the stored record fields.');
+            }
+            if ($checked === 1 && $anchor === null && ($record->previousHash ?? '') !== '') {
+                // The log starts in the middle of an older chain: its first record continues from a head outside it.
+                $previousHash  = strtoupper((string) $record->previousHash);
+                $continuesFrom = $previousHash;
             }
             if (strtoupper($record->previousHash ?? '') !== $previousHash) {
                 $report('The previous hash does not match the hash of the record before it.');
@@ -85,7 +96,7 @@ final class ChainVerifier
             $problems[] = ['position' => $expected - 1, 'invoiceSeriesNumber' => '', 'problem' => 'The chain head does not point at the last stored record.'];
         }
 
-        return new ChainVerificationResult(strtoupper(trim($issuerNif)), $checked, $problems);
+        return new ChainVerificationResult(strtoupper(trim($issuerNif)), $checked, $problems, $continuesFrom);
     }
 
     /**

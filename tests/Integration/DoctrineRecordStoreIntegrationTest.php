@@ -8,6 +8,7 @@ use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Nowo\VerifactuBundle\Entity\BillingRecordEntry;
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
 use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
@@ -116,6 +117,41 @@ final class DoctrineRecordStoreIntegrationTest extends KernelTestCase
         );
         self::assertFalse($verifier->verify('89890001K')->isValid());
         self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K']));
+    }
+
+    public function testStoreEnabledOnAnExistingChainContinuesFromTheOldHead(): void
+    {
+        // A head written by 1.4.1 (or with the store off): the first stored record chains onto it
+        $oldHead = str_repeat('C', 64);
+        $this->hashChain()->storeLastState(new HashChainState('89890001K', 'FAC-2025-999', '31-12-2025', $oldHead));
+
+        $first  = $this->processor()->process($this->record('FAC-2026-001', '21.00', '121.00'));
+        $second = $this->processor()->process($this->record('FAC-2026-002', '21.00', '121.00'));
+
+        self::assertSame($oldHead, $first['record']->previousHash);
+        $stored = [...$this->store()->findByIssuer('89890001K')];
+        self::assertSame([1, 2], array_map(static fn (StoredBillingRecord $s): int => $s->position, $stored));
+        self::assertSame($first['record']->hash, $second['record']->previousHash);
+
+        /** @var ChainVerifier $verifier */
+        $verifier = self::getContainer()->get(ChainVerifier::class);
+        $result   = $verifier->verify('89890001K');
+        self::assertTrue($result->isValid());
+        self::assertSame($oldHead, $result->continuesFrom);
+        self::assertTrue($verifier->verify('89890001K', $oldHead)->isValid());
+    }
+
+    public function testAppendOutsideATransactionAndAnEmptyGenerationTimeStampedInTheLock(): void
+    {
+        $result = $this->processor()->process(new BillingRecord(RecordType::Alta, '89890001K', 'FAC-2026-001', '09-07-2026', 'F1', '21.00', '121.00', ''));
+        self::assertSame([], $result['errors']);
+        self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+0[12]:00$/', $result['record']->generatedAt);
+        self::assertSame('Doctrine Test Issuer', $result['record']->issuerName, 'The issuer name of the provider is resolved once and kept on the record');
+
+        // A direct append without a transaction (no locking read) continues after the last position
+        $next = $result['record']->withHash(str_repeat('E', 64), (string) $result['record']->hash);
+        self::assertFalse($this->entityManager()->getConnection()->isTransactionActive());
+        self::assertSame(2, $this->store()->append($next));
     }
 
     public function testFailedSubmissionIsMarkedFailed(): void

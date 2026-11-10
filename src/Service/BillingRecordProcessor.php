@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Service;
 
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
+use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
 use Nowo\VerifactuBundle\Event\AfterAeatSubmissionEvent;
 use Nowo\VerifactuBundle\Event\AfterBillingRecordGeneratedEvent;
 use Nowo\VerifactuBundle\Event\BeforeAeatSubmissionEvent;
@@ -28,6 +29,7 @@ use Nowo\VerifactuBundle\Repository\LockableHashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Validator\AeatBusinessRulesValidator;
 use Nowo\VerifactuBundle\Validator\XsdValidator;
+use Psr\Clock\ClockInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
@@ -74,6 +76,7 @@ final class BillingRecordProcessor
         private readonly ?BillingRecordStoreInterface $recordStore = null,
         private readonly ?IssuerProviderInterface $issuerProvider = null,
         private readonly ?SoftwareIdentityProviderInterface $softwareIdentityProvider = null,
+        private readonly ?ClockInterface $clock = null,
     ) {
     }
 
@@ -84,7 +87,9 @@ final class BillingRecordProcessor
      *                                the new state is NOT stored (nor appended to the record store), so the persistent
      *                                hash chain is left untouched
      *
-     * A record without an issuer NIF takes the NIF of the issuer provider. The amounts are written in their canonical
+     * A record without an issuer NIF (or name) takes the NIF (or name) of the issuer provider, resolved once per call. A
+     * record with an empty `generatedAt` is stamped with GenerationTimestamp::now() inside the chain lock (recommended:
+     * the generation times then follow the chain order). The amounts are written in their canonical
      * form (Amount::canonical()), the same string in the XML, the fingerprint and the returned record.
      *
      * An exception thrown by an `AFTER_BILLING_RECORD_GENERATED`, `BEFORE_AEAT_SUBMISSION` or `AFTER_AEAT_SUBMISSION`
@@ -96,23 +101,35 @@ final class BillingRecordProcessor
      */
     public function process(BillingRecord $record, bool $submitToAeat = false, bool $persistChainState = true): array
     {
+        // Resolved once per call: the XML, the returned record and the SOAP Cabecera (through issuerName) agree.
         $issuer   = $this->resolveIssuer();
         $software = $this->resolveSoftwareIdentity();
         if (trim($record->issuerNif) === '' && trim($issuer->nif) !== '') {
             $record = $this->copy($record, issuerNif: $issuer->nif);
+        }
+        if ($record->issuerName === null && $issuer->name !== '') {
+            $record = $this->copy($record, issuerName: $issuer->name);
         }
 
         $beforeEvent = new BeforeBillingRecordGenerationEvent($record);
         $this->eventDispatcher->dispatch($beforeEvent, VerifactuEvents::BEFORE_BILLING_RECORD_GENERATION);
         $record = $beforeEvent->getRecord();
 
-        $errors = $this->validator->validate($record);
+        // An empty generation time is stamped inside the chain lock, so FechaHoraHusoGenRegistro follows chain order.
+        $stampInLock = trim($record->generatedAt) === '';
+        $errors      = $this->validator->validate($stampInLock ? $this->copy($record, generatedAt: GenerationTimestamp::now($this->clock)) : $record);
         if ($errors !== []) {
             return ['record' => $record, 'errors' => $errors];
         }
 
-        $operation = fn (): array => $this->chainRecord($record, $persistChainState, $issuer, $software);
-        $chained   = $persistChainState && $this->hashChainRepository instanceof LockableHashChainRepositoryInterface
+        // The lock passes the head it read with its locking read; a repository that passes nothing gets getLastState().
+        $operation = fn (?HashChainState ...$locked): array => $this->chainRecord(
+            $stampInLock ? $this->copy($record, generatedAt: GenerationTimestamp::now($this->clock)) : $record,
+            $persistChainState,
+            $software,
+            $locked === [] ? $this->hashChainRepository->getLastState($record->issuerNif) : $locked[0],
+        );
+        $chained = $persistChainState && $this->hashChainRepository instanceof LockableHashChainRepositoryInterface
             ? $this->hashChainRepository->withChainLock($record->issuerNif, $operation)
             : $operation();
 
@@ -164,17 +181,16 @@ final class BillingRecordProcessor
     }
 
     /**
-     * Reads the chain head, hashes, renders, validates and signs the record, then stores the new head.
+     * Chains the record onto the given head, hashes, renders, validates and signs it, then stores the new head.
      *
-     * Runs inside the repository chain lock when available (read-then-write must be atomic per issuer), so the
-     * record store append joins the same transaction as the chain head.
+     * Runs inside the repository chain lock when available (read-then-write must be atomic per issuer), with the head
+     * the lock read, so the record store append joins the same transaction as the chain head.
      *
      * @return array{record: BillingRecord, errors: list<string>}
      */
-    private function chainRecord(BillingRecord $record, bool $persistChainState, IssuerIdentity $issuer, SoftwareIdentity $software): array
+    private function chainRecord(BillingRecord $record, bool $persistChainState, SoftwareIdentity $software, ?HashChainState $previousState): array
     {
-        $previousState = $this->hashChainRepository->getLastState($record->issuerNif);
-        $record        = $this->copy(
+        $record = $this->copy(
             $record,
             totalTaxAmount: Amount::canonical($record->totalTaxAmount),
             totalAmount: Amount::canonical($record->totalAmount),
@@ -185,7 +201,7 @@ final class BillingRecordProcessor
         $record = $record->withHash($hash, $previousState?->hash);
         $xml    = $this->xmlGenerator->generate(
             $record,
-            $issuer->toArray(),
+            ['name' => (string) $record->issuerName],
             $software->toSoftwareConfig(),
             $software->toInstallationConfig(),
             $previousState,
@@ -273,6 +289,8 @@ final class BillingRecordProcessor
         ?string $totalTaxAmount = null,
         ?string $totalAmount = null,
         HashChainState|false|null $chainTo = false,
+        ?string $generatedAt = null,
+        ?string $issuerName = null,
     ): BillingRecord {
         return new BillingRecord(
             $record->recordType,
@@ -282,11 +300,11 @@ final class BillingRecordProcessor
             $record->invoiceType,
             $totalTaxAmount ?? $record->totalTaxAmount,
             $totalAmount ?? $record->totalAmount,
-            $record->generatedAt,
+            $generatedAt ?? $record->generatedAt,
             $record->lines,
             $record->taxBreakdown,
             $chainTo === false ? $record->previousHash : $chainTo?->hash,
-            issuerName: $record->issuerName,
+            issuerName: $issuerName ?? $record->issuerName,
             operationDescription: $record->operationDescription,
         );
     }

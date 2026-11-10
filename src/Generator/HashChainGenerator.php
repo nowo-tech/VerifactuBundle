@@ -49,7 +49,7 @@ final class HashChainGenerator
      *
      * The AEAT treats an amount with one or two decimals as the same value in the fingerprint (hash specification
      * v0.1.2, §3), so a hash over the canonical amounts ("12.30") and a hash over the amounts without insignificant
-     * zeros ("12.3", as VerifactuBundle 1.0 – 1.4.1 computed it) are both accepted.
+     * zeros ("12.3", as VerifactuBundle 1.1 – 1.4.1 computed it) are both accepted.
      */
     public function verifyHash(BillingRecord $record, string $expectedHash): bool
     {

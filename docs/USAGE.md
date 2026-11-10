@@ -18,7 +18,6 @@
 ## Process a billing record
 
 ```php
-use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
@@ -31,7 +30,7 @@ $result = $processor->process(new BillingRecord(
     invoiceType: 'F1',
     totalTaxAmount: '21.00',
     totalAmount: '121.00',
-    generatedAt: GenerationTimestamp::now(), // e.g. 2026-07-09T16:00:00+02:00
+    generatedAt: '', // stamped inside the chain lock, e.g. 2026-07-09T16:00:00+02:00
 ), submitToAeat: true);
 ```
 
@@ -72,12 +71,14 @@ same string goes into `<CuotaTotal>` / `<ImporteTotal>`, the fingerprint, the QR
 The AEAT hash specification (v0.1.2, §3) asks for the hashed value to hold the same information as the XML field and
 treats `123.1` and `123.10` as equal; writing the same string in both places is correct however the AEAT reads it.
 `HashChainGenerator::verifyHash()` also accepts a fingerprint over amounts without trailing zeros (what
-VerifactuBundle 1.0 – 1.4.1 hashed).
+VerifactuBundle 1.1 – 1.4.1 hashed).
 
 ## Dates in Europe/Madrid
 
-The AEAT expects `FechaHoraHusoGenRegistro` with its offset (`2024-01-01T19:20:30+01:00`). `format('c')` uses the PHP
-default time zone of the server; use the helper instead:
+The AEAT expects `FechaHoraHusoGenRegistro` with its offset (`2024-01-01T19:20:30+01:00`). Leave `generatedAt` empty
+and `process()` stamps it with `GenerationTimestamp::now()` (the Symfony `clock` service when available) inside the
+chain lock, so the generation times follow the chain order even under concurrency. When you need the value yourself,
+do not use `format('c')` (PHP default time zone of the server); use the helper:
 
 ```php
 use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
@@ -146,6 +147,10 @@ foreach ($recordStore->findByIssuer('89890001K') as $stored) {   // BillingRecor
 $result = $chainVerifier->verify('89890001K');                    // Service\ChainVerifier
 $result->isValid(); $result->problems;
 ```
+
+When you enable the store on an issuer that already has records, the first stored record continues from the old
+head: `verify()` accepts it and returns that hash in `$result->continuesFrom`; `verify($nif, $anchor)` requires an
+exact starting hash. The Doctrine store reads the log in pages, so long chains verify in flat memory.
 
 `process(..., submitToAeat: true)` marks the record `accepted` (with the AEAT CSV) or `failed`. If that update fails,
 the submission result is still returned and the exception is in `$result['store_errors']`. Your invoice references the

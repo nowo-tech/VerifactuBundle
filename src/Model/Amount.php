@@ -50,7 +50,7 @@ final class Amount
 
     /**
      * Returns the amount without insignificant zeros ("12.30" → "12.3", "0.00" → "0"): the form VerifactuBundle
-     * 1.0 – 1.4.1 hashed. Only used to verify fingerprints written by those versions.
+     * 1.1 – 1.4.1 hashed (1.0.x used a float normaliser that differs for `-0` and very large amounts). Only used to verify fingerprints written by those versions.
      */
     public static function withoutTrailingZeros(string $value): string
     {

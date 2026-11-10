@@ -13,6 +13,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
 use function count;
+use function is_string;
 use function sprintf;
 
 /**
@@ -38,7 +39,9 @@ final class VerifyChainCommand extends Command
 
     protected function configure(): void
     {
-        $this->addOption('issuer', null, InputOption::VALUE_REQUIRED, 'Issuer NIF whose chain is verified');
+        $this
+            ->addOption('issuer', null, InputOption::VALUE_REQUIRED, 'Issuer NIF whose chain is verified')
+            ->addOption('anchor', null, InputOption::VALUE_REQUIRED, 'Hash of the chain head before the record store was enabled (the first stored record must continue from it)');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -51,7 +54,11 @@ final class VerifyChainCommand extends Command
             return Command::INVALID;
         }
 
-        $result = $this->chainVerifier->verify($issuer);
+        $anchor = $input->getOption('anchor');
+        $result = $this->chainVerifier->verify($issuer, is_string($anchor) && trim($anchor) !== '' ? $anchor : null);
+        if ($result->continuesFrom !== null) {
+            $io->note(sprintf('The stored log starts after an older record (previous hash %s); records before it are not in the store.', $result->continuesFrom));
+        }
         if ($result->isValid()) {
             $io->success(sprintf('The chain of %s is valid (%d records).', $result->issuerNif, $result->checkedRecords));
 

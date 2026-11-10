@@ -78,6 +78,24 @@ final class ChainVerifierTest extends TestCase
         self::assertFalse($result->isValid());
     }
 
+    public function testALogStartedOnAnOlderChainContinuesFromItsHead(): void
+    {
+        $oldHead = str_repeat('D', 64);
+        $first   = $this->chained(RecordType::Alta, 'F-10', '21.00', '121.00', $oldHead);
+        $this->head->storeLastState(new HashChainState('89890001K', 'F-10', '09-07-2026', (string) $first->hash));
+        $verifier = $this->verifier([new StoredBillingRecord(1, $first)]);
+
+        $result = $verifier->verify('89890001K');
+        self::assertTrue($result->isValid());
+        self::assertSame($oldHead, $result->continuesFrom);
+
+        self::assertTrue($verifier->verify('89890001K', strtolower($oldHead))->isValid());
+        self::assertNull($verifier->verify('89890001K', $oldHead)->continuesFrom);
+
+        $wrongAnchor = $verifier->verify('89890001K', str_repeat('E', 64));
+        self::assertSame('The previous hash does not match the hash of the record before it.', $wrongAnchor->problems[0]['problem']);
+    }
+
     public function testChainHeadAheadOfTheStoreIsReported(): void
     {
         $first = $this->chained(RecordType::Alta, 'F-1', '21.00', '121.00', '');

@@ -77,16 +77,16 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, R
      */
     public function clear(): void
     {
-        // @igor-ignore - Request-scoped: this is the reset itself.
-        $this->records = [];
+        $this->reset();
     }
 
     /**
-     * Same as clear() (kernel.reset / services_resetter).
+     * Drops every record (kernel.reset / services_resetter; also called by clear()).
      */
     public function reset(): void
     {
-        $this->clear();
+        // @igor-ignore - Request-scoped store: this is the reset itself (kernel.reset and every main request).
+        $this->records = [];
     }
 
     private function normalizeKey(string $issuerNif): string

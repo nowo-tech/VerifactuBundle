@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Unit\Repository;
 
+use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\Persistence\ManagerRegistry;
 use LogicException;
@@ -51,6 +52,28 @@ final class DoctrineHashChainRepositoryTest extends TestCase
 
         $this->expectException(LogicException::class);
         $this->expectExceptionMessage(BillingRecordEntry::class);
-        (new DoctrineBillingRecordStore($registry))->findByIssuer('89890001K');
+        iterator_to_array((new DoctrineBillingRecordStore($registry))->findByIssuer('89890001K'));
+    }
+
+    public function testAFailedRollbackNeverHidesTheOriginalError(): void
+    {
+        $original   = new RuntimeException('deadlock');
+        $connection = $this->createMock(Connection::class);
+        $connection->expects(self::once())->method('beginTransaction');
+        $connection->method('isTransactionActive')->willReturn(true);
+        $connection->method('rollBack')->willThrowException(new RuntimeException('SAVEPOINT does not exist'));
+
+        $entityManager = $this->createMock(EntityManagerInterface::class);
+        $entityManager->method('getConnection')->willReturn($connection);
+        $entityManager->method('getClassMetadata')->willThrowException($original);
+        $registry = $this->createMock(ManagerRegistry::class);
+        $registry->method('getManagerForClass')->willReturn($entityManager);
+
+        try {
+            (new DoctrineHashChainRepository($registry))->withChainLock('89890001K', static fn (): bool => true);
+            self::fail('The original error must be rethrown');
+        } catch (RuntimeException $exception) {
+            self::assertSame($original, $exception);
+        }
     }
 }

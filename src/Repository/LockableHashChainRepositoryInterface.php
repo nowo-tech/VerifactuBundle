@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Repository;
 
+use Nowo\VerifactuBundle\Model\HashChainState;
+
 /**
  * Hash chain repository able to serialize the read-then-write of a chain head per issuer.
  *
@@ -19,9 +21,15 @@ interface LockableHashChainRepositoryInterface extends HashChainRepositoryInterf
     /**
      * Runs $operation while holding an exclusive lock on the issuer's chain head.
      *
+     * Implementations should read the head once, under the lock (a locking read such as SELECT … FOR UPDATE, which
+     * sees the latest committed head whatever the transaction's snapshot), and pass it to $operation (null for an
+     * empty chain). A plain read inside the lock can return a stale head (MySQL / MariaDB REPEATABLE READ) and fork
+     * the chain. When an implementation calls $operation() without an argument, BillingRecordProcessor falls back to
+     * getLastState() (behaviour of 1.1 – 1.4).
+     *
      * @template T
      *
-     * @param callable(): T $operation
+     * @param callable(?HashChainState=): T $operation
      *
      * @return T
      */
