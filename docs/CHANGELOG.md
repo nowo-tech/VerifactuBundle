@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [[Unreleased]](#unreleased)
+- [[1.4.1] - 2026-11-10](#141---2026-11-10)
 - [[1.4.0] - 2026-10-30](#140---2026-10-30)
 - [[1.3.0] - 2026-10-30](#130---2026-10-30)
 - [[1.2.0] - 2026-10-13](#120---2026-10-13)
@@ -28,7 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Target 1.4.1.
+## [1.4.1] - 2026-11-10
+
+The AEAT submission events are dispatched, and a failing listener after chaining no longer loses or duplicates a fiscal record (failures in `event_errors`). See [UPGRADING](https://github.com/nowo-tech/VerifactuBundle/blob/v1.4.1/docs/UPGRADING.md#to-141).
 
 ### Fixed
 
@@ -347,7 +350,8 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.1.0...v1.2.0
