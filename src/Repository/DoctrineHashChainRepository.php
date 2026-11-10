@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Repository;
 
+use DateTimeImmutable;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\DBAL\LockMode;
 use Doctrine\ORM\EntityManagerInterface;
-use Doctrine\ORM\Query;
 use Doctrine\Persistence\ManagerRegistry;
 use LogicException;
+use Nowo\VerifactuBundle\Doctrine\DbalRowWriter;
 use Nowo\VerifactuBundle\Entity\BillingRecordHashChain;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
@@ -18,14 +19,17 @@ use Throwable;
 /**
  * Doctrine-backed hash chain repository for production environments.
  *
- * The last state is always read from the database (never from a stale identity map), managed
- * entities are detached after each write, and a manager closed by a failed flush is reset so
- * long-running workers (FrankenPHP worker mode) recover on the next call.
+ * It never flushes, clears or resets an EntityManager (architecture rule 6): the chain head is written with DBAL on the
+ * connection of the EntityManager that maps BillingRecordHashChain (usually the host's default one), and read with
+ * array-hydrated DQL, so nothing enters the identity map and the host's pending entities are never written by the
+ * bundle. It works even when the host's manager has been closed by a failed flush of the host.
  *
- * withChainLock() wraps the chain update in a transaction holding a pessimistic write lock
- * (SELECT … FOR UPDATE) on the issuer row; for the very first record of an issuer there is no
- * row to lock, and the unique constraint on issuer_nif makes a concurrent second insert fail
- * instead of forking the chain.
+ * Transactions: withChainLock() opens a transaction on that connection. When the host already has one open, it nests
+ * (DBAL savepoint or nesting level), so the chain head (and the record log, when enabled) commit or roll back with the
+ * host's own data; without a host transaction it commits on its own, as before.
+ *
+ * Locking: the issuer row is read with SELECT … FOR UPDATE. For the very first record of an issuer there is no row to
+ * lock; the unique constraint on issuer_nif makes a concurrent second insert fail instead of forking the chain.
  *
  * @extends ServiceEntityRepository<BillingRecordHashChain>
  *
@@ -53,44 +57,28 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
      */
     public function getLastState(string $issuerNif): ?HashChainState
     {
-        $entityManager = $this->resolveEntityManager();
-        $entity        = $this->findFresh($entityManager, $issuerNif);
-        if (!$entity instanceof BillingRecordHashChain) {
-            return null;
-        }
+        $row = $this->findRow($this->resolveEntityManager(), $issuerNif, false);
 
-        $state = new HashChainState(
-            $entity->getIssuerNif(),
-            $entity->getInvoiceSeriesNumber(),
-            $entity->getIssueDate(),
-            $entity->getHash(),
+        return $row === null ? null : new HashChainState(
+            (string) $row['issuerNif'],
+            (string) $row['invoiceSeriesNumber'],
+            (string) $row['issueDate'],
+            (string) $row['hash'],
         );
-        $entityManager->detach($entity);
-
-        return $state;
     }
 
     /**
      * Runs the operation in a transaction holding a pessimistic write lock on the issuer chain row.
+     *
+     * The transaction nests into the host's transaction when one is open on the same connection.
      */
     public function withChainLock(string $issuerNif, callable $operation): mixed
     {
-        $entityManager = $this->resolveEntityManager();
-        $connection    = $entityManager->getConnection();
+        $connection = $this->resolveEntityManager()->getConnection();
         $connection->beginTransaction();
 
         try {
-            $entity = $entityManager->createQueryBuilder()
-                ->select('h')
-                ->from(BillingRecordHashChain::class, 'h')
-                ->where('h.issuerNif = :issuerNif')
-                ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
-                ->getQuery()
-                ->setLockMode(LockMode::PESSIMISTIC_WRITE)
-                ->getOneOrNullResult();
-            if ($entity instanceof BillingRecordHashChain) {
-                $entityManager->detach($entity);
-            }
+            $this->findRow($this->resolveEntityManager(), $issuerNif, true);
 
             $result = $operation();
             $connection->commit();
@@ -100,40 +88,32 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
             if ($connection->isTransactionActive()) {
                 $connection->rollBack();
             }
-            $this->resetIfClosed($entityManager);
 
             throw $exception;
         }
     }
 
     /**
-     * Stores the new chain head of the issuer.
+     * Stores the new chain head of the issuer (DBAL insert or update; never a flush).
      */
     public function storeLastState(HashChainState $state): void
     {
         $entityManager = $this->resolveEntityManager();
+        $key           = $this->normalizeKey($state->issuerNif);
+        $fields        = [
+            'invoiceSeriesNumber' => trim($state->invoiceSeriesNumber),
+            'issueDate'           => trim($state->issueDate),
+            'hash'                => strtoupper(trim($state->hash)),
+            'updatedAt'           => new DateTimeImmutable(),
+        ];
 
-        try {
-            $entity = $this->findFresh($entityManager, $state->issuerNif);
-            if (!$entity instanceof BillingRecordHashChain) {
-                $entity = new BillingRecordHashChain(
-                    $state->issuerNif,
-                    $state->invoiceSeriesNumber,
-                    $state->issueDate,
-                    $state->hash,
-                );
-                $entityManager->persist($entity);
-            } else {
-                $entity->update($state->invoiceSeriesNumber, $state->issueDate, $state->hash);
-            }
+        if ($this->findRow($entityManager, $key, false) === null) {
+            DbalRowWriter::insert($entityManager, BillingRecordHashChain::class, ['issuerNif' => $key] + $fields);
 
-            $entityManager->flush();
-            $entityManager->detach($entity);
-        } catch (Throwable $exception) {
-            $this->resetIfClosed($entityManager);
-
-            throw $exception;
+            return;
         }
+
+        DbalRowWriter::update($entityManager, BillingRecordHashChain::class, $fields, ['issuerNif' => $key]);
     }
 
     /**
@@ -141,19 +121,11 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
      */
     public function reset(string $issuerNif): void
     {
-        $entityManager = $this->resolveEntityManager();
-
-        try {
-            $entityManager->createQuery(
-                'DELETE FROM ' . BillingRecordHashChain::class . ' h WHERE h.issuerNif = :issuerNif',
-            )
-                ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
-                ->execute();
-        } catch (Throwable $exception) {
-            $this->resetIfClosed($entityManager);
-
-            throw $exception;
-        }
+        $this->resolveEntityManager()->createQuery(
+            'DELETE FROM ' . BillingRecordHashChain::class . ' h WHERE h.issuerNif = :issuerNif',
+        )
+            ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
+            ->execute();
     }
 
     /**
@@ -178,48 +150,41 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
         ));
     }
 
-    private function findFresh(EntityManagerInterface $entityManager, string $issuerNif): ?BillingRecordHashChain
+    /**
+     * Reads the issuer row as an array (never a managed entity), optionally with SELECT … FOR UPDATE.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function findRow(EntityManagerInterface $entityManager, string $issuerNif, bool $lock): ?array
     {
-        $entity = $entityManager->createQueryBuilder()
-            ->select('h')
+        $query = $entityManager->createQueryBuilder()
+            ->select('h.issuerNif', 'h.invoiceSeriesNumber', 'h.issueDate', 'h.hash')
             ->from(BillingRecordHashChain::class, 'h')
             ->where('h.issuerNif = :issuerNif')
             ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
-            ->getQuery()
-            ->setHint(Query::HINT_REFRESH, true)
-            ->getOneOrNullResult();
+            ->getQuery();
+        if ($lock) {
+            $query->setLockMode(LockMode::PESSIMISTIC_WRITE);
+        }
 
-        return $entity instanceof BillingRecordHashChain ? $entity : null;
+        /** @var list<array<string, mixed>> $rows */
+        $rows = $query->getArrayResult();
+
+        return $rows[0] ?? null;
     }
 
+    /**
+     * Returns the manager of the chain entity. It is only used for its metadata, DQL and connection, so a manager the
+     * host has closed still works and is never reset by the bundle.
+     */
     private function resolveEntityManager(): EntityManagerInterface
     {
         $entityManager = $this->managerRegistry->getManagerForClass(BillingRecordHashChain::class);
-        if ($entityManager instanceof EntityManagerInterface && !$entityManager->isOpen()) {
-            $this->resetIfClosed($entityManager);
-            $entityManager = $this->managerRegistry->getManagerForClass(BillingRecordHashChain::class);
-        }
-
         if (!$entityManager instanceof EntityManagerInterface) {
             throw new LogicException('No Doctrine ORM entity manager is configured for ' . BillingRecordHashChain::class . '.');
         }
 
         return $entityManager;
-    }
-
-    private function resetIfClosed(EntityManagerInterface $entityManager): void
-    {
-        if ($entityManager->isOpen()) {
-            return;
-        }
-
-        foreach ($this->managerRegistry->getManagers() as $name => $manager) {
-            if ($manager === $entityManager) {
-                $this->managerRegistry->resetManager($name);
-
-                return;
-            }
-        }
     }
 
     private function normalizeKey(string $issuerNif): string
