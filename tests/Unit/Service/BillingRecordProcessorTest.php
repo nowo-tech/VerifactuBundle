@@ -529,6 +529,58 @@ final class BillingRecordProcessorTest extends TestCase
         );
     }
 
+    public function testThrowingAfterGeneratedListenerKeepsTheChainedRecordAndSubmitsIt(): void
+    {
+        $log        = new ArrayObject();
+        $client     = new RecordingAeatSubmissionClient($log);
+        $logger     = new RecordingLogger();
+        $failure    = new RuntimeException('generated listener failed for 89890001K FAC-2026-551');
+        $dispatcher = new EventDispatcher();
+        $dispatcher->addListener(
+            VerifactuEvents::AFTER_BILLING_RECORD_GENERATED,
+            static function () use ($log, $failure): never {
+                $log->append('generated');
+
+                throw $failure;
+            },
+        );
+        $dispatcher->addListener(
+            VerifactuEvents::BEFORE_AEAT_SUBMISSION,
+            static function () use ($log): void {
+                $log->append('before');
+            },
+        );
+        $processor = $this->createProcessor(eventDispatcher: $dispatcher, submissionClient: $client, logger: $logger);
+
+        $result = $processor->process($this->createValidRecord('FAC-2026-551'), submitToAeat: true);
+
+        // The record is still submitted and returned, with its hash and XML.
+        self::assertSame(['generated', 'before', 'submit'], $log->getArrayCopy());
+        self::assertSame([], $result['errors']);
+        self::assertSame(['success' => true, 'reference' => 'CSV-1'], $result['submission'] ?? null);
+        self::assertNotNull($result['record']->hash);
+        self::assertStringContainsString('<RegistroAlta', (string) $result['record']->xml);
+        self::assertCount(1, $client->sent);
+        self::assertSame($result['record']->hash, $client->sent[0]['hash']);
+        self::assertSame($result['record']->xml, $client->sent[0]['xml']);
+        self::assertSame([['event' => VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, 'exception' => $failure]], $result['event_errors'] ?? null);
+
+        // The chain head is the returned record and the next invoice chains onto it.
+        self::assertSame($result['record']->hash, $this->repository->getLastState('89890001K')?->hash);
+        $next = $processor->process($this->createValidRecord('FAC-2026-552'));
+        self::assertSame($result['record']->hash, $next['record']->previousHash);
+
+        // Without submission (and in every mode) the record is returned too.
+        self::assertSame(VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, $next['event_errors'][0]['event'] ?? null);
+        self::assertArrayNotHasKey('submission', $next);
+
+        // Logged without personal data.
+        self::assertCount(2, $logger->records);
+        $logged = json_encode($logger->records, JSON_THROW_ON_ERROR);
+        self::assertStringNotContainsString('89890001K', $logged);
+        self::assertStringNotContainsString('FAC-2026-55', $logged);
+    }
+
     public function testNoEventErrorsKeyWhenListenersSucceed(): void
     {
         $result = $this->createProcessor(submissionClient: new RecordingAeatSubmissionClient(new ArrayObject()))

@@ -108,14 +108,16 @@ returned by `process()`, nor the stored chain head.
 event carries the certificate or its password. The submission events are not dispatched when validation fails, when
 `submitToAeat` is false, or when the client throws.
 
-**A failing submission listener never loses or duplicates a record.** When these events run, the chain head already
-points at the record. An exception from a `BEFORE_AEAT_SUBMISSION` or `AFTER_AEAT_SUBMISSION` listener is caught: the
-record is still submitted, `process()` still returns the record and `submission`, and the failure is added to
+**A failing listener after chaining never loses or duplicates a record.** When `AFTER_BILLING_RECORD_GENERATED`,
+`BEFORE_AEAT_SUBMISSION` and `AFTER_AEAT_SUBMISSION` run, the chain head already points at the record. An exception from
+any of their listeners is caught, with or without `submitToAeat`: the record is still submitted (when requested),
+`process()` still returns the record (and `submission`), and the failure is added to
 `$result['event_errors']` (a list of `['event' => <event name>, 'exception' => <Throwable>]`; the key is absent when every
 listener succeeded). It is also logged at `error` level with the event name and the exception class only (no record
 data, no exception message). Listener failures never go into `errors`. As with any Symfony event, the remaining
 listeners of that event are skipped once one throws. Check `event_errors` if your listener does work you rely on (e.g.
-an outbox write).
+an outbox write). To veto or replace a record, use `BEFORE_BILLING_RECORD_GENERATION`: it runs before validation and
+chaining, and its exceptions still propagate (nothing has been chained yet).
 
 **Personal data in the payloads.** The record copy holds the issuer NIF and name (personal data for a self-employed
 issuer), the invoice data and the full XML / signed XML (with the public certificate, which names its holder).

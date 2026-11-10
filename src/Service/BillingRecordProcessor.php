@@ -94,20 +94,21 @@ final class BillingRecordProcessor
 
         $record = $chained['record'];
 
-        // Listeners receive a copy: they cannot change the hash, XML or signed XML that is submitted and returned.
-        $this->eventDispatcher->dispatch(
+        // From here on the chain head already points at this record. Listeners receive copies (they cannot change the
+        // hash, XML or signed XML that is submitted and returned), and a failing (informational) listener must neither
+        // stop the submission nor hide the record or its result: either would lose a fiscal record or fork the chain
+        // on a retry. Use BEFORE_BILLING_RECORD_GENERATION to veto a record.
+        $eventErrors = [];
+        $this->dispatchObserverEvent(
             new AfterBillingRecordGeneratedEvent(clone $record),
             VerifactuEvents::AFTER_BILLING_RECORD_GENERATED,
+            $eventErrors,
         );
 
         $result = ['record' => $record, 'errors' => []];
 
         if ($submitToAeat) {
-            // Listeners receive copies: they observe the submission but cannot change what is sent to the AEAT.
-            // The chain head already points at this record, so a failing (informational) listener must neither stop
-            // the submission nor hide its result: either would lose a fiscal record or fork the chain on a retry.
-            $eventErrors = [];
-            $this->dispatchSubmissionEvent(
+            $this->dispatchObserverEvent(
                 new BeforeAeatSubmissionEvent(clone $record),
                 VerifactuEvents::BEFORE_AEAT_SUBMISSION,
                 $eventErrors,
@@ -115,15 +116,15 @@ final class BillingRecordProcessor
 
             $result['submission'] = $this->submissionClient->submit($record);
 
-            $this->dispatchSubmissionEvent(
+            $this->dispatchObserverEvent(
                 new AfterAeatSubmissionEvent(clone $record, $result['submission']),
                 VerifactuEvents::AFTER_AEAT_SUBMISSION,
                 $eventErrors,
             );
+        }
 
-            if ($eventErrors !== []) {
-                $result['event_errors'] = $eventErrors;
-            }
+        if ($eventErrors !== []) {
+            $result['event_errors'] = $eventErrors;
         }
 
         return $result;
@@ -195,17 +196,18 @@ final class BillingRecordProcessor
     }
 
     /**
-     * Dispatches an AEAT submission event and contains any listener failure.
+     * Dispatches an event raised after the chain head moved (generated, before / after AEAT submission) and contains
+     * any listener failure.
      *
      * @param list<array{event: string, exception: Throwable}> $eventErrors
      */
-    private function dispatchSubmissionEvent(object $event, string $eventName, array &$eventErrors): void
+    private function dispatchObserverEvent(object $event, string $eventName, array &$eventErrors): void
     {
         try {
             $this->eventDispatcher->dispatch($event, $eventName);
         } catch (Throwable $exception) {
             // No record data and no exception message in the log: both may carry personal data (NIF, names).
-            $this->logger?->error('A {event} listener failed ({exception_class}); the AEAT submission and its result are kept.', [
+            $this->logger?->error('A {event} listener failed ({exception_class}); the billing record, its submission and its result are kept.', [
                 'event'           => $eventName,
                 'exception_class' => $exception::class,
             ]);
