@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [[Unreleased]](#unreleased)
+- [[1.5.0] - 2026-11-10](#150---2026-11-10)
 - [[1.4.1] - 2026-11-10](#141---2026-11-10)
 - [[1.4.0] - 2026-10-30](#140---2026-10-30)
 - [[1.3.0] - 2026-10-30](#130---2026-10-30)
@@ -28,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [[1.0.0] - 2026-07-18](#100---2026-07-18)
 
 ## [Unreleased]
+
+## [1.5.0] - 2026-11-10
+
+Record store with attribute/XML mapping and verify-chain, runtime issuer and software-identity providers, one canonical amount in XML/hash/QR, Madrid timestamps, no host EM flush, and a concurrency-safe per-issuer chain lock. See [UPGRADING](https://github.com/nowo-tech/VerifactuBundle/blob/v1.5.0/docs/UPGRADING.md#to-150).
 
 The XML, the fingerprint and the QR carry one canonical amount string; the bundle never flushes the host
 EntityManager; an optional record store with a chain verifier; runtime issuer / software-identity providers; a Madrid
@@ -441,7 +446,8 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.2.0...v1.3.0
