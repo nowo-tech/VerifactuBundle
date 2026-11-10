@@ -9,10 +9,17 @@ use LogicException;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
+use Nowo\VerifactuBundle\Command\VerifyChainCommand;
 use Nowo\VerifactuBundle\Doctrine\TablePrefixListener;
+use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
+use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
+use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
+use Nowo\VerifactuBundle\Repository\DoctrineBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
+use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
+use Nowo\VerifactuBundle\Service\ChainVerifier;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
 use Symfony\Component\Config\Definition\Processor;
@@ -22,6 +29,9 @@ use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Extension\Extension;
 use Symfony\Component\DependencyInjection\Extension\PrependExtensionInterface;
 use Symfony\Component\DependencyInjection\Loader\YamlFileLoader;
+use Symfony\Component\DependencyInjection\Reference;
+
+use function is_string;
 
 /**
  * Loads Veri*Factu bundle services and publishes configuration parameters.
@@ -69,16 +79,20 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         $container->setParameter('nowo_verifactu.aeat.validate_xsd', $config['aeat']['validate_xsd']);
         $container->setParameter('nowo_verifactu.aeat.sign_xades', $config['aeat']['sign_xades']);
         $container->setParameter('nowo_verifactu.doctrine.table_prefix', $config['doctrine']['table_prefix']);
+        $container->setParameter('nowo_verifactu.doctrine.mapping', $config['doctrine']['mapping']);
 
         $this->assertPersistentChainForProduction($config);
         $this->configureHashChainRepository($container, $config);
+        $this->configureProviders($container, $config);
+        $this->configureRecordStore($container, $config);
         $this->configureSubmissionClient($container, $config);
         $this->configureSigner($container, $config);
         $this->registerTablePrefixListener($container);
     }
 
     /**
-     * Registers the Doctrine attribute mapping of the bundle entities when DoctrineBundle is enabled.
+     * Registers the Doctrine mapping of the bundle entities when DoctrineBundle is enabled: attributes by default, or
+     * the XML files of Resources/config/doctrine with `nowo_verifactu.doctrine.mapping: xml`.
      */
     public function prepend(ContainerBuilder $container): void
     {
@@ -86,13 +100,15 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
             return;
         }
 
+        $xml = $this->requestedMapping($container) === 'xml';
+
         $container->prependExtensionConfig('doctrine', [
             'orm' => [
                 'mappings' => [
                     'NowoVerifactuBundle' => [
                         'is_bundle' => true,
-                        'type'      => 'attribute',
-                        'dir'       => 'Entity',
+                        'type'      => $xml ? 'xml' : 'attribute',
+                        'dir'       => $xml ? 'Resources/config/doctrine' : 'Entity',
                         'prefix'    => 'Nowo\\VerifactuBundle\\Entity',
                         'alias'     => 'NowoVerifactu',
                     ],
@@ -151,6 +167,76 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         $container->setAlias('nowo_verifactu.hash_chain_repository', InMemoryHashChainRepository::class);
         $container->getDefinition(InMemoryHashChainRepository::class)
             ->setArgument('$warnNotPersistent', $container->hasParameter('kernel.debug') && $container->getParameter('kernel.debug') === false);
+    }
+
+    /**
+     * The last `doctrine.mapping` value of the raw `nowo_verifactu` configs (prepend runs before they are processed).
+     */
+    private function requestedMapping(ContainerBuilder $container): string
+    {
+        $mapping = 'attribute';
+        foreach ($container->getExtensionConfig(Configuration::ALIAS) as $config) {
+            $value = $config['doctrine']['mapping'] ?? null;
+            if (is_string($value)) {
+                $mapping = $value;
+            }
+        }
+
+        return $mapping;
+    }
+
+    /**
+     * Points the provider interfaces at the host's services when configured (the defaults read the static config).
+     *
+     * @param array<string, mixed> $config
+     */
+    private function configureProviders(ContainerBuilder $container, array $config): void
+    {
+        if ($config['providers']['issuer'] !== null) {
+            $container->setAlias(IssuerProviderInterface::class, $config['providers']['issuer']);
+        }
+
+        if ($config['providers']['software_identity'] !== null) {
+            $container->setAlias(SoftwareIdentityProviderInterface::class, $config['providers']['software_identity']);
+        }
+    }
+
+    /**
+     * Wires the optional record store and, only when one exists, the chain verifier and its command.
+     *
+     * @param array<string, mixed> $config
+     */
+    private function configureRecordStore(ContainerBuilder $container, array $config): void
+    {
+        $service = $config['record_store']['service'];
+        $storage = $config['record_store']['storage'];
+
+        if ($service === null && $storage === 'doctrine') {
+            if (!class_exists(ServiceEntityRepository::class)) {
+                throw new LogicException('nowo_verifactu.record_store.storage "doctrine" requires doctrine/doctrine-bundle and doctrine/orm. Install them or configure record_store.service with your own BillingRecordStoreInterface.');
+            }
+
+            $container->setDefinition(DoctrineBillingRecordStore::class, (new Definition(DoctrineBillingRecordStore::class))
+                ->setArgument('$managerRegistry', new Reference('doctrine')));
+            $container->setAlias(DoctrineBillingRecordStore::SERVICE_NAME, DoctrineBillingRecordStore::class)->setPublic(true);
+            $service = DoctrineBillingRecordStore::class;
+        } elseif ($service === null && $storage === 'memory') {
+            $service = InMemoryBillingRecordStore::class;
+        }
+
+        if ($service === null) {
+            foreach ([ChainVerifier::class, VerifyChainCommand::class] as $id) {
+                $container->removeDefinition($id);
+            }
+            // The resource scan aliases the interface to its only scanned implementation (the in-memory store)
+            $container->removeAlias(ChainVerifier::SERVICE_NAME);
+            $container->removeAlias(BillingRecordStoreInterface::class);
+
+            return;
+        }
+
+        $container->setAlias(BillingRecordStoreInterface::class, $service);
+        $container->setAlias('nowo_verifactu.billing_record_store', $service)->setPublic(true);
     }
 
     /**

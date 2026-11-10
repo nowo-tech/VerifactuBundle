@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Tests\Integration;
 
 use Doctrine\DBAL\Exception as DbalException;
-use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Doctrine\Persistence\ManagerRegistry;
@@ -84,41 +83,49 @@ final class DoctrineHashChainWorkerModeTest extends KernelTestCase
         self::assertFalse($this->entityManager()->getUnitOfWork()->size() > 0, 'Hash chain entities must not stay managed');
     }
 
-    public function testFailedFlushResetsClosedEntityManagerSoTheWorkerRecovers(): void
+    public function testStoringTheHeadNeverFlushesThePendingEntitiesOfTheHost(): void
     {
         $repository = $this->repository();
         $repository->storeLastState(new HashChainState('89890001K', 'FAC-001', '09-07-2026', str_repeat('A', 64)));
 
-        // A conflicting pending insert makes the next flush fail on the unique constraint
-        $this->entityManager()->persist(new BillingRecordHashChain('89890001K', 'DUP', '09-07-2026', str_repeat('D', 64)));
+        // A pending (not yet flushed) insert of the host: a flush by the bundle would write it (and fail on the unique key)
+        $pending = new BillingRecordHashChain('89890001K', 'DUP', '09-07-2026', str_repeat('D', 64));
+        $this->entityManager()->persist($pending);
 
-        try {
-            $repository->storeLastState(new HashChainState('B12345678', 'FAC-900', '09-07-2026', str_repeat('E', 64)));
-            self::fail('The unique constraint violation must be rethrown');
-        } catch (UniqueConstraintViolationException) {
-        }
+        $repository->storeLastState(new HashChainState('B12345678', 'FAC-900', '09-07-2026', str_repeat('E', 64)));
+        $repository->storeLastState(new HashChainState('89890001K', 'FAC-002', '09-07-2026', str_repeat('F', 64)));
 
         self::assertTrue($this->entityManager()->isOpen());
-
-        $repository->storeLastState(new HashChainState('89890001K', 'FAC-002', '09-07-2026', str_repeat('F', 64)));
-        $state = $repository->getLastState('89890001K');
-        self::assertNotNull($state);
-        self::assertSame('FAC-002', $state->invoiceSeriesNumber);
+        self::assertTrue($this->entityManager()->getUnitOfWork()->isScheduledForInsert($pending), 'The host entity must still be pending');
+        self::assertSame('FAC-002', $repository->getLastState('89890001K')?->invoiceSeriesNumber);
+        self::assertSame(str_repeat('E', 64), $repository->getLastState('b12345678')?->hash);
     }
 
-    public function testFailedResetQueryResetsClosedEntityManager(): void
+    public function testAClosedHostManagerIsNeitherResetNorNeededByTheRepository(): void
+    {
+        $repository = $this->repository();
+        $this->entityManager()->close();
+
+        $repository->storeLastState(new HashChainState('89890001K', 'FAC-001', '09-07-2026', str_repeat('A', 64)));
+        self::assertSame('FAC-001', $repository->getLastState('89890001K')?->invoiceSeriesNumber);
+        $repository->reset('89890001K');
+        self::assertNull($repository->getLastState('89890001K'));
+
+        self::assertFalse($this->entityManager()->isOpen(), 'The bundle must not reset the host EntityManager');
+    }
+
+    public function testAFailingStatementIsRethrownAndTheChainLockRollsBack(): void
     {
         $repository = $this->repository();
         $this->entityManager()->getConnection()->executeStatement('DROP TABLE ' . $this->tableName());
-        $this->entityManager()->close();
 
         try {
-            $repository->reset('89890001K');
-            self::fail('A failing DELETE must be rethrown');
+            $repository->withChainLock('89890001K', static fn (): bool => true);
+            self::fail('A failing SELECT … FOR UPDATE must be rethrown');
         } catch (DbalException) {
         }
 
-        self::assertTrue($this->entityManager()->isOpen());
+        self::assertFalse($this->entityManager()->getConnection()->isTransactionActive());
     }
 
     private function simulateOtherWorkerWrite(string $invoiceSeriesNumber, string $hash): void

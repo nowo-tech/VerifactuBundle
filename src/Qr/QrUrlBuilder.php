@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Qr;
 
+use Nowo\VerifactuBundle\Model\Amount;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
@@ -42,6 +43,9 @@ final class QrUrlBuilder
     /**
      * Builds the AEAT verification URL encoded in the invoice QR code.
      *
+     * `importe` is the canonical amount (Amount::canonical()), the same string as ImporteTotal in the XML and in the
+     * fingerprint.
+     *
      * @param string|null $mode verifactu|no_verifactu; null uses the configured bundle mode
      */
     public function buildUrl(BillingRecord $record, string $environment = 'sandbox', ?string $mode = null): string
@@ -54,7 +58,7 @@ final class QrUrlBuilder
             'nif'      => trim($record->issuerNif),
             'numserie' => trim($record->invoiceSeriesNumber),
             'fecha'    => trim($record->issueDate),
-            'importe'  => trim($record->totalAmount),
+            'importe'  => Amount::canonical($record->totalAmount),
         ], '', '&', PHP_QUERY_RFC3986);
 
         return $baseUrl . '?' . $query;

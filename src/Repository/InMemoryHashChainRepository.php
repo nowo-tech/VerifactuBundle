@@ -53,8 +53,8 @@ final class InMemoryHashChainRepository implements HashChainRepositoryInterface
     {
         if ($this->warnNotPersistent) {
             $this->logger?->warning(
-                'Veri*Factu hash chain stored in memory for issuer "{issuer}": the chain is lost at the end of the request. Configure nowo_verifactu.hash_chain.storage: doctrine or a persistent hash_chain.repository.',
-                ['issuer' => $this->normalizeKey($state->issuerNif)],
+                // No issuer NIF in the log: a sole trader's NIF is personal data.
+                'Veri*Factu hash chain stored in memory: the chain is lost at the end of the request. Configure nowo_verifactu.hash_chain.storage: doctrine or a persistent hash_chain.repository.',
             );
         }
 

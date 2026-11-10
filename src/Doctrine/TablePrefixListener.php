@@ -19,7 +19,8 @@ use function str_starts_with;
  * a no-op, so the default configuration keeps the historical `verifactu_hash_chain` name.
  *
  * Registered by {@see NowoVerifactuExtension} as a Doctrine `loadClassMetadata` listener. The bundle never hard-codes
- * table names in SQL: queries are DQL on the entity class, so they follow the prefixed metadata.
+ * table names in SQL: reads are DQL on the entity class and writes (DbalRowWriter) take the table and column names from
+ * the class metadata, so both follow the prefixed metadata.
  *
  * @author Nowo.tech
  * @copyright 2026 Nowo.tech

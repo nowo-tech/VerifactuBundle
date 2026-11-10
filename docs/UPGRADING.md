@@ -32,6 +32,54 @@
 
 ## Unreleased
 
+From **1.4.1** — minor, no configuration change required:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- **Amounts are written in a canonical form.** `<CuotaTotal>`, `<ImporteTotal>`, the QR `importe` and the record
+  returned by `process()` now carry two decimals (`12.3` → `12.30`, `0` → `0.00`, `-0012.5` → `-12.50`), and the
+  fingerprint hashes the same string. The values are equal; only the text changes. For a record whose amounts had
+  trailing zeros (or no decimals) the new Huella differs from what 1.4.1 computed for the same input. Chaining is not
+  affected (the next record only needs the stored hash), and `HashChainGenerator::verifyHash()` /
+  `nowo:verifactu:verify-hash` accept both forms, so records stored by 1.1 – 1.4.1 still verify (1.0.x used a float normaliser: a few of its hashes, for `-0.00` or
+  amounts above 10^10, do not). If you compared hashes
+  with hard-coded values in your own tests, recompute them.
+- **No flush of your EntityManager.** With `hash_chain.storage: doctrine`, `process()` used to flush the manager of the
+  chain entity (usually your default one), writing your pending entities as a side effect. It now writes the chain head
+  with DBAL and leaves your unit of work alone. If your code relied on that flush, call `$entityManager->flush()`
+  yourself. The repository no longer resets a closed EntityManager; it does not need an open one.
+- **Transactions.** The chain lock now joins your transaction when one is open on the same connection (the head, and
+  the record store, commit or roll back with your data). Without your transaction it commits on its own, as before.
+  With DBAL 4 the nested transaction is a savepoint. With DBAL 3 without savepoints, an exception inside the lock marks
+  your transaction rollback-only (your `commit()` then throws): roll back and retry.
+- **Chain lock.** The Doctrine repository now creates the issuer row before the first record and reads the head once
+  under the lock. Under contention the database may report a deadlock or lock wait timeout instead of forking the
+  chain. Without a transaction of yours, retry `process()` (DBAL `RetryableException`). **Inside your transaction,
+  roll back and retry the whole unit of work** (transaction, your writes, `process()`), never `process()` alone. On
+  MySQL / MariaDB a deadlock rolls back your whole transaction on the server: the bundle then closes the connection
+  (so DBAL never keeps a nesting level for a transaction that no longer exists, which in FrankenPHP worker mode would
+  let later requests write without the lock) and throws `Nowo\VerifactuBundle\Exception\ChainTransactionLostException`
+  wrapping the database error; do not call `rollBack()` after it. On PostgreSQL, a `lock_timeout` (SQLSTATE 55P03)
+  arrives as a plain `DriverException`, not a `RetryableException`: treat it as retryable if you set one.
+- **Custom lockable repositories.** If you implement `LockableHashChainRepositoryInterface`, pass the head you read
+  under the lock to `$operation($head)`. Calling `$operation()` without it still runs (the processor then calls
+  `getLastState()`, a plain read), but on MySQL / MariaDB (REPEATABLE READ) inside your transaction that read can be
+  stale and **fork the chain**.
+- **Record store on an existing chain.** When you enable `record_store` for an issuer that already has records, the
+  first stored record continues from the old head; `verify-chain` accepts it and prints the hash it continues from
+  (pass `--anchor=<old head>` to require it). Records before that are not in the store.
+- **Generation time.** Pass an empty `generatedAt` to let the processor stamp it inside the chain lock (recommended);
+  a value you pass is kept.
+- **New optional table** `verifactu_billing_record` when you enable `record_store.storage: doctrine`: generate a
+  migration (`doctrine:migrations:diff`) or update the schema. Nothing changes while `record_store.storage` is `none`.
+- **Providers.** Without configuration the issuer and software identity still come from `nowo_verifactu.issuer`,
+  `software` and `installation`. If you construct `BillingRecordProcessor` or `SoapAeatSubmissionClient` yourself, the
+  new arguments (`$recordStore`, `$issuerProvider`, `$softwareIdentityProvider`; `$issuerProvider`) are optional and
+  last.
+- **`psr/clock`** (PSR-20 interfaces) is a new dependency.
+
 ## To 1.4.1
 
 From **1.4.0** — fix, no configuration change:

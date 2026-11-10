@@ -66,7 +66,7 @@ final class HashChainGeneratorTest extends TestCase
         self::assertTrue($this->generator->verifyChainLink($record, null));
     }
 
-    public function testBuildInputStringNormalizesNumericAmounts(): void
+    public function testBuildInputStringUsesCanonicalTwoDecimalAmounts(): void
     {
         $record = new BillingRecord(
             RecordType::Alta,
@@ -79,7 +79,7 @@ final class HashChainGeneratorTest extends TestCase
             '2026-07-09T16:00:00+02:00',
         );
 
-        self::assertStringContainsString('CuotaTotal=21&ImporteTotal=121', $this->generator->buildInputString($record));
+        self::assertStringContainsString('CuotaTotal=21.00&ImporteTotal=121.00', $this->generator->buildInputString($record));
     }
 
     public function testBuildAnulacionInputStringUsesReducedFieldSet(): void
@@ -162,7 +162,7 @@ final class HashChainGeneratorTest extends TestCase
             '2026-07-09T16:00:00+02:00',
         );
 
-        self::assertStringContainsString('CuotaTotal=-12.5&ImporteTotal=999999999999.99', $this->generator->buildInputString($record));
+        self::assertStringContainsString('CuotaTotal=-12.50&ImporteTotal=999999999999.99', $this->generator->buildInputString($record));
     }
 
     public function testTrailingZerosDoNotChangeTheHash(): void
@@ -217,5 +217,24 @@ final class HashChainGeneratorTest extends TestCase
             '123.45',
             '2024-01-01T19:20:30+01:00',
         );
+    }
+
+    public function testVerifyHashAcceptsTheHashOfVersionsBefore15WithoutTrailingZeros(): void
+    {
+        $record = new BillingRecord(RecordType::Alta, '89890001K', 'FAC-001', '09-07-2026', 'F1', '21.00', '121.30', '2026-07-09T16:00:00+02:00');
+        $legacy = strtoupper(hash('sha256', 'IDEmisorFactura=89890001K&NumSerieFactura=FAC-001&FechaExpedicionFactura=09-07-2026&TipoFactura=F1&CuotaTotal=21&ImporteTotal=121.3&Huella=&FechaHoraHusoGenRegistro=2026-07-09T16:00:00+02:00'));
+
+        self::assertNotSame($legacy, $this->generator->computeHash($record));
+        self::assertTrue($this->generator->verifyHash($record, strtolower($legacy)));
+        self::assertTrue($this->generator->verifyHash($record, $this->generator->computeHash($record)));
+        self::assertFalse($this->generator->verifyHash($record, str_repeat('A', 64)));
+    }
+
+    public function testVerifyHashOfAnAnulacionHasNoAmountFallback(): void
+    {
+        $record = new BillingRecord(RecordType::Anulacion, '89890001K', 'FAC-001', '09-07-2026', 'F1', '21.00', '121.30', '2026-07-09T16:00:00+02:00');
+
+        self::assertTrue($this->generator->verifyHash($record, $this->generator->computeHash($record)));
+        self::assertFalse($this->generator->verifyHash($record, str_repeat('B', 64)));
     }
 }

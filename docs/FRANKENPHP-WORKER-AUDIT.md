@@ -93,6 +93,14 @@ A bundle that is safe under **B** is safe under **A** and under classic mode / P
 - **Worker impact:** any exception during `flush()` closes the EntityManager. Under scenario A DoctrineBundle's resetter replaces the closed manager before the next request. Under scenario B every later `storeLastState()` (and every other Doctrine use in the app) fails with "EntityManager is closed" until the worker restarts.
 - **Recommendation:** keep `services_resetter` enabled, or catch the exception and call `ManagerRegistry::resetManager()`. Also consider a row lock (`SELECT … FOR UPDATE` / pessimistic lock) around read-then-write, see W-05.
 - **Status:** Resolved — `storeLastState()` and `reset()` catch `\Throwable`, reset the manager through `ManagerRegistry::resetManager()` when it was closed, and rethrow; each call also resets a manager found closed before use. Tests: `DoctrineHashChainWorkerModeTest::testFailedFlushResetsClosedEntityManagerSoTheWorkerRecovers`, `testFailedResetQueryResetsClosedEntityManager`, `tests/Unit/Repository/DoctrineHashChainRepositoryTest.php`.
+- **Superseded in 1.5.0:** the bundle no longer flushes at all. The chain head and the record store are written with
+  DBAL on the connection of the manager that maps the bundle entities and read with array-hydrated DQL, so no write of
+  the bundle can close an EntityManager, nothing stays managed between requests, and the bundle never resets the
+  host's manager (it only needs its connection, which keeps working when the host's manager was closed). The chain lock
+  is a transaction opened and closed (commit or rollback) inside each `process()` call. Tests:
+  `DoctrineHashChainWorkerModeTest`, `tests/Integration/WorkerModeWithoutKernelResetTest.php` (1,000 records for two
+  issuers in one kernel without reset: flat memory, empty unit of work, no open transaction, separate chains; provider
+  values edited between two calls; a failed request leaves no open transaction).
 
 ### W-04 — `XsdValidator` forces the libxml internal-errors flag to `false` instead of restoring it (Low)
 
@@ -115,7 +123,9 @@ No other findings. AEAT submission uses explicit, configurable timeouts, the cUR
 - Set `nowo_verifactu.hash_chain.storage: doctrine` (the demo already does, `demo/symfony8/config/packages/nowo_verifactu.yaml:15`) or `hash_chain.repository` to a persistent service. The default in-memory storage is request-scoped and not a valid fiscal chain store.
 - The bundle does not clear the application's EntityManager; under scenario B clearing the application's identity map between requests remains the application's responsibility (the hash-chain repository itself no longer depends on it).
 - Serialize billing record generation per issuer (lock or single Messenger consumer) to keep the chain linear (W-05).
-- Custom `HashChainRepositoryInterface`, `AeatSubmissionClientInterface` or `BillingRecordSignerInterface` implementations must not cache chain state, records or certificates in properties without a freshness check and `ResetInterface`.
+- Custom `HashChainRepositoryInterface`, `BillingRecordStoreInterface`, `AeatSubmissionClientInterface` or `BillingRecordSignerInterface` implementations must not cache chain state, records or certificates in properties without a freshness check and `ResetInterface`.
+- `IssuerProviderInterface` / `SoftwareIdentityProviderInterface` are called on every record; your implementation must read the current values (do not memoise them in the service across requests).
+- The in-memory record store (`record_store.storage: memory`) is request-scoped like the in-memory chain (cleared on every main request and on `kernel.reset`).
 - The demo (`demo/symfony8`) runs in worker mode by default (`FRANKENPHP_MODE=worker`, `worker { … }` block in `demo/symfony8/docker/frankenphp/Caddyfile:31`).
 
 ## Re-audit triggers

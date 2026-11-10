@@ -6,6 +6,7 @@ The bundle provides console commands for common Veri*Factu operations.
 
 - [Validate billing record](#validate-billing-record)
 - [Verify hash](#verify-hash)
+- [Verify a stored chain](#verify-a-stored-chain)
 - [Submit to AEAT sandbox](#submit-to-aeat-sandbox)
 
 ## Validate billing record
@@ -35,7 +36,22 @@ php bin/console nowo:verifactu:verify-hash \
   --hash=3C464DAF61ACB827C65FDA19F352A4E3BDC2C640E9E9FC4CC058073F38F12F60
 ```
 
-Recomputes the AEAT fingerprint from the given fields and compares it to `--hash`.
+Recomputes the AEAT fingerprint from the given fields and compares it to `--hash`. Amounts are hashed in their
+canonical form (`12.30`); a hash computed by VerifactuBundle 1.1 – 1.4.1 without trailing zeros (`12.3`) is also
+accepted, as the AEAT treats both forms as equal.
+
+## Verify a stored chain
+
+```bash
+php bin/console nowo:verifactu:verify-chain --issuer=89890001K [--anchor=<hash of the head before the log started>]
+```
+
+Available when a record store is configured (`nowo_verifactu.record_store`). Walks every stored record of the issuer
+and checks consecutive positions, each fingerprint, each previous-hash link, that the stored XML carries the same
+`Huella`, `CuotaTotal` and `ImporteTotal` that were hashed, and that the chain head points at the last record. Exit code
+`0` when valid, `1` with a table of problems otherwise, `2` without `--issuer`. When the log was enabled on an issuer
+that already had a chain, the first stored record continues from the old head: the command prints that hash, and
+`--anchor` requires it to be exactly the given one. The Doctrine store is read in pages of 500 records.
 
 ## Submit to AEAT sandbox
 

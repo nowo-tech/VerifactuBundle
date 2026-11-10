@@ -29,6 +29,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The XML, the fingerprint and the QR carry one canonical amount string; the bundle never flushes the host
+EntityManager; an optional record store with a chain verifier; runtime issuer / software-identity providers; a Madrid
+time helper. See [UPGRADING](UPGRADING.md#unreleased).
+
+### Fixed
+
+- **XML amount = fingerprint amount (V1).** Up to 1.4.1 the Huella hashed the amount without insignificant zeros
+  (`12.30` → `12.3`, `0.00` → `0`) while `<CuotaTotal>` / `<ImporteTotal>` carried the caller's string unchanged. The
+  AEAT hash specification v0.1.2 (27/08/2024, §3) requires the hashed values to hold the same information as the XML
+  field and treats one or two decimals as equivalent, so `12.30` vs `12.3` was within the rule, but whole amounts
+  (`0.00` → `0`, `29.00` → `29`) were hashed with zero decimals, outside the "una o dos posiciones" wording. Now
+  `Model\Amount::canonical()` gives one string, always two decimals (`12.30`, `0.00`, `-5.00`), used by
+  `HashChainGenerator`, `BillingRecordXmlGenerator`, `QrUrlBuilder` (`importe`) and the record returned by
+  `process()`. `HashChainGenerator::verifyHash()` accepts both the canonical hash and the hash 1.0 – 1.4.1 computed, so
+  stored records still verify (1.1 – 1.4.1; 1.0.x used a float normaliser). A Huella that does not match the AEAT's
+  calculation is never rejected: the record is "Aceptado con errores" (AEAT validations v1.2.2, §3.1.3 item 23), and
+  §4.3.1 lists it among the admissible errors that **must be corrected ("subsanados")**.
+- **The per-issuer chain lock could fork the chain (affected 1.1.0 – 1.4.1 and 1.5 before release).** The lock read
+  the head with `SELECT … FOR UPDATE`, then the processor read it again with a plain SELECT. On MySQL / MariaDB
+  (REPEATABLE READ) inside a host transaction that had already read something, that plain read returned a stale head:
+  two records chained onto the same predecessor and the chain forked silently. On PostgreSQL (READ COMMITTED) two
+  first records of a new issuer both chained onto an empty head, and the second INSERT turned into an UPDATE. Now
+  `withChainLock()` creates the issuer row first (insert-if-absent), reads it once with the locking read and passes
+  that head to the operation (`LockableHashChainRepositoryInterface` documents it; a custom repository that passes
+  nothing keeps the old behaviour), `storeLastState()` only updates the locked row, and the record store takes its
+  position from locking reads. A new CI job runs several PHP processes against MySQL 8.4, MariaDB 11.4 and
+  PostgreSQL 17 (`tests/Concurrency`), including 8 processes racing on the first record of 30 new issuers.
+- **A MySQL / MariaDB deadlock inside the host's transaction left the connection writing without the lock (affected
+  1.1.0 – 1.4.1 and 1.5 before release).** InnoDB rolls back the victim's whole transaction, so the savepoint of the
+  chain lock no longer exists, its rollback failed and DBAL's nesting level never went back to 0: on a kept-alive
+  connection (FrankenPHP worker mode) every later record ran in autocommit while DBAL believed it was in a
+  transaction, without the row lock (audit: most chains corrupted under contention). `withChainLock()` now closes the
+  connection in that case and throws `Exception\ChainTransactionLostException`: roll back nothing more and retry the
+  whole unit of work. Tested with a forced deadlock on a kept-alive connection and in the concurrency suite.
+- If several processes created records for the same issuer concurrently with 1.1 – 1.4.1, check the chain (two
+  records with the same previous hash, or a head that does not reach every record).
+- **The bundle never flushes or resets the host's EntityManager (V2, KS-V-I4, architecture rule 6).**
+  `DoctrineHashChainRepository::storeLastState()` called `flush()` on the manager of the chain entity, usually the
+  host's default one, so the host's pending entities were written too (`process()` is meant to run before the host
+  stores its invoice). The chain head is now written with DBAL (`Doctrine\DbalRowWriter`, table and columns from the
+  class metadata, so `doctrine.table_prefix` still applies) and read with array-hydrated DQL: nothing enters the
+  identity map. The repository no longer resets a closed manager (it was the host's); it only uses its connection, so
+  it keeps working after the host's manager was closed. `withChainLock()` nests in the host's transaction when one is
+  open (head and record commit or roll back with the host's data).
+- **`process()` docblock (KS-V-I5)** lists `AFTER_BILLING_RECORD_GENERATED` with the other contained listeners.
+
+### Compliance
+
+- **Users of 1.0 – 1.4.1 who submitted records with whole amounts or a `0.00` tax** (`29.00`, `0.00`, hashed as `29`,
+  `0`): the AEAT hash specification v0.1.2 states that one or two decimals are equal, but it does not say so explicitly
+  for zero decimals. If the AEAT computed those fingerprints differently, the records were "Aceptado con errores"
+  (`AceptadoConErrores`, reported by the bundle as `success: false`). Review those AEAT responses for hash errors and
+  correct the records (validations v1.2.2 §4.3.1). A sandbox submission of such a record in the 1.4.1 form settles
+  the question for your installation.
+
+### Added
+
+- **Record store (V6):** `nowo_verifactu.record_store.storage: none|memory|doctrine` or `record_store.service`
+  (`Repository\BillingRecordStoreInterface`). Every chained record (fields, hash, previous hash, XML, signed XML) is
+  appended inside the chain lock, in the same transaction as the chain head; `process(..., submitToAeat: true)` then
+  records `accepted` / `failed` and the AEAT reference (a store failure there is logged and returned in
+  `store_errors`, never thrown). Doctrine table `verifactu_billing_record` (primary key issuer NIF + position, unique
+  issuer NIF + hash), written with DBAL, no flush.
+- **Chain verifier:** `Service\ChainVerifier` and `nowo:verifactu:verify-chain --issuer=NIF [--anchor=HASH]`
+  (registered only with a record store): consecutive positions, fingerprint, previous-hash link, XML `Huella` /
+  `CuotaTotal` / `ImporteTotal` equal to the hashed values, chain head on the last record. A log enabled on an issuer
+  that already had a chain starts from the old head: it is accepted and reported as `continuesFrom` (`--anchor`
+  requires that exact head). The Doctrine store reads the log in pages of 500 records.
+- **Generation time inside the lock:** a record passed with an empty `generatedAt` is stamped with
+  `GenerationTimestamp::now()` (the Symfony `clock` service when available) inside the chain lock, so the generation
+  times follow the chain order. A record that brings its own value keeps it.
+- **XML mapping for DDD hosts:** `nowo_verifactu.doctrine.mapping: attribute|xml` (default `attribute`). With `xml`
+  the bundle entities are mapped from `src/Resources/config/doctrine/*.orm.xml`.
+- **Runtime providers (V5, issuer and software identity):** `Provider\IssuerProviderInterface` (NIF, name) and
+  `Provider\SoftwareIdentityProviderInterface` (producer name and NIF, software name, IdSistemaInformatico, version,
+  NumeroInstalacion, solo-VERI*FACTU), resolved on every `process()` call and every SOAP submission. Defaults
+  `ConfigIssuerProvider` / `ConfigSoftwareIdentityProvider` read today's configuration; point
+  `nowo_verifactu.providers.issuer` / `providers.software_identity` at your service to read them from your database.
+  The issuer is resolved once per `process()` call: a record with an empty issuer NIF or name takes the provider's,
+  and the SOAP Cabecera uses the record's name, so the XML and the Cabecera agree.
+- **Generation time helper (V8):** `Clock\GenerationTimestamp::now(?ClockInterface)`, `format()` and `issueDate()`
+  give `FechaHoraHusoGenRegistro` (`Y-m-d\TH:i:sP`) and `FechaExpedicionFactura` (`d-m-Y`) in Europe/Madrid whatever
+  the server time zone (PSR-20, `psr/clock` is now required). `nowo:verifactu:submit-sandbox` uses it for its defaults.
+- **Worker mode without kernel reset:** tests run 1,000 records for two issuers in one kernel without reset (flat
+  memory, no managed entity, no open transaction, chains kept apart) and change the provider values between two calls.
+
+### Changed
+
+- **QR (V10):** `importe` is the canonical amount, the same string as `ImporteTotal` in the XML and the fingerprint.
+- **Docs:** INTEGRATION-NOWO and USAGE use `GenerationTimestamp` instead of `format('c')` in the server time zone.
+
 ## [1.4.1] - 2026-11-10
 
 The AEAT submission events are dispatched, and a failing listener after chaining no longer loses or duplicates a fiscal record (failures in `event_errors`). See [UPGRADING](https://github.com/nowo-tech/VerifactuBundle/blob/v1.4.1/docs/UPGRADING.md#to-141).

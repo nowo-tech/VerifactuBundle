@@ -60,10 +60,10 @@ use Nowo\VerifactuBundle\Model\RecordType;
 $draft = new InvoiceDraft(
     issuerNif: $invoice->getCompany()->getNif(),
     invoiceSeriesNumber: $invoice->getNumber(),      // e.g. FAC-2026-00042
-    issueDate: $invoice->getIssuedAt()->format('d-m-Y'),
+    issueDate: \Nowo\VerifactuBundle\Clock\GenerationTimestamp::issueDate($invoice->getIssuedAt()),
     totalTaxAmount: $invoice->getTaxTotal()->format('0.00'),
     totalAmount: $invoice->getGrandTotal()->format('0.00'),
-    generatedAt: (new \DateTimeImmutable())->format('c'),
+    generatedAt: \Nowo\VerifactuBundle\Clock\GenerationTimestamp::now(), // Europe/Madrid, Y-m-d\TH:i:sP; pass a PSR-20 clock to freeze time
     recordType: RecordType::Alta,
     invoiceType: 'F1',
     issuerName: $invoice->getCompany()->getLegalName(),

@@ -8,8 +8,11 @@ use InvalidArgumentException;
 use Nowo\VerifactuBundle\Client\AeatEndpointResolver;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapEnvelopeBuilder;
+use Nowo\VerifactuBundle\Client\SoapTransportInterface;
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Model\IssuerIdentity;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use Nowo\VerifactuBundle\Tests\Support\FakeSoapTransport;
 use PHPUnit\Framework\TestCase;
 
@@ -206,6 +209,44 @@ final class SoapAeatSubmissionClientTest extends TestCase
             dirname(__DIR__, 2) . '/Fixtures/certs/test.p12',
             'test',
         );
+    }
+
+    public function testIssuerProviderIsAskedOnEverySubmission(): void
+    {
+        $transport = new class implements SoapTransportInterface {
+            /** @var list<string> */
+            public array $payloads = [];
+
+            public function send(string $endpoint, string $soapAction, string $payload, string $certificatePath, ?string $certificatePassword, int $timeout): array
+            {
+                $this->payloads[] = $payload;
+
+                return ['status_code' => 200, 'body' => '<EstadoRegistro>Correcto</EstadoRegistro>'];
+            }
+        };
+        $provider = $this->createMock(IssuerProviderInterface::class);
+        $provider->expects(self::exactly(2))->method('getIssuer')->willReturnOnConsecutiveCalls(
+            new IssuerIdentity('89890001K', 'From Database One'),
+            new IssuerIdentity('89890001K', 'From Database Two'),
+        );
+        $client = new SoapAeatSubmissionClient(
+            new SoapEnvelopeBuilder(),
+            new AeatEndpointResolver(),
+            $transport,
+            ['nif' => '89890001K', 'name' => 'Static'],
+            'verifactu',
+            'sandbox',
+            dirname(__DIR__, 2) . '/Fixtures/certs/test.p12',
+            'test',
+            issuerProvider: $provider,
+        );
+        $record = new BillingRecord(RecordType::Alta, '89890001K', 'FAC-001', '09-07-2026', 'F1', '21.00', '121.00', '2026-07-09T16:00:00+02:00', hash: str_repeat('A', 64));
+
+        $client->submit($record);
+        $client->submit($record);
+
+        self::assertStringContainsString('From Database One', $transport->payloads[0]);
+        self::assertStringContainsString('From Database Two', $transport->payloads[1]);
     }
 
     private function createRecord(): BillingRecord

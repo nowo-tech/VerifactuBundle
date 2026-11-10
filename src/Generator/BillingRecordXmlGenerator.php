@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Generator;
 
+use Nowo\VerifactuBundle\Model\Amount;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Model\RecordType;
@@ -75,8 +76,9 @@ final class BillingRecordXmlGenerator
         $xml .= '  <TipoFactura>' . $this->escape($record->invoiceType) . '</TipoFactura>' . "\n";
         $xml .= '  <DescripcionOperacion>' . $this->escape($description) . '</DescripcionOperacion>' . "\n";
         $xml .= $this->renderDesglose($record);
-        $xml .= '  <CuotaTotal>' . $this->escape($record->totalTaxAmount) . '</CuotaTotal>' . "\n";
-        $xml .= '  <ImporteTotal>' . $this->escape($record->totalAmount) . '</ImporteTotal>' . "\n";
+        // The same canonical strings as the fingerprint (HashChainGenerator), so the XML and the Huella always agree.
+        $xml .= '  <CuotaTotal>' . $this->escape(Amount::canonical($record->totalTaxAmount)) . '</CuotaTotal>' . "\n";
+        $xml .= '  <ImporteTotal>' . $this->escape(Amount::canonical($record->totalAmount)) . '</ImporteTotal>' . "\n";
         $xml .= $this->renderEncadenamiento($previousState);
         $xml .= $this->renderSistemaInformatico($softwareConfig, $installationConfig);
         $xml .= '  <FechaHoraHusoGenRegistro>' . $this->escape($record->generatedAt) . '</FechaHoraHusoGenRegistro>' . "\n";

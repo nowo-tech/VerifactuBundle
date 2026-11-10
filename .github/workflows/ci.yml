@@ -173,6 +173,68 @@ jobs:
       - name: Check code style
         run: composer cs-check
 
+  concurrency:
+    name: Chain concurrency (${{ matrix.db }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - db: mysql-8.4
+            url: 'mysql://root@127.0.0.1:3306/verifactu?serverVersion=8.4&charset=utf8mb4'
+          - db: mariadb-11.4
+            url: 'mysql://root@127.0.0.1:3307/verifactu?serverVersion=11.4.0-MariaDB&charset=utf8mb4'
+          - db: postgresql-17
+            url: 'pgsql://postgres@127.0.0.1:5432/verifactu?serverVersion=17&charset=utf8'
+
+    # Throwaway service databases without credentials (no password in the repository).
+    # Several PHP processes chain records for one issuer at the same time (tests/Concurrency): no fork, contiguous
+    # chain, every record reachable, only retryable lock errors; inside / outside a host transaction, with and without
+    # the record store, first record and existing head.
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: verifactu
+        ports: ['3306:3306']
+        options: --health-cmd="mysqladmin ping" --health-interval=5s --health-timeout=5s --health-retries=20
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: '1'
+          MARIADB_DATABASE: verifactu
+        ports: ['3307:3306']
+        options: --health-cmd="healthcheck.sh --connect --innodb_initialized" --health-interval=5s --health-timeout=5s --health-retries=20
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: verifactu
+        ports: ['5432:5432']
+        options: --health-cmd="pg_isready -U postgres" --health-interval=5s --health-timeout=5s --health-retries=20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_mysql, pdo_pgsql, pdo_sqlite
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Run the multi-process chain tests
+        env:
+          VERIFACTU_TEST_DATABASE_URL: ${{ matrix.url }}
+        run: vendor/bin/phpunit --no-coverage tests/Concurrency
+
   static-analysis:
     name: PHPStan & Rector
     runs-on: ubuntu-latest

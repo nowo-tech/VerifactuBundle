@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\EventSubscriber;
 
+use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
@@ -22,10 +23,11 @@ use Symfony\Component\HttpKernel\KernelEvents;
 final class WorkerStateResetSubscriber implements EventSubscriberInterface
 {
     /**
-     * Receives the in-memory hash chain repository to clear.
+     * Receives the in-memory hash chain repository and record store to clear.
      */
     public function __construct(
         private readonly InMemoryHashChainRepository $inMemoryHashChainRepository,
+        private readonly ?InMemoryBillingRecordStore $inMemoryBillingRecordStore = null,
     ) {
     }
 
@@ -42,7 +44,7 @@ final class WorkerStateResetSubscriber implements EventSubscriberInterface
     }
 
     /**
-     * Clears the in-memory hash chain at the start of every main request.
+     * Clears the in-memory hash chain and record store at the start of every main request.
      */
     public function onKernelRequest(RequestEvent $event): void
     {
@@ -52,5 +54,7 @@ final class WorkerStateResetSubscriber implements EventSubscriberInterface
 
         // @igor-ignore - Event subscriber clears request/runtime bridges; not cross-request leak.
         $this->inMemoryHashChainRepository->clear();
+        // @igor-ignore - Event subscriber clears request/runtime bridges; not cross-request leak.
+        $this->inMemoryBillingRecordStore?->clear();
     }
 }

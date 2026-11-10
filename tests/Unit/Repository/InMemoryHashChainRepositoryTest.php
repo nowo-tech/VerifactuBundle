@@ -61,7 +61,7 @@ final class InMemoryHashChainRepositoryTest extends TestCase
         $logger = $this->createMock(LoggerInterface::class);
         $logger->expects(self::once())
             ->method('warning')
-            ->with(self::stringContains('hash chain stored in memory'), ['issuer' => '89890001K']);
+            ->with(self::logicalAnd(self::stringContains('hash chain stored in memory'), self::logicalNot(self::stringContains('89890001K'))), []);
 
         $repository = new InMemoryHashChainRepository($logger, true);
         $repository->storeLastState(new HashChainState(' 89890001k ', 'FAC-001', '09-07-2026', 'HASH1'));

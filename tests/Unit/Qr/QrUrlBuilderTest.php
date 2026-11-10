@@ -66,6 +66,13 @@ final class QrUrlBuilderTest extends TestCase
         );
     }
 
+    public function testImporteIsTheCanonicalAmountOfTheXmlAndTheHash(): void
+    {
+        $record = new BillingRecord(RecordType::Alta, '89890001K', 'FAC-001', '09-07-2026', 'F1', '2.1', ' 12.3 ', '2026-07-09T16:00:00+02:00');
+
+        self::assertStringEndsWith('&importe=12.30', (new QrUrlBuilder())->buildUrl($record));
+    }
+
     public function testBuildLegend(): void
     {
         self::assertSame('VERI*FACTU', $this->builder->buildLegend('verifactu'));
