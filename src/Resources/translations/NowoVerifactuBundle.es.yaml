@@ -17,3 +17,30 @@ validation:
     parse_failed: 'XML no válido: %errors%'
     xsd:
       failed: 'Validación XSD fallida: %errors%'
+  rectification_type:
+    invalid: 'El tipo de rectificativa (TipoRectificativa) debe ser S o I, y solo pueden llevarlo las facturas rectificativas (R1–R5).'
+    missing: 'Las facturas rectificativas (R1–R5) necesitan un tipo de rectificativa (S o I).'
+  rectified_invoices:
+    not_allowed: 'Las facturas rectificadas solo pueden indicarse en facturas rectificativas (R1–R5).'
+  substituted_invoices:
+    not_allowed: 'Las facturas sustituidas solo pueden indicarse en facturas F3.'
+  invoice_reference:
+    invalid: 'Cada factura referenciada necesita un NIF de emisor válido, una serie y número y una fecha dd-mm-aaaa.'
+  rectification_amount:
+    invalid: 'Los importes rectificados (base y cuota, números válidos) son obligatorios con el tipo de rectificativa S y no se admiten en otro caso.'
+  operation_date:
+    invalid: 'La fecha de operación debe ser una fecha real con formato dd-mm-aaaa.'
+  recipients:
+    not_allowed: 'Las facturas F2 y R5 no pueden indicar destinatarios.'
+    missing: 'Las facturas F1, F3 y R1–R4 necesitan al menos un destinatario.'
+  recipient:
+    invalid: 'Cada destinatario necesita un nombre y un NIF español válido o un identificador extranjero (tipo 02–07, código de país de dos letras salvo con tipo 02, y ES solo con tipo 07).'
+  tax_breakdown:
+    qualification:
+      invalid: 'Cada línea de desglose lleva una calificación de la operación (S1, S2, N1, N2) o una exención (E1–E8), no ambas.'
+    regime_key:
+      invalid: 'La clave de régimen (ClaveRegimen) no es un valor de la AEAT.'
+    reverse_charge:
+      invalid: 'Las líneas con inversión del sujeto pasivo (S2) necesitan tipo 0 y cuota 0, y no se admiten en facturas F2 ni R5.'
+    not_taxed:
+      invalid: 'Las líneas no sujetas (N1, N2) y exentas no llevan cuota: la cuota debe ser 0 o estar vacía.'

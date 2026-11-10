@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Command;
 
 use DateTimeImmutable;
+use Nowo\VerifactuBundle\Certificate\Certificate;
+use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
 use Nowo\VerifactuBundle\Integration\InvoiceDraft;
 use Nowo\VerifactuBundle\Integration\InvoiceToBillingRecordMapper;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -47,6 +50,10 @@ final class SubmitToAeatSandboxCommand extends Command
         private readonly string $environment,
         #[Autowire('%nowo_verifactu.issuer%')]
         private readonly array $issuerConfig,
+        #[Autowire(service: AeatEnvironmentProviderInterface::class)]
+        private readonly ?AeatEnvironmentProviderInterface $environmentProvider = null,
+        #[Autowire(service: CertificateProviderInterface::class)]
+        private readonly ?CertificateProviderInterface $certificateProvider = null,
     ) {
         parent::__construct();
     }
@@ -93,14 +100,18 @@ final class SubmitToAeatSandboxCommand extends Command
 
         $submit = (bool) $input->getOption('submit') && !(bool) $input->getOption('dry-run');
 
-        if ($submit && ($this->certificatePath === null || $this->certificatePath === '')) {
+        $environment    = $this->environmentProvider?->getEnvironment() ?? $this->environment;
+        $hasCertificate = $this->certificateProvider instanceof CertificateProviderInterface
+            ? $this->certificateProvider->getCertificate($draft->issuerNif) instanceof Certificate
+            : $this->certificatePath !== null && $this->certificatePath !== '';
+        if ($submit && !$hasCertificate) {
             $io->error('AEAT certificate is not configured. Set nowo_verifactu.aeat.certificate_path or use --dry-run.');
 
             return Command::FAILURE;
         }
 
-        if ($submit && $this->environment !== 'sandbox') {
-            $refusal = $this->refuseNonSandboxSubmission($input, $io, $draft);
+        if ($submit && $environment !== 'sandbox') {
+            $refusal = $this->refuseNonSandboxSubmission($input, $io, $draft, $environment);
             if ($refusal !== null) {
                 return $refusal;
             }
@@ -156,10 +167,10 @@ final class SubmitToAeatSandboxCommand extends Command
      * A real AEAT registration cannot be undone: outside the sandbox, --submit needs --allow-production, explicit
      * --nif / --numserie (the defaults are sandbox values) and an interactive confirmation.
      */
-    private function refuseNonSandboxSubmission(InputInterface $input, SymfonyStyle $io, InvoiceDraft $draft): ?int
+    private function refuseNonSandboxSubmission(InputInterface $input, SymfonyStyle $io, InvoiceDraft $draft, string $environment): ?int
     {
         if (!(bool) $input->getOption('allow-production')) {
-            $io->error(sprintf('Refusing to submit to the AEAT "%s" environment: this command targets the sandbox. Pass --allow-production to override.', $this->environment));
+            $io->error(sprintf('Refusing to submit to the AEAT "%s" environment: this command targets the sandbox. Pass --allow-production to override.', $environment));
 
             return Command::FAILURE;
         }
@@ -170,13 +181,13 @@ final class SubmitToAeatSandboxCommand extends Command
             return Command::INVALID;
         }
 
-        if (!$input->isInteractive() || !$io->confirm(sprintf('Register invoice "%s" of issuer %s at the AEAT "%s" environment? This cannot be undone.', $draft->invoiceSeriesNumber, $draft->issuerNif, $this->environment), false)) {
+        if (!$input->isInteractive() || !$io->confirm(sprintf('Register invoice "%s" of issuer %s at the AEAT "%s" environment? This cannot be undone.', $draft->invoiceSeriesNumber, $draft->issuerNif, $environment), false)) {
             $io->error('Submission outside the sandbox was not confirmed.');
 
             return Command::FAILURE;
         }
 
-        $io->warning(sprintf('Submitting to the AEAT "%s" environment.', $this->environment));
+        $io->warning(sprintf('Submitting to the AEAT "%s" environment.', $environment));
 
         return null;
     }

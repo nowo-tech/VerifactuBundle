@@ -17,3 +17,30 @@ validation:
     parse_failed: 'XML non valido: %errors%'
     xsd:
       failed: 'Validazione XSD non riuscita: %errors%'
+  rectification_type:
+    invalid: 'Il tipo di rettifica (TipoRectificativa) deve essere S o I e solo le fatture rettificative (R1–R5) possono indicarlo.'
+    missing: 'Le fatture rettificative (R1–R5) richiedono un tipo di rettifica (S o I).'
+  rectified_invoices:
+    not_allowed: 'Le fatture rettificate possono essere indicate solo su fatture rettificative (R1–R5).'
+  substituted_invoices:
+    not_allowed: 'Le fatture sostituite possono essere indicate solo su fatture F3.'
+  invoice_reference:
+    invalid: 'Ogni fattura referenziata richiede un codice fiscale dell''emittente valido, serie e numero e una data gg-mm-aaaa.'
+  rectification_amount:
+    invalid: 'Gli importi rettificati (base e imposta, numeri validi) sono obbligatori con il tipo di rettifica S e non ammessi altrimenti.'
+  operation_date:
+    invalid: 'La data dell''operazione deve essere una data reale nel formato gg-mm-aaaa.'
+  recipients:
+    not_allowed: 'Le fatture F2 e R5 non possono indicare destinatari.'
+    missing: 'Le fatture F1, F3 e R1–R4 richiedono almeno un destinatario.'
+  recipient:
+    invalid: 'Ogni destinatario richiede un nome e un codice fiscale spagnolo valido oppure un identificativo estero (tipo 02–07, codice paese di due lettere salvo con il tipo 02, ES solo con il tipo 07).'
+  tax_breakdown:
+    qualification:
+      invalid: 'Ogni riga d''imposta indica una qualificazione (S1, S2, N1, N2) oppure un''esenzione (E1–E8), non entrambe.'
+    regime_key:
+      invalid: 'La chiave di regime (ClaveRegimen) non è un valore dell''AEAT.'
+    reverse_charge:
+      invalid: 'Le righe in inversione contabile (S2) richiedono aliquota 0 e imposta 0 e non sono ammesse sulle fatture F2 e R5.'
+    not_taxed:
+      invalid: 'Le righe non soggette (N1, N2) ed esenti non hanno imposta: l''importo dell''imposta deve essere 0 o vuoto.'

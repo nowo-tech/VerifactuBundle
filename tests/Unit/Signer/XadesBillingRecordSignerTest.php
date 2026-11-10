@@ -6,7 +6,9 @@ namespace Nowo\VerifactuBundle\Tests\Unit\Signer;
 
 use DOMDocument;
 use InvalidArgumentException;
+use Nowo\VerifactuBundle\Certificate\Certificate;
 use Nowo\VerifactuBundle\Certificate\CertificateLoader;
+use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
@@ -120,6 +122,27 @@ final class XadesBillingRecordSignerTest extends TestCase
         $embedded = $key->getX509Certificate();
         self::assertNotNull($embedded);
         self::assertSame(openssl_x509_fingerprint($x509, 'sha256'), openssl_x509_fingerprint($embedded, 'sha256'));
+    }
+
+    public function testCertificateProviderIsAskedForTheIssuerOfTheRecord(): void
+    {
+        $provider = $this->createMock(CertificateProviderInterface::class);
+        $provider->expects(self::once())->method('getCertificate')->with('89890001K')
+            ->willReturn(Certificate::fromContents((string) file_get_contents($this->certificatePath), 'test'));
+        $signer = new XadesBillingRecordSigner(new CertificateLoader(), '/ignored/static.p12', null, $provider);
+
+        $signed = $signer->sign('<RegistroAnulacion xmlns="urn:x"><IDFactura><IDEmisorFacturaAnulada>89890001K</IDEmisorFacturaAnulada></IDFactura></RegistroAnulacion>');
+
+        self::assertStringContainsString('SignatureValue', $signed);
+    }
+
+    public function testCertificateProviderWithoutCertificateForTheIssuerRefusesToSign(): void
+    {
+        $provider = $this->createMock(CertificateProviderInterface::class);
+        $provider->method('getCertificate')->with('')->willReturn(null);
+
+        $this->expectException(InvalidArgumentException::class);
+        (new XadesBillingRecordSigner(new CertificateLoader(), null, null, $provider))->sign('<RegistroAlta/>');
     }
 
     public function testSignThrowsWhenCertificatePathIsMissing(): void

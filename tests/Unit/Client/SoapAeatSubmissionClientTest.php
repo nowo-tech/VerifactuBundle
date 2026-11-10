@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Tests\Unit\Client;
 
 use InvalidArgumentException;
+use Nowo\VerifactuBundle\Certificate\Certificate;
+use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use Nowo\VerifactuBundle\Client\AeatEndpointResolver;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapEnvelopeBuilder;
@@ -12,6 +14,7 @@ use Nowo\VerifactuBundle\Client\SoapTransportInterface;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\IssuerIdentity;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use Nowo\VerifactuBundle\Tests\Support\FakeSoapTransport;
 use PHPUnit\Framework\TestCase;
@@ -247,6 +250,47 @@ final class SoapAeatSubmissionClientTest extends TestCase
 
         self::assertStringContainsString('From Database One', $transport->payloads[0]);
         self::assertStringContainsString('From Database Two', $transport->payloads[1]);
+    }
+
+    public function testCertificateAndEnvironmentProvidersAreAskedPerSubmission(): void
+    {
+        $transport = new class implements SoapTransportInterface {
+            /** @var list<array{endpoint: string, path: string, existed: bool, contents: string, passphrase: ?string}> */
+            public array $calls = [];
+
+            public function send(string $endpoint, string $soapAction, string $payload, string $certificatePath, ?string $certificatePassword, int $timeout): array
+            {
+                $this->calls[] = ['endpoint' => $endpoint, 'path' => $certificatePath, 'existed' => is_file($certificatePath), 'contents' => (string) @file_get_contents($certificatePath), 'passphrase' => $certificatePassword];
+
+                return ['status_code' => 200, 'body' => '<EstadoRegistro>Correcto</EstadoRegistro>'];
+            }
+        };
+        $certificates = $this->createMock(CertificateProviderInterface::class);
+        $certificates->expects(self::exactly(2))->method('getCertificate')->with('89890001K')
+            ->willReturn(Certificate::fromContents('P12-FROM-DATABASE', 'db-pass'));
+        $environments = $this->createMock(AeatEnvironmentProviderInterface::class);
+        $environments->method('getEnvironment')->willReturnOnConsecutiveCalls('sandbox', 'production');
+        $client = new SoapAeatSubmissionClient(new SoapEnvelopeBuilder(), new AeatEndpointResolver(), $transport, ['nif' => '89890001K'], 'verifactu', 'sandbox', null, null, certificateProvider: $certificates, environmentProvider: $environments);
+
+        self::assertTrue($client->submit($this->createRecord())['success']);
+        self::assertTrue($client->submit($this->createRecord())['success']);
+
+        self::assertStringStartsWith('https://prewww1.aeat.es/', $transport->calls[0]['endpoint']);
+        self::assertStringStartsWith('https://www1.agenciatributaria.gob.es/', $transport->calls[1]['endpoint']);
+        self::assertTrue($transport->calls[0]['existed']);
+        self::assertSame('P12-FROM-DATABASE', $transport->calls[0]['contents']);
+        self::assertSame('db-pass', $transport->calls[0]['passphrase']);
+        self::assertFileDoesNotExist($transport->calls[0]['path'], 'The temporary certificate file is removed after the call');
+    }
+
+    public function testCertificateProviderWithoutCertificateForTheIssuerRefusesToSubmit(): void
+    {
+        $certificates = $this->createMock(CertificateProviderInterface::class);
+        $certificates->method('getCertificate')->willReturn(null);
+        $client = new SoapAeatSubmissionClient(new SoapEnvelopeBuilder(), new AeatEndpointResolver(), new FakeSoapTransport(), ['nif' => '89890001K'], 'verifactu', 'sandbox', '/ignored.p12', null, certificateProvider: $certificates);
+
+        $this->expectException(InvalidArgumentException::class);
+        $client->submit($this->createRecord());
     }
 
     private function createRecord(): BillingRecord

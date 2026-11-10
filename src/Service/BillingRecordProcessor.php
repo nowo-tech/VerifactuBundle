@@ -306,6 +306,12 @@ final class BillingRecordProcessor
             $chainTo === false ? $record->previousHash : $chainTo?->hash,
             issuerName: $issuerName ?? $record->issuerName,
             operationDescription: $record->operationDescription,
+            recipients: $record->recipients,
+            rectificationType: $record->rectificationType,
+            rectifiedInvoices: $record->rectifiedInvoices,
+            substitutedInvoices: $record->substitutedInvoices,
+            rectificationAmount: $record->rectificationAmount,
+            operationDate: $record->operationDate,
         );
     }
 

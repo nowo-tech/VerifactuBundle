@@ -33,6 +33,28 @@
 
 ## Unreleased
 
+From **1.5.0** — minor, no configuration change required:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- **Same XML for the same input.** The new `BillingRecord` / `InvoiceDraft` / `TaxBreakdown` arguments are optional and
+  trailing; a record built as in 1.5 produces the same RegistroAlta.
+- **Complete your records.** The AEAT rejects F1, F3 and R1 – R4 invoices without recipients and R1 – R5 without
+  TipoRectificativa. Pass `recipients` and `rectificationType` (and `rectifiedInvoices` / `rectificationAmount`), then
+  set `nowo_verifactu.validation.strict: true` so incomplete records are refused before they are chained. Pass a
+  ClaveRegimen per tax line or set `nowo_verifactu.xml.default_regime_key` (the AEAT rejects IVA lines without one from
+  2027-01-01).
+- **New validation messages** for the new fields only; existing records validate as before unless `strict` is on.
+- **Runtime environment and certificate.** Nothing changes with the static configuration. To read them from your
+  database, implement `AeatEnvironmentProviderInterface` / `CertificateProviderInterface` and set
+  `providers.aeat_environment` / `providers.certificate`. If you construct `SoapAeatSubmissionClient`,
+  `XadesBillingRecordSigner`, `VerifactuTwigExtension`, `AeatBusinessRulesValidator`, `BillingRecordXmlGenerator` or
+  `SubmitToAeatSandboxCommand` yourself, the new arguments are optional and last.
+- **After `ChainTransactionLostException`** run no further statement of that unit of work on the connection: it
+  autocommits on the reconnected session. Start a new transaction and redo the whole unit.
+
 ## To 1.5.0
 
 From **1.4.1**:

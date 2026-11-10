@@ -17,3 +17,30 @@ validation:
     parse_failed: 'Ungültiges XML: %errors%'
     xsd:
       failed: 'XSD-Validierung fehlgeschlagen: %errors%'
+  rectification_type:
+    invalid: 'Die Berichtigungsart (TipoRectificativa) muss S oder I sein und darf nur bei Berichtigungsrechnungen (R1–R5) stehen.'
+    missing: 'Berichtigungsrechnungen (R1–R5) brauchen eine Berichtigungsart (S oder I).'
+  rectified_invoices:
+    not_allowed: 'Berichtigte Rechnungen dürfen nur bei Berichtigungsrechnungen (R1–R5) angegeben werden.'
+  substituted_invoices:
+    not_allowed: 'Ersetzte Rechnungen dürfen nur bei F3-Rechnungen angegeben werden.'
+  invoice_reference:
+    invalid: 'Jede referenzierte Rechnung braucht eine gültige Steuernummer des Ausstellers, Serie und Nummer und ein Datum im Format TT-MM-JJJJ.'
+  rectification_amount:
+    invalid: 'Die berichtigten Beträge (Basis und Steuer, gültige Zahlen) sind bei Berichtigungsart S Pflicht und sonst nicht erlaubt.'
+  operation_date:
+    invalid: 'Das Leistungsdatum muss ein gültiges Datum im Format TT-MM-JJJJ sein.'
+  recipients:
+    not_allowed: 'F2- und R5-Rechnungen dürfen keine Empfänger angeben.'
+    missing: 'F1-, F3- und R1–R4-Rechnungen brauchen mindestens einen Empfänger.'
+  recipient:
+    invalid: 'Jeder Empfänger braucht einen Namen und entweder eine gültige spanische Steuernummer oder eine ausländische Kennung (Typ 02–07, zweistelliger Ländercode außer bei Typ 02, ES nur mit Typ 07).'
+  tax_breakdown:
+    qualification:
+      invalid: 'Jede Steuerzeile hat entweder eine Einstufung (S1, S2, N1, N2) oder eine Befreiung (E1–E8), nicht beides.'
+    regime_key:
+      invalid: 'Der Regelungsschlüssel (ClaveRegimen) ist kein AEAT-Wert.'
+    reverse_charge:
+      invalid: 'Zeilen mit Steuerschuldumkehr (S2) brauchen Satz 0 und Steuer 0 und sind bei F2- und R5-Rechnungen nicht erlaubt.'
+    not_taxed:
+      invalid: 'Nicht steuerbare (N1, N2) und befreite Zeilen haben keine Steuer: der Steuerbetrag muss 0 oder leer sein.'

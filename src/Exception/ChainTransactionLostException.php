@@ -14,7 +14,9 @@ use Throwable;
  * The bundle has closed the connection (DBAL's transaction nesting level is back to 0; the next statement reconnects),
  * so nothing keeps writing outside a transaction. Everything the host did in that transaction is gone: roll back
  * nothing more, and retry the WHOLE unit of work (open the transaction again, redo the host's writes, call process()
- * again), never process() alone. getPrevious() is the database error (usually a DBAL RetryableException).
+ * again), never process() alone. Do not run any further statement of the lost unit on the connection before starting
+ * the new transaction: it would autocommit on the reconnected session (a partial write). getPrevious() is the database
+ * error (usually a DBAL RetryableException).
  *
  * @author Nowo.tech
  * @copyright 2026 Nowo.tech

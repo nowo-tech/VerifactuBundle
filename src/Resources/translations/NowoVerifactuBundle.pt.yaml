@@ -17,3 +17,30 @@ validation:
     parse_failed: 'XML inválido: %errors%'
     xsd:
       failed: 'Validação XSD falhou: %errors%'
+  rectification_type:
+    invalid: 'O tipo de retificação (TipoRectificativa) deve ser S ou I, e só as faturas retificativas (R1–R5) o podem ter.'
+    missing: 'As faturas retificativas (R1–R5) precisam de um tipo de retificação (S ou I).'
+  rectified_invoices:
+    not_allowed: 'As faturas retificadas só podem ser indicadas em faturas retificativas (R1–R5).'
+  substituted_invoices:
+    not_allowed: 'As faturas substituídas só podem ser indicadas em faturas F3.'
+  invoice_reference:
+    invalid: 'Cada fatura referenciada precisa de um número fiscal do emitente válido, uma série e número e uma data dd-mm-aaaa.'
+  rectification_amount:
+    invalid: 'Os montantes retificados (base e imposto, números válidos) são obrigatórios com o tipo de retificação S e não são admitidos noutro caso.'
+  operation_date:
+    invalid: 'A data da operação deve ser uma data real no formato dd-mm-aaaa.'
+  recipients:
+    not_allowed: 'As faturas F2 e R5 não podem indicar destinatários.'
+    missing: 'As faturas F1, F3 e R1–R4 precisam de pelo menos um destinatário.'
+  recipient:
+    invalid: 'Cada destinatário precisa de um nome e de um número fiscal espanhol válido ou de um identificador estrangeiro (tipo 02–07, código de país de duas letras salvo com o tipo 02, ES só com o tipo 07).'
+  tax_breakdown:
+    qualification:
+      invalid: 'Cada linha de imposto leva uma qualificação (S1, S2, N1, N2) ou uma isenção (E1–E8), não ambas.'
+    regime_key:
+      invalid: 'A chave de regime (ClaveRegimen) não é um valor da AEAT.'
+    reverse_charge:
+      invalid: 'As linhas com autoliquidação (S2) precisam de taxa 0 e imposto 0 e não são admitidas em faturas F2 nem R5.'
+    not_taxed:
+      invalid: 'As linhas não sujeitas (N1, N2) e isentas não levam imposto: o montante do imposto deve ser 0 ou vazio.'

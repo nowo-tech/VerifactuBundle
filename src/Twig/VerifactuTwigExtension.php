@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Twig;
 
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Qr\QrCodeGenerator;
 use Nowo\VerifactuBundle\Qr\QrUrlBuilder;
 use Twig\Extension\AbstractExtension;
@@ -21,7 +22,7 @@ use function in_array;
 final class VerifactuTwigExtension extends AbstractExtension
 {
     /**
-     * Receives the QR services, the AEAT environment and the QR configuration.
+     * Receives the QR services, the AEAT environment (or its runtime provider) and the QR configuration.
      *
      * @param array<string, mixed> $qrConfig
      */
@@ -30,6 +31,7 @@ final class VerifactuTwigExtension extends AbstractExtension
         private readonly QrUrlBuilder $qrUrlBuilder,
         private readonly string $aeatEnvironment,
         private readonly array $qrConfig,
+        private readonly ?AeatEnvironmentProviderInterface $environmentProvider = null,
     ) {
     }
 
@@ -50,7 +52,7 @@ final class VerifactuTwigExtension extends AbstractExtension
      */
     public function qrDataUri(BillingRecord $record): string
     {
-        return $this->qrCodeGenerator->generateDataUri($record, $this->aeatEnvironment, $this->qrConfig);
+        return $this->qrCodeGenerator->generateDataUri($record, $this->environment(), $this->qrConfig);
     }
 
     /**
@@ -58,7 +60,15 @@ final class VerifactuTwigExtension extends AbstractExtension
      */
     public function qrUrl(BillingRecord $record): string
     {
-        return $this->qrUrlBuilder->buildUrl($record, $this->aeatEnvironment);
+        return $this->qrUrlBuilder->buildUrl($record, $this->environment());
+    }
+
+    /**
+     * The AEAT environment of this call (the provider's when one is wired, else the configured one).
+     */
+    private function environment(): string
+    {
+        return $this->environmentProvider?->getEnvironment() ?? $this->aeatEnvironment;
     }
 
     /**

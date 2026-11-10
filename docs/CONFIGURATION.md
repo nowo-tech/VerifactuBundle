@@ -21,6 +21,12 @@ nowo_verifactu:
     providers:
         issuer: null             # service id of your IssuerProviderInterface (null = the issuer block above)
         software_identity: null  # service id of your SoftwareIdentityProviderInterface (null = software + installation)
+        aeat_environment: null   # service id of your AeatEnvironmentProviderInterface (null = aeat.environment)
+        certificate: null        # service id of your CertificateProviderInterface, per issuer NIF (null = aeat.certificate_*)
+    validation:
+        strict: false            # also reject records without recipients (F1, F3, R1 – R4) or TipoRectificativa (R1 – R5)
+    xml:
+        default_regime_key: null # ClaveRegimen for tax lines without one, e.g. '01' (null = omitted, as in 1.5)
     hash_chain:
         storage: memory          # memory | doctrine
         repository: null         # custom service id (optional)
@@ -101,6 +107,28 @@ in your database (and edit them without a cache clear), implement `Provider\Issu
 `Provider\SoftwareIdentityProviderInterface` and set `providers.issuer` / `providers.software_identity` to the service
 ids. They are called on every `process()` and every SOAP submission, never cached by the bundle. `IdSistemaInformatico`
 is up to two characters and `NumeroInstalacion` free text (for example `SB` and `1`).
+
+### Runtime AEAT environment and certificate
+
+`providers.aeat_environment` points at your `Provider\AeatEnvironmentProviderInterface` ("sandbox" or "production"),
+asked by the SOAP client, the QR Twig functions and `nowo:verifactu:submit-sandbox` on every call.
+`providers.certificate` points at your `Certificate\CertificateProviderInterface`: `getCertificate($issuerNif)` returns
+`Certificate::fromPath($path, $password)` or `Certificate::fromContents($pkcs12OrPemBytes, $password, 'p12'|'pem')`
+(for example decrypted from your database), or null when the issuer has none. The SOAP client and the XAdES signer ask
+it on every call; contents are written to a private (0600) temporary file only for the cURL call and deleted right
+after, also on failure. `Certificate` hides its contents and password from dumps. A certificate provider enables the
+SOAP client and the signer like a `certificate_path` does. With an environment provider, the container refuses the
+in-memory hash chain together with an AEAT client (the provider may switch to production at runtime).
+
+### Record completeness (AEAT validations)
+
+Records built as in 1.5 produce the same XML. The 1.6 fields (recipients, rectification, operation date, ClaveRegimen,
+CalificacionOperacion / OperacionExenta) are validated when set ([USAGE](USAGE.md#complete-records-recipients-rectifications-tax-qualification)).
+Two AEAT rules reject records that 1.5 could not complete: invoices F1, F3, R1 – R4 need at least one recipient, and
+R1 – R5 need TipoRectificativa (AEAT "Validaciones y errores" v1.2.2, §3.1.3 items 3 and 13). Set
+`validation.strict: true` to refuse such records before they are chained (recommended). ClaveRegimen is optional in the
+schema but the AEAT warns when an IVA line has none and rejects it from 2027-01-01 (§15.6): pass it per line or set
+`xml.default_regime_key` (for example `'01'`, general regime).
 
 ### XAdES signing (No-Veri*Factu)
 

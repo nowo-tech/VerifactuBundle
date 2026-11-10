@@ -17,3 +17,30 @@ validation:
     parse_failed: 'Ongeldige XML: %errors%'
     xsd:
       failed: 'XSD-validatie mislukt: %errors%'
+  rectification_type:
+    invalid: 'Het correctietype (TipoRectificativa) moet S of I zijn en alleen correctiefacturen (R1–R5) mogen het bevatten.'
+    missing: 'Correctiefacturen (R1–R5) hebben een correctietype (S of I) nodig.'
+  rectified_invoices:
+    not_allowed: 'Gecorrigeerde facturen mogen alleen op correctiefacturen (R1–R5) staan.'
+  substituted_invoices:
+    not_allowed: 'Vervangen facturen mogen alleen op F3-facturen staan.'
+  invoice_reference:
+    invalid: 'Elke verwezen factuur heeft een geldig fiscaal nummer van de uitgever, een reeks en nummer en een datum dd-mm-jjjj nodig.'
+  rectification_amount:
+    invalid: 'De gecorrigeerde bedragen (grondslag en belasting, geldige getallen) zijn verplicht bij correctietype S en anders niet toegestaan.'
+  operation_date:
+    invalid: 'De handelingsdatum moet een echte datum in het formaat dd-mm-jjjj zijn.'
+  recipients:
+    not_allowed: 'F2- en R5-facturen mogen geen ontvangers vermelden.'
+    missing: 'F1-, F3- en R1–R4-facturen hebben minstens één ontvanger nodig.'
+  recipient:
+    invalid: 'Elke ontvanger heeft een naam nodig en een geldig Spaans fiscaal nummer of een buitenlandse identificatie (type 02–07, een landcode van twee letters behalve bij type 02, ES alleen met type 07).'
+  tax_breakdown:
+    qualification:
+      invalid: 'Elke belastingregel heeft een kwalificatie (S1, S2, N1, N2) of een vrijstelling (E1–E8), niet beide.'
+    regime_key:
+      invalid: 'De regimesleutel (ClaveRegimen) is geen AEAT-waarde.'
+    reverse_charge:
+      invalid: 'Regels met verlegging (S2) hebben tarief 0 en belasting 0 nodig en zijn niet toegestaan op F2- en R5-facturen.'
+    not_taxed:
+      invalid: 'Niet-belaste (N1, N2) en vrijgestelde regels hebben geen belasting: het belastingbedrag moet 0 of leeg zijn.'

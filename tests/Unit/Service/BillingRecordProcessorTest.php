@@ -18,9 +18,12 @@ use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\IssuerIdentity;
+use Nowo\VerifactuBundle\Model\Recipient;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Model\RectifiedInvoice;
 use Nowo\VerifactuBundle\Model\SoftwareIdentity;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
+use Nowo\VerifactuBundle\Model\TaxBreakdown;
 use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
 use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
@@ -742,6 +745,32 @@ final class BillingRecordProcessorTest extends TestCase
         self::assertTrue($result['submission']['success']);
         self::assertSame([$failure], $result['store_errors'] ?? null);
         self::assertStringNotContainsString('database gone', json_encode($logger->records, JSON_THROW_ON_ERROR));
+    }
+
+    public function testCompleteRecordFieldsSurviveChainingAndPassTheAeatSchema(): void
+    {
+        $record = new BillingRecord(
+            RecordType::Alta,
+            '89890001K',
+            'R-2026-001',
+            '09-07-2026',
+            'R1',
+            '21.00',
+            '121.00',
+            '',
+            taxBreakdown: [new TaxBreakdown('01', '21.00', '100.00', '21.00', '01', 'S1')],
+            recipients: [Recipient::withForeignId('Kunde GmbH', Recipient::ID_TYPE_VAT_NUMBER, 'DE123456789', 'DE')],
+            rectificationType: 'I',
+            rectifiedInvoices: [new RectifiedInvoice('89890001K', 'FAC-2026-001', '01-07-2026')],
+            operationDate: '30-06-2026',
+        );
+
+        $result = $this->processor->process($record);
+
+        self::assertSame([], $result['errors'], 'XSD validation is on in this processor');
+        self::assertSame($record->recipients, $result['record']->recipients);
+        self::assertStringContainsString('<TipoRectificativa>I</TipoRectificativa>', (string) $result['record']->xml);
+        self::assertStringContainsString('<Destinatarios>', (string) $result['record']->xml);
     }
 
     private function recordWithoutIssuer(string $seriesNumber): BillingRecord

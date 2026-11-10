@@ -30,6 +30,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Complete AEAT records (V4) and the rest of the runtime providers (V5) for Symfony Beacon spec 226. A record built as in
+1.5 produces the same XML. See [UPGRADING](UPGRADING.md#unreleased).
+
+### Added
+
+- **Recipients, rectification and operation date (V4).** `BillingRecord` (and `InvoiceDraft`) take, as optional
+  trailing arguments: `recipients` (`Model\Recipient::withNif()` / `withForeignId()`: Destinatarios with NIF or IDOtro),
+  `rectificationType` (TipoRectificativa S / I), `rectifiedInvoices` (FacturasRectificadas), `substitutedInvoices`
+  (FacturasSustituidas, F3), `rectificationAmount` (`Model\RectificationAmount`: ImporteRectificacion) and
+  `operationDate` (FechaOperacion). The generator writes them in the order of the AEAT `SuministroInformacion.xsd`
+  (`RegistroFacturacionAltaType`).
+- **Tax qualification (V4).** `TaxBreakdown` takes `regimeKey` (ClaveRegimen), `qualification` (CalificacionOperacion
+  S1 / S2 / N1 / N2; S1 when null, as before) and `exemption` (OperacionExenta E1 – E8). Not subject (N1 / N2) and
+  exempt lines are written without TipoImpositivo and CuotaRepercutida (AEAT validations v1.2.2, §15.4 / §15.5).
+  `xml.default_regime_key` fills lines without a ClaveRegimen.
+- **AEAT business rules for the new fields** (validations v1.2.2, §3.1.3 items 3 – 7, 13, 15), translated in the 7
+  locales, and `validation.strict` for the two rules 1.5 records could not meet (recipients on F1 / F3 / R1 – R4,
+  TipoRectificativa on R1 – R5).
+- **Runtime AEAT environment and certificate (V5, rest).** `Provider\AeatEnvironmentProviderInterface` and
+  `Certificate\CertificateProviderInterface` (per issuer NIF; `Certificate::fromPath()` or `fromContents()` for
+  PKCS#12 / PEM bytes kept in a database), resolved on every call by the SOAP client, the XAdES signer, the QR Twig
+  functions and `nowo:verifactu:submit-sandbox`. The defaults read today's configuration. Contents go to a 0600
+  temporary file for the cURL call only. `CertificateLoader::loadCertificate()` loads either form.
+- **Tests:** every new element validated against the official AEAT XSD (F1 domestic / reverse charge / not subject /
+  exempt / several lines, R1 by differences and by substitution, R5, F3).
+
+### Changed
+
+- **Docs:** `ChainTransactionLostException` and UPGRADING say not to run any further statement of the lost unit of work
+  on the connection (audit KW-D2-I1).
+
 ## [1.5.0] - 2026-11-10
 
 Record store with attribute/XML mapping and verify-chain, runtime issuer and software-identity providers, one canonical amount in XML/hash/QR, Madrid timestamps, no host EM flush, and a concurrency-safe per-issuer chain lock. See [UPGRADING](https://github.com/nowo-tech/VerifactuBundle/blob/v1.5.0/docs/UPGRADING.md#to-150).

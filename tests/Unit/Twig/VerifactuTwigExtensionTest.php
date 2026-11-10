@@ -6,6 +6,7 @@ namespace Nowo\VerifactuBundle\Tests\Unit\Twig;
 
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Qr\QrCodeGenerator;
 use Nowo\VerifactuBundle\Qr\QrUrlBuilder;
 use Nowo\VerifactuBundle\Twig\VerifactuTwigExtension;
@@ -48,6 +49,17 @@ final class VerifactuTwigExtensionTest extends TestCase
         }
 
         self::assertStringStartsWith('data:image/png;base64,', $extension->qrDataUri($record));
+    }
+
+    public function testEnvironmentProviderIsAskedOnEveryCall(): void
+    {
+        $provider = $this->createMock(AeatEnvironmentProviderInterface::class);
+        $provider->method('getEnvironment')->willReturnOnConsecutiveCalls('sandbox', 'production');
+        $extension = new VerifactuTwigExtension(new QrCodeGenerator(new QrUrlBuilder()), new QrUrlBuilder(), 'sandbox', [], $provider);
+        $record    = new BillingRecord(RecordType::Alta, '89890001K', 'FAC-001', '09-07-2026', 'F1', '21.00', '121.00', '2026-07-09T16:00:00+02:00');
+
+        self::assertStringStartsWith('https://prewww2.aeat.es/', $extension->qrUrl($record));
+        self::assertStringStartsWith('https://www2.agenciatributaria.gob.es/', $extension->qrUrl($record));
     }
 
     public function testGetFunctionsRegistersTwigHelpers(): void

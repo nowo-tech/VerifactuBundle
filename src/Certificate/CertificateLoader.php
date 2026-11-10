@@ -45,6 +45,22 @@ final class CertificateLoader
     }
 
     /**
+     * Loads a certificate given by path or by contents (CertificateProviderInterface); `path` is '' for contents.
+     *
+     * @return array{private_key: string, certificate: string, path: string}
+     */
+    public function loadCertificate(Certificate $certificate): array
+    {
+        if ($certificate->path !== null) {
+            return $this->load($certificate->path, $certificate->password);
+        }
+
+        return $certificate->format === Certificate::FORMAT_PKCS12
+            ? $this->parsePkcs12((string) $certificate->contents, $certificate->password, '')
+            : $this->parsePem((string) $certificate->contents, $certificate->password, '');
+    }
+
+    /**
      * @return array{private_key: string, certificate: string, path: string}
      */
     private function loadPkcs12(string $path, #[SensitiveParameter] ?string $password): array
@@ -56,6 +72,14 @@ final class CertificateLoader
         }
         // @codeCoverageIgnoreEnd
 
+        return $this->parsePkcs12($contents, $password, $path);
+    }
+
+    /**
+     * @return array{private_key: string, certificate: string, path: string}
+     */
+    private function parsePkcs12(#[SensitiveParameter] string $contents, #[SensitiveParameter] ?string $password, string $path): array
+    {
         $certs = [];
         if (!openssl_pkcs12_read($contents, $certs, $password ?? '')) {
             throw new InvalidArgumentException('Unable to parse PKCS#12 certificate. Check path and password.');
@@ -80,6 +104,14 @@ final class CertificateLoader
         }
         // @codeCoverageIgnoreEnd
 
+        return $this->parsePem($contents, $password, $path);
+    }
+
+    /**
+     * @return array{private_key: string, certificate: string, path: string}
+     */
+    private function parsePem(#[SensitiveParameter] string $contents, #[SensitiveParameter] ?string $password, string $path): array
+    {
         $privateKey = openssl_pkey_get_private($contents, $password ?? '');
         if ($privateKey === false) {
             throw new InvalidArgumentException('Unable to load PEM private key. Check path and password.');
