@@ -328,6 +328,16 @@ final class BillingRecordXmlGeneratorTest extends TestCase
         self::assertSame([], $validator->validate($xml, XsdValidator::SCHEMA_REGISTRO_ALTA));
     }
 
+    public function testGenerateAltaXmlWritesTheCanonicalAmountsOfTheFingerprint(): void
+    {
+        $record = new BillingRecord(RecordType::Alta, '89890001K', 'FAC-001', '09-07-2026', 'F1', '0', '12.3', '2026-07-09T16:00:00+02:00');
+
+        $xml = (new BillingRecordXmlGenerator())->generate($record, ['name' => 'Demo'], [], []);
+
+        self::assertStringContainsString('<CuotaTotal>0.00</CuotaTotal>', $xml);
+        self::assertStringContainsString('<ImporteTotal>12.30</ImporteTotal>', $xml);
+    }
+
     public function testGenerateAltaXmlHandlesNonNumericAmounts(): void
     {
         $record = new BillingRecord(

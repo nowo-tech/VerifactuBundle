@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Generator;
 
+use Nowo\VerifactuBundle\Model\Amount;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
@@ -27,7 +28,7 @@ final class HashChainGenerator
     public function buildInputString(BillingRecord $record): string
     {
         if ($record->recordType === RecordType::Alta) {
-            return $this->buildAltaInputString($record);
+            return $this->buildAltaInputString($record, Amount::canonical(...));
         }
 
         return $this->buildAnulacionInputString($record);
@@ -45,10 +46,20 @@ final class HashChainGenerator
 
     /**
      * Verifies that a stored hash matches the record data.
+     *
+     * The AEAT treats an amount with one or two decimals as the same value in the fingerprint (hash specification
+     * v0.1.2, §3), so a hash over the canonical amounts ("12.30") and a hash over the amounts without insignificant
+     * zeros ("12.3", as VerifactuBundle 1.0 – 1.4.1 computed it) are both accepted.
      */
     public function verifyHash(BillingRecord $record, string $expectedHash): bool
     {
-        return hash_equals(strtoupper($expectedHash), $this->computeHash($record));
+        $expected = strtoupper(trim($expectedHash));
+        if (hash_equals($expected, $this->computeHash($record))) {
+            return true;
+        }
+
+        return $record->recordType === RecordType::Alta
+            && hash_equals($expected, strtoupper(hash('sha256', $this->buildAltaInputString($record, Amount::withoutTrailingZeros(...)))));
     }
 
     /**
@@ -65,15 +76,18 @@ final class HashChainGenerator
         return hash_equals(strtoupper($storedPreviousHash), strtoupper($recordPrevious));
     }
 
-    private function buildAltaInputString(BillingRecord $record): string
+    /**
+     * @param callable(string): string $amount
+     */
+    private function buildAltaInputString(BillingRecord $record, callable $amount): string
     {
         $fields = [
             'IDEmisorFactura'          => $this->normalize($record->issuerNif),
             'NumSerieFactura'          => $this->normalize($record->invoiceSeriesNumber),
             'FechaExpedicionFactura'   => $this->normalize($record->issueDate),
             'TipoFactura'              => $this->normalize($record->invoiceType),
-            'CuotaTotal'               => $this->normalizeAmount($record->totalTaxAmount),
-            'ImporteTotal'             => $this->normalizeAmount($record->totalAmount),
+            'CuotaTotal'               => $amount($record->totalTaxAmount),
+            'ImporteTotal'             => $amount($record->totalAmount),
             'Huella'                   => $this->normalize($record->previousHash ?? ''),
             'FechaHoraHusoGenRegistro' => $this->normalize($record->generatedAt),
         ];
@@ -111,27 +125,5 @@ final class HashChainGenerator
     private function normalize(string $value): string
     {
         return trim($value);
-    }
-
-    /**
-     * Normalizes a decimal amount without going through float.
-     *
-     * The AEAT hash specification states that trailing zeros in the decimals are not significant
-     * ("123.1" and "123.10" are equally valid), so only insignificant zeros are stripped from the
-     * exact string written into the XML. Anything that is not a plain decimal is hashed as-is.
-     */
-    private function normalizeAmount(string $value): string
-    {
-        $trimmed = trim($value);
-        if (preg_match('/^([+-]?)(\d*)(?:\.(\d*))?$/', $trimmed, $matches) !== 1 || ($matches[2] === '' && ($matches[3] ?? '') === '')) {
-            return $trimmed;
-        }
-
-        $sign     = $matches[1] === '-' ? '-' : '';
-        $integer  = ltrim($matches[2], '0');
-        $integer  = $integer === '' ? '0' : $integer;
-        $decimals = rtrim($matches[3] ?? '', '0');
-
-        return $sign . $integer . ($decimals !== '' ? '.' . $decimals : '');
     }
 }
