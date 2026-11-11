@@ -93,6 +93,6 @@ final class XadesBillingRecordSigner implements BillingRecordSignerInterface
      */
     private function issuerOf(string $xml): string
     {
-        return preg_match('/<(?:[\w.-]+:)?IDEmisorFactura(?:Anulada)?>([^<]*)</', $xml, $matches) === 1 ? trim($matches[1]) : '';
+        return preg_match('/<(?:[\w.-]+:)?IDEmisorFactura(?:Anulada)?>([^<]*)</', $xml, $matches) === 1 ? strtoupper(trim($matches[1])) : '';
     }
 }

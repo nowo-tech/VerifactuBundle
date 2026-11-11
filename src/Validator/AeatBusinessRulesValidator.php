@@ -37,6 +37,9 @@ final class AeatBusinessRulesValidator
     /** ClaveRegimen values of SuministroInformacion.xsd (IdOperacionesTrascendenciaTributariaType). */
     public const REGIME_KEYS = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '14', '15', '17', '18', '19', '20', '21'];
 
+    /** ClaveRegimen values allowed with Impuesto 02 (IPSI, Ceuta and Melilla), validations v1.2.2 §15.6. */
+    public const IPSI_REGIME_KEYS = ['01', '08', '11', '18', '19', '20'];
+
     private const RECTIFYING_TYPES   = ['R1', 'R2', 'R3', 'R4', 'R5'];
     private const WITHOUT_RECIPIENTS = ['F2', 'R5'];
     private const QUALIFICATIONS     = ['S1', 'S2', 'N1', 'N2'];
@@ -99,6 +102,16 @@ final class AeatBusinessRulesValidator
         }
 
         return $errors;
+    }
+
+    /**
+     * The error returned when a record's issuer NIF differs from the host's issuer provider.
+     *
+     * @return list<string>
+     */
+    public function issuerMismatchErrors(): array
+    {
+        return [$this->translator->trans('validation.issuer_nif.provider_mismatch', [], 'NowoVerifactuBundle')];
     }
 
     /**
@@ -185,8 +198,9 @@ final class AeatBusinessRulesValidator
         return in_array($recipient->foreignIdType, self::FOREIGN_ID_TYPES, true)
             && trim((string) $recipient->foreignId) !== ''
             && ($country === '' ? $recipient->foreignIdType === Recipient::ID_TYPE_VAT_NUMBER : preg_match('/^[A-Z]{2}$/D', $country) === 1)
-            // "Cuando … CodigoPais sea ES, se validará que el campo IDType sea 07" (§3.1.3 item 13)
-            && ($country !== 'ES' || $recipient->foreignIdType === Recipient::ID_TYPE_NOT_REGISTERED);
+            // §3.1.3 item 13: with CodigoPais ES only IDType 03 (passport) or 07 (not registered); IDType 07 only with ES.
+            && ($country !== 'ES' || in_array($recipient->foreignIdType, [Recipient::ID_TYPE_PASSPORT, Recipient::ID_TYPE_NOT_REGISTERED], true))
+            && ($recipient->foreignIdType !== Recipient::ID_TYPE_NOT_REGISTERED || $country === 'ES');
     }
 
     /**
@@ -208,8 +222,19 @@ final class AeatBusinessRulesValidator
             $keys[] = 'validation.tax_breakdown.qualification.invalid';
         }
 
-        if ($breakdown->regimeKey !== null && !in_array(trim($breakdown->regimeKey), self::REGIME_KEYS, true)) {
+        // §15.6: ClaveRegimen only for IVA (01 or no Impuesto), IPSI (02, keys 01 08 11 18 19 20) and IGIC (03).
+        $taxType   = trim($breakdown->taxType);
+        $regimeKey = $breakdown->regimeKey === null ? null : trim($breakdown->regimeKey);
+        if ($regimeKey !== null && (!in_array($regimeKey, self::REGIME_KEYS, true)
+            || !in_array($taxType, ['', '01', '02', '03'], true)
+            || ($taxType === '02' && !in_array($regimeKey, self::IPSI_REGIME_KEYS, true)))
+        ) {
             $keys[] = 'validation.tax_breakdown.regime_key.invalid';
+        }
+
+        // §15.5: under the general regime (ClaveRegimen 01) of IVA, E2 / E3 (exports) are not allowed.
+        if ($regimeKey === '01' && in_array($taxType, ['', '01'], true) && in_array($exemption, ['E2', 'E3'], true)) {
+            $keys[] = 'validation.tax_breakdown.exemption_regime.invalid';
         }
 
         if ($qualification === 'S2' && (!$this->isZero($breakdown->taxRate) || !$this->isZero($breakdown->taxAmount) || in_array($invoiceType, self::WITHOUT_RECIPIENTS, true))) {

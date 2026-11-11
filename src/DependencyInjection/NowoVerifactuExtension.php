@@ -83,6 +83,9 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         $container->setParameter('nowo_verifactu.doctrine.table_prefix', $config['doctrine']['table_prefix']);
         $container->setParameter('nowo_verifactu.doctrine.mapping', $config['doctrine']['mapping']);
         $container->setParameter('nowo_verifactu.validation.strict', $config['validation']['strict']);
+        // A host issuer provider is the authority on the issuer NIF: records for another NIF are refused (opt-out:
+        // providers.issuer_enforced false, for multi-NIF hosts whose provider returns a single issuer).
+        $container->setParameter('nowo_verifactu.providers.issuer_enforced', $config['providers']['issuer'] !== null && $config['providers']['issuer_enforced']);
         $container->setParameter('nowo_verifactu.xml.default_regime_key', $config['xml']['default_regime_key']);
 
         $this->assertPersistentChainForProduction($config);
@@ -145,7 +148,11 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
             && $config['hash_chain']['repository'] === null
             && $config['hash_chain']['storage'] === 'memory'
         ) {
-            throw new LogicException('nowo_verifactu.aeat.environment "production" submits records to the AEAT, but nowo_verifactu.hash_chain.storage is "memory" (request-scoped: every request would start a new hash chain). Set hash_chain.storage: doctrine or a persistent hash_chain.repository.');
+            $source = $config['aeat']['environment'] === 'production'
+                ? 'nowo_verifactu.aeat.environment "production"'
+                : 'nowo_verifactu.providers.aeat_environment (it may return production at runtime)';
+
+            throw new LogicException($source . ' submits records to the AEAT, but nowo_verifactu.hash_chain.storage is "memory" (request-scoped: every request would start a new hash chain). Set hash_chain.storage: doctrine or a persistent hash_chain.repository.');
         }
     }
 

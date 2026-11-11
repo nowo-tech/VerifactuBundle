@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Tests\Unit\Service;
 
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Model\RecordType;
@@ -41,6 +42,36 @@ final class ChainVerifierTest extends TestCase
         self::assertTrue($result->isValid());
         self::assertSame(2, $result->checkedRecords);
         self::assertSame('89890001K', $result->issuerNif);
+    }
+
+    public function testSandboxRecordsBeforeAResetAreSkippedAndTheProductionChainIsVerified(): void
+    {
+        $test       = $this->chained(RecordType::Alta, 'T-1', '21.00', '121.00', '', AeatEnvironment::Sandbox);
+        $production = $this->chained(RecordType::Alta, 'F-1', '21.00', '121.00', '', AeatEnvironment::Production);
+        $this->head->storeLastState(new HashChainState('89890001K', 'F-1', '09-07-2026', (string) $production->hash, AeatEnvironment::Production));
+        $records = [new StoredBillingRecord(1, $test), new StoredBillingRecord(2, $production)];
+
+        $result = $this->verifier($records)->verify('89890001K');
+        self::assertTrue($result->isValid(), print_r($result->problems, true));
+        self::assertSame(1, $result->checkedRecords);
+        self::assertSame(AeatEnvironment::Production, $result->environment);
+
+        // The sandbox chain alone is still consistent, but its head is no longer the current one.
+        $sandbox = $this->verifier($records)->verify('89890001K', null, 'sandbox');
+        self::assertSame(1, $sandbox->checkedRecords);
+        self::assertFalse($sandbox->isValid());
+    }
+
+    public function testARecordOfAnotherEnvironmentInsideTheChainIsReported(): void
+    {
+        $first = $this->chained(RecordType::Alta, 'F-1', '21.00', '121.00', '', AeatEnvironment::Production);
+        $stray = $this->chained(RecordType::Alta, 'T-1', '21.00', '121.00', (string) $first->hash, AeatEnvironment::Sandbox);
+        $this->head->storeLastState(new HashChainState('89890001K', 'F-1', '09-07-2026', (string) $first->hash, AeatEnvironment::Production));
+
+        $result = $this->verifier([new StoredBillingRecord(1, $first), new StoredBillingRecord(2, $stray)])->verify('89890001K');
+
+        self::assertFalse($result->isValid());
+        self::assertStringContainsString('"sandbox" environment is inside the "production" chain', $result->problems[0]['problem']);
     }
 
     public function testEmptyChainIsValid(): void
@@ -106,9 +137,9 @@ final class ChainVerifierTest extends TestCase
         self::assertSame('The chain head does not point at the last stored record.', $result->problems[0]['problem']);
     }
 
-    private function chained(RecordType $type, string $number, string $tax, string $total, string $previousHash): BillingRecord
+    private function chained(RecordType $type, string $number, string $tax, string $total, string $previousHash, ?AeatEnvironment $environment = null): BillingRecord
     {
-        $record = new BillingRecord($type, '89890001K', $number, '09-07-2026', 'F1', $tax, $total, '2026-07-09T16:00:00+02:00', previousHash: $previousHash);
+        $record = new BillingRecord($type, '89890001K', $number, '09-07-2026', 'F1', $tax, $total, '2026-07-09T16:00:00+02:00', previousHash: $previousHash, environment: $environment);
         $hash   = $this->generator->computeHash($record);
         $xml    = '<Registro><Encadenamiento><RegistroAnterior><Huella>' . $previousHash . '</Huella></RegistroAnterior></Encadenamiento>'
             . ($type === RecordType::Alta ? '<CuotaTotal>' . $tax . '</CuotaTotal><ImporteTotal>' . $total . '</ImporteTotal>' : '')

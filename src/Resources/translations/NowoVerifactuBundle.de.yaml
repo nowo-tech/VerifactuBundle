@@ -1,6 +1,7 @@
 validation:
   issuer_nif:
     invalid: 'Die Steuer-ID des Ausstellers (NIF/CIF/NIE) ist ungültig.'
+    provider_mismatch: 'Die Steuernummer des Ausstellers im Datensatz ist nicht der Aussteller dieser Anwendung (Aussteller-Provider).'
   invoice_series_number:
     empty: 'Serie und Rechnungsnummer dürfen nicht leer sein.'
   issue_date:
@@ -40,6 +41,8 @@ validation:
       invalid: 'Jede Steuerzeile hat entweder eine Einstufung (S1, S2, N1, N2) oder eine Befreiung (E1–E8), nicht beides.'
     regime_key:
       invalid: 'Der Regelungsschlüssel (ClaveRegimen) ist kein AEAT-Wert.'
+    exemption_regime:
+      invalid: 'Im allgemeinen Regime (ClaveRegimen 01) sind die Befreiungen E2 und E3 nicht erlaubt.'
     reverse_charge:
       invalid: 'Zeilen mit Steuerschuldumkehr (S2) brauchen Satz 0 und Steuer 0 und sind bei F2- und R5-Rechnungen nicht erlaubt.'
     not_taxed:

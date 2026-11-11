@@ -12,6 +12,7 @@ use Doctrine\Persistence\ManagerRegistry;
 use LogicException;
 use Nowo\VerifactuBundle\Doctrine\DbalRowWriter;
 use Nowo\VerifactuBundle\Entity\BillingRecordEntry;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
@@ -79,6 +80,7 @@ final class DoctrineBillingRecordStore implements BillingRecordStoreInterface
             'signedXml'           => $record->signedXml,
             'submissionStatus'    => StoredBillingRecord::STATUS_PENDING,
             'submissionReference' => null,
+            'environment'         => $record->environment?->value,
             'createdAt'           => new DateTimeImmutable(),
         ]);
 
@@ -203,6 +205,7 @@ final class DoctrineBillingRecordStore implements BillingRecordStoreInterface
                 xml: (string) $row['xml'],
                 signedXml: isset($row['signedXml']) ? (string) $row['signedXml'] : null,
                 issuerName: isset($row['issuerName']) ? (string) $row['issuerName'] : null,
+                environment: isset($row['environment']) ? AeatEnvironment::fromValue((string) $row['environment']) : null,
             ),
             (string) $row['submissionStatus'],
             isset($row['submissionReference']) ? (string) $row['submissionReference'] : null,

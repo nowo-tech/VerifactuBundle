@@ -10,6 +10,7 @@ use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
 use Nowo\VerifactuBundle\Integration\InvoiceDraft;
 use Nowo\VerifactuBundle\Integration\InvoiceToBillingRecordMapper;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
@@ -100,7 +101,7 @@ final class SubmitToAeatSandboxCommand extends Command
 
         $submit = (bool) $input->getOption('submit') && !(bool) $input->getOption('dry-run');
 
-        $environment    = $this->environmentProvider?->getEnvironment() ?? $this->environment;
+        $environment    = ($this->environmentProvider?->getEnvironment() ?? AeatEnvironment::fromValue($this->environment))->value;
         $hasCertificate = $this->certificateProvider instanceof CertificateProviderInterface
             ? $this->certificateProvider->getCertificate($draft->issuerNif) instanceof Certificate
             : $this->certificatePath !== null && $this->certificatePath !== '';

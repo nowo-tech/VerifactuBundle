@@ -1,6 +1,7 @@
 validation:
   issuer_nif:
     invalid: 'The issuer tax ID (NIF/CIF/NIE) is invalid.'
+    provider_mismatch: 'The issuer tax ID of the record is not the issuer of this application (issuer provider).'
   invoice_series_number:
     empty: 'The invoice series and number must not be empty.'
   issue_date:
@@ -40,6 +41,8 @@ validation:
       invalid: 'Each tax line takes either an operation qualification (S1, S2, N1, N2) or an exemption (E1–E8), not both.'
     regime_key:
       invalid: 'The tax regime key (ClaveRegimen) is not an AEAT value.'
+    exemption_regime:
+      invalid: 'Under the general regime (ClaveRegimen 01) the exemptions E2 and E3 are not allowed.'
     reverse_charge:
       invalid: 'Reverse-charge (S2) lines need a 0 rate and a 0 tax, and are not allowed on F2 or R5 invoices.'
     not_taxed:

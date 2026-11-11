@@ -25,6 +25,7 @@ final class ChainVerificationResult
         public readonly int $checkedRecords,
         public readonly array $problems = [],
         public readonly ?string $continuesFrom = null,
+        public readonly ?AeatEnvironment $environment = null,
     ) {
     }
 

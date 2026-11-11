@@ -11,6 +11,7 @@ use Nowo\VerifactuBundle\Client\AeatEndpointResolver;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapEnvelopeBuilder;
 use Nowo\VerifactuBundle\Client\SoapTransportInterface;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\IssuerIdentity;
 use Nowo\VerifactuBundle\Model\RecordType;
@@ -269,7 +270,7 @@ final class SoapAeatSubmissionClientTest extends TestCase
         $certificates->expects(self::exactly(2))->method('getCertificate')->with('89890001K')
             ->willReturn(Certificate::fromContents('P12-FROM-DATABASE', 'db-pass'));
         $environments = $this->createMock(AeatEnvironmentProviderInterface::class);
-        $environments->method('getEnvironment')->willReturnOnConsecutiveCalls('sandbox', 'production');
+        $environments->method('getEnvironment')->willReturnOnConsecutiveCalls(AeatEnvironment::Sandbox, AeatEnvironment::Production);
         $client = new SoapAeatSubmissionClient(new SoapEnvelopeBuilder(), new AeatEndpointResolver(), $transport, ['nif' => '89890001K'], 'verifactu', 'sandbox', null, null, certificateProvider: $certificates, environmentProvider: $environments);
 
         self::assertTrue($client->submit($this->createRecord())['success']);

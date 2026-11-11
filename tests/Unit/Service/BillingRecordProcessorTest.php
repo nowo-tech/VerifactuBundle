@@ -14,8 +14,10 @@ use Nowo\VerifactuBundle\Event\AfterBillingRecordGeneratedEvent;
 use Nowo\VerifactuBundle\Event\BeforeAeatSubmissionEvent;
 use Nowo\VerifactuBundle\Event\BeforeBillingRecordGenerationEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
+use Nowo\VerifactuBundle\Exception\ChainEnvironmentMismatchException;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\IssuerIdentity;
 use Nowo\VerifactuBundle\Model\Recipient;
@@ -24,6 +26,7 @@ use Nowo\VerifactuBundle\Model\RectifiedInvoice;
 use Nowo\VerifactuBundle\Model\SoftwareIdentity;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
 use Nowo\VerifactuBundle\Model\TaxBreakdown;
+use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
 use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
@@ -700,6 +703,42 @@ final class BillingRecordProcessorTest extends TestCase
         self::assertSame('89890001K', $result['record']->issuerNif);
     }
 
+    public function testAnEnforcedIssuerProviderRefusesARecordForAnotherNif(): void
+    {
+        $issuer = $this->createMock(IssuerProviderInterface::class);
+        $issuer->method('getIssuer')->willReturn(new IssuerIdentity('B12345674', 'Provider Issuer'));
+        $store = new InMemoryBillingRecordStore();
+
+        $result = $this->createProcessor(recordStore: $store, issuerProvider: $issuer, enforceProviderIssuer: true)->process($this->createValidRecord('FAC-OTHER-1'), true);
+
+        self::assertSame(['validation.issuer_nif.provider_mismatch'], $result['errors']);
+        self::assertNull($result['record']->hash);
+        self::assertNull($this->repository->getLastState('89890001K'));
+        self::assertSame([], $store->findByIssuer('89890001K'));
+    }
+
+    public function testRecordsCarryTheEnvironmentAndAChainNeverCrossesEnvironments(): void
+    {
+        $environments = $this->createMock(AeatEnvironmentProviderInterface::class);
+        $environments->method('getEnvironment')->willReturnOnConsecutiveCalls(AeatEnvironment::Sandbox, AeatEnvironment::Production, AeatEnvironment::Production);
+        $processor = $this->createProcessor(environmentProvider: $environments);
+
+        $first = $processor->process($this->createValidRecord('FAC-ENV-1'));
+        self::assertSame(AeatEnvironment::Sandbox, $first['record']->environment);
+        self::assertSame(AeatEnvironment::Sandbox, $this->repository->getLastState('89890001K')?->environment);
+
+        try {
+            $processor->process($this->createValidRecord('FAC-ENV-2'));
+            self::fail('A production record was chained onto a sandbox head.');
+        } catch (ChainEnvironmentMismatchException) {
+        }
+
+        $this->repository->reset('89890001K');
+        $third = $processor->process($this->createValidRecord('FAC-ENV-3'));
+        self::assertSame(AeatEnvironment::Production, $third['record']->environment);
+        self::assertNull($third['record']->previousHash);
+    }
+
     public function testRecordStoreReceivesTheChainedRecordAndTheSubmissionOutcome(): void
     {
         $store     = new InMemoryBillingRecordStore();
@@ -805,6 +844,8 @@ final class BillingRecordProcessorTest extends TestCase
         ?BillingRecordStoreInterface $recordStore = null,
         ?IssuerProviderInterface $issuerProvider = null,
         ?SoftwareIdentityProviderInterface $softwareIdentityProvider = null,
+        ?AeatEnvironmentProviderInterface $environmentProvider = null,
+        bool $enforceProviderIssuer = false,
     ): BillingRecordProcessor {
         $translator = $this->createMock(TranslatorInterface::class);
         $translator->method('trans')->willReturnCallback(TranslationHelper::createTranslatorCallback());
@@ -833,6 +874,10 @@ final class BillingRecordProcessorTest extends TestCase
             $recordStore,
             $issuerProvider,
             $softwareIdentityProvider,
+            null,
+            $environmentProvider,
+            'sandbox',
+            $enforceProviderIssuer,
         );
     }
 }

@@ -29,6 +29,7 @@ final class BillingRecord
      * @param list<RectifiedInvoice> $substitutedInvoices FacturasSustituidas (F3 only)
      * @param RectificationAmount|null $rectificationAmount ImporteRectificacion (required with, and only with, TipoRectificativa S)
      * @param string|null $operationDate FechaOperacion (dd-mm-yyyy) when it differs from the issue date
+     * @param AeatEnvironment|null $environment the AEAT environment the record was chained for (set by the processor)
      */
     public function __construct(
         public readonly RecordType $recordType,
@@ -53,6 +54,7 @@ final class BillingRecord
         public readonly array $substitutedInvoices = [],
         public readonly ?RectificationAmount $rectificationAmount = null,
         public readonly ?string $operationDate = null,
+        public readonly ?AeatEnvironment $environment = null,
     ) {
     }
 
@@ -105,6 +107,7 @@ final class BillingRecord
             $this->substitutedInvoices,
             $this->rectificationAmount,
             $this->operationDate,
+            $this->environment,
         );
     }
 }

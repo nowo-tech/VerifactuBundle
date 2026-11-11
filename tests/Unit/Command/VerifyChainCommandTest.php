@@ -30,6 +30,11 @@ final class VerifyChainCommandTest extends TestCase
         self::assertStringContainsString('--issuer', $tester->getDisplay());
     }
 
+    public function testUnknownEnvironmentIsRefused(): void
+    {
+        self::assertSame(Command::INVALID, $this->tester()->execute(['--issuer' => '89890001K', '--environment' => 'staging']));
+    }
+
     public function testEmptyChainIsValid(): void
     {
         $tester = $this->tester();

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Unit\Twig;
 
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
@@ -54,7 +55,7 @@ final class VerifactuTwigExtensionTest extends TestCase
     public function testEnvironmentProviderIsAskedOnEveryCall(): void
     {
         $provider = $this->createMock(AeatEnvironmentProviderInterface::class);
-        $provider->method('getEnvironment')->willReturnOnConsecutiveCalls('sandbox', 'production');
+        $provider->method('getEnvironment')->willReturnOnConsecutiveCalls(AeatEnvironment::Sandbox, AeatEnvironment::Production);
         $extension = new VerifactuTwigExtension(new QrCodeGenerator(new QrUrlBuilder()), new QrUrlBuilder(), 'sandbox', [], $provider);
         $record    = new BillingRecord(RecordType::Alta, '89890001K', 'FAC-001', '09-07-2026', 'F1', '21.00', '121.00', '2026-07-09T16:00:00+02:00');
 

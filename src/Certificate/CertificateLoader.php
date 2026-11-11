@@ -49,15 +49,15 @@ final class CertificateLoader
      *
      * @return array{private_key: string, certificate: string, path: string}
      */
-    public function loadCertificate(Certificate $certificate): array
+    public function loadCertificate(#[SensitiveParameter] Certificate $certificate): array
     {
         if ($certificate->path !== null) {
-            return $this->load($certificate->path, $certificate->password);
+            return $this->load($certificate->path, $certificate->password());
         }
 
         return $certificate->format === Certificate::FORMAT_PKCS12
-            ? $this->parsePkcs12((string) $certificate->contents, $certificate->password, '')
-            : $this->parsePem((string) $certificate->contents, $certificate->password, '');
+            ? $this->parsePkcs12((string) $certificate->contents(), $certificate->password(), '')
+            : $this->parsePem((string) $certificate->contents(), $certificate->password(), '');
     }
 
     /**

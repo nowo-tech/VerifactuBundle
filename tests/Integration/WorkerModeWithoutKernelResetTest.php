@@ -75,14 +75,17 @@ final class WorkerModeWithoutKernelResetTest extends KernelTestCase
 
     public function testManyRequestsForTwoIssuersKeepMemoryFlatAndTheChainsApart(): void
     {
+        $provider      = $this->provider();
         $processor     = $this->processor();
         $entityManager = $this->entityManager();
         $connection    = $entityManager->getConnection();
         $baseline      = 0;
 
         for ($i = 1; $i <= self::REQUESTS; ++$i) {
-            $issuer = $i % 2 === 0 ? 'B12345674' : '89890001K';
-            $result = $processor->process($this->record($issuer, sprintf('FAC-%05d', $i)));
+            // Each request belongs to one tenant: the host issuer provider returns that tenant's issuer.
+            $issuer           = $i % 2 === 0 ? 'B12345674' : '89890001K';
+            $provider->issuer = new IssuerIdentity($issuer, 'Tenant ' . $issuer);
+            $result           = $processor->process($this->record($issuer, sprintf('FAC-%05d', $i)));
 
             self::assertSame([], $result['errors']);
             self::assertSame(0, $entityManager->getUnitOfWork()->size(), 'No managed entity may survive a request');

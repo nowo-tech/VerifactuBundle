@@ -11,14 +11,17 @@ use Nowo\VerifactuBundle\Event\AfterBillingRecordGeneratedEvent;
 use Nowo\VerifactuBundle\Event\BeforeAeatSubmissionEvent;
 use Nowo\VerifactuBundle\Event\BeforeBillingRecordGenerationEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
+use Nowo\VerifactuBundle\Exception\ChainEnvironmentMismatchException;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\Amount;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Model\IssuerIdentity;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Model\SoftwareIdentity;
+use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Provider\ConfigIssuerProvider;
 use Nowo\VerifactuBundle\Provider\ConfigSoftwareIdentityProvider;
 use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
@@ -77,6 +80,9 @@ final class BillingRecordProcessor
         private readonly ?IssuerProviderInterface $issuerProvider = null,
         private readonly ?SoftwareIdentityProviderInterface $softwareIdentityProvider = null,
         private readonly ?ClockInterface $clock = null,
+        private readonly ?AeatEnvironmentProviderInterface $environmentProvider = null,
+        private readonly string $defaultEnvironment = 'sandbox',
+        private readonly bool $enforceProviderIssuer = false,
     ) {
     }
 
@@ -87,7 +93,8 @@ final class BillingRecordProcessor
      *                                the new state is NOT stored (nor appended to the record store), so the persistent
      *                                hash chain is left untouched
      *
-     * A record without an issuer NIF (or name) takes the NIF (or name) of the issuer provider, resolved once per call. A
+     * A record without an issuer NIF (or name) takes the NIF (or name) of the issuer provider, resolved once per call;
+     * with `providers.issuer` configured, a record for another NIF is refused (validation error). A
      * record with an empty `generatedAt` is stamped with GenerationTimestamp::now() inside the chain lock (recommended:
      * the generation times then follow the chain order). The amounts are written in their canonical
      * form (Amount::canonical()), the same string in the XML, the fingerprint and the returned record.
@@ -110,10 +117,18 @@ final class BillingRecordProcessor
         if ($record->issuerName === null && $issuer->name !== '') {
             $record = $this->copy($record, issuerName: $issuer->name);
         }
+        // With a host issuer provider, the provider is the authority: a record for another NIF (e.g. set by a user or
+        // another tenant) is refused, so it is never signed nor submitted with that issuer's certificate.
+        if ($this->enforceProviderIssuer && trim($issuer->nif) !== '' && strtoupper(trim($record->issuerNif)) !== strtoupper(trim($issuer->nif))) {
+            return ['record' => $record, 'errors' => $this->validator->issuerMismatchErrors()];
+        }
 
         $beforeEvent = new BeforeBillingRecordGenerationEvent($record);
         $this->eventDispatcher->dispatch($beforeEvent, VerifactuEvents::BEFORE_BILLING_RECORD_GENERATION);
         $record = $beforeEvent->getRecord();
+
+        // The AEAT environment of this call: the record is chained, stored and submitted for it.
+        $environment = $this->environmentProvider?->getEnvironment() ?? AeatEnvironment::fromValue($this->defaultEnvironment);
 
         // An empty generation time is stamped inside the chain lock, so FechaHoraHusoGenRegistro follows chain order.
         $stampInLock = trim($record->generatedAt) === '';
@@ -128,6 +143,7 @@ final class BillingRecordProcessor
             $persistChainState,
             $software,
             $locked === [] ? $this->hashChainRepository->getLastState($record->issuerNif) : $locked[0],
+            $environment,
         );
         $chained = $persistChainState && $this->hashChainRepository instanceof LockableHashChainRepositoryInterface
             ? $this->hashChainRepository->withChainLock($record->issuerNif, $operation)
@@ -188,13 +204,21 @@ final class BillingRecordProcessor
      *
      * @return array{record: BillingRecord, errors: list<string>}
      */
-    private function chainRecord(BillingRecord $record, bool $persistChainState, SoftwareIdentity $software, ?HashChainState $previousState): array
+    private function chainRecord(BillingRecord $record, bool $persistChainState, SoftwareIdentity $software, ?HashChainState $previousState, AeatEnvironment $environment): array
     {
+        // Never chain a record of one AEAT environment onto a head of another (a production record onto a test one):
+        // switching needs an explicit reset of the issuer's chain (nowo:verifactu:reset-chain).
+        $headEnvironment = $previousState->environment ?? AeatEnvironment::fromValue($this->defaultEnvironment);
+        if ($previousState instanceof HashChainState && $headEnvironment !== $environment) {
+            throw new ChainEnvironmentMismatchException($record->issuerNif, $headEnvironment, $environment);
+        }
+
         $record = $this->copy(
             $record,
             totalTaxAmount: Amount::canonical($record->totalTaxAmount),
             totalAmount: Amount::canonical($record->totalAmount),
             chainTo: $previousState,
+            environment: $environment,
         );
 
         $hash   = $this->hashChainGenerator->computeHash($record);
@@ -230,6 +254,7 @@ final class BillingRecordProcessor
                 $record->invoiceSeriesNumber,
                 $record->issueDate,
                 $hash,
+                $environment,
             ));
             $this->recordStore?->append($record);
         }
@@ -291,6 +316,7 @@ final class BillingRecordProcessor
         HashChainState|false|null $chainTo = false,
         ?string $generatedAt = null,
         ?string $issuerName = null,
+        ?AeatEnvironment $environment = null,
     ): BillingRecord {
         return new BillingRecord(
             $record->recordType,
@@ -312,6 +338,7 @@ final class BillingRecordProcessor
             substitutedInvoices: $record->substitutedInvoices,
             rectificationAmount: $record->rectificationAmount,
             operationDate: $record->operationDate,
+            environment: $environment ?? $record->environment,
         );
     }
 

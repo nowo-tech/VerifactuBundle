@@ -20,6 +20,7 @@ nowo_verifactu:
         number: '001'
     providers:
         issuer: null             # service id of your IssuerProviderInterface (null = the issuer block above)
+        issuer_enforced: true    # with providers.issuer: refuse records for another issuer NIF (false = opt out)
         software_identity: null  # service id of your SoftwareIdentityProviderInterface (null = software + installation)
         aeat_environment: null   # service id of your AeatEnvironmentProviderInterface (null = aeat.environment)
         certificate: null        # service id of your CertificateProviderInterface, per issuer NIF (null = aeat.certificate_*)
@@ -107,6 +108,13 @@ in your database (and edit them without a cache clear), implement `Provider\Issu
 `Provider\SoftwareIdentityProviderInterface` and set `providers.issuer` / `providers.software_identity` to the service
 ids. They are called on every `process()` and every SOAP submission, never cached by the bundle. `IdSistemaInformatico`
 is up to two characters and `NumeroInstalacion` free text (for example `SB` and `1`).
+
+With `providers.issuer` set, the provider is the authority on the issuer NIF: a record whose `issuerNif` differs from
+the provider's NIF is refused with a validation error (`validation.issuer_nif.provider_mismatch`) and is never chained,
+signed nor submitted, so the certificate of one issuer is never used for a NIF a caller chose. In a multi-tenant host,
+make the provider return the issuer of the current tenant. `providers.issuer_enforced: false` turns the check off, only
+for hosts that send records for several NIFs while their provider returns one issuer; the certificate provider is then
+the only authorization point.
 
 ### Runtime AEAT environment and certificate
 

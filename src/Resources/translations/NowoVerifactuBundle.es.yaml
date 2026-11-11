@@ -1,6 +1,7 @@
 validation:
   issuer_nif:
     invalid: 'El NIF/CIF/NIE del emisor no es válido.'
+    provider_mismatch: 'El NIF del emisor del registro no es el emisor de esta aplicación (proveedor del emisor).'
   invoice_series_number:
     empty: 'La serie y número de factura no pueden estar vacíos.'
   issue_date:
@@ -40,6 +41,8 @@ validation:
       invalid: 'Cada línea de desglose lleva una calificación de la operación (S1, S2, N1, N2) o una exención (E1–E8), no ambas.'
     regime_key:
       invalid: 'La clave de régimen (ClaveRegimen) no es un valor de la AEAT.'
+    exemption_regime:
+      invalid: 'Con el régimen general (ClaveRegimen 01) no se admiten las exenciones E2 y E3.'
     reverse_charge:
       invalid: 'Las líneas con inversión del sujeto pasivo (S2) necesitan tipo 0 y cuota 0, y no se admiten en facturas F2 ni R5.'
     not_taxed:

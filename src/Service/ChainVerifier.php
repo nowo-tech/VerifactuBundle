@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Service;
 
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\Amount;
 use Nowo\VerifactuBundle\Model\ChainVerificationResult;
 use Nowo\VerifactuBundle\Model\HashChainState;
@@ -38,29 +39,49 @@ final class ChainVerifier
     public const SERVICE_NAME = 'nowo_verifactu.service.chain_verifier';
 
     /**
-     * Receives the record store, the chain head repository and the hash generator.
+     * Receives the record store, the chain head repository, the hash generator and the configured AEAT environment
+     * (the environment of rows and heads written before 1.6).
      */
     public function __construct(
         private readonly BillingRecordStoreInterface $recordStore,
         private readonly HashChainRepositoryInterface $hashChainRepository,
         private readonly HashChainGenerator $hashChainGenerator,
+        private readonly string $defaultEnvironment = 'sandbox',
     ) {
     }
 
     /**
-     * Verifies the stored chain of the issuer.
+     * Verifies the stored chain of the issuer in one AEAT environment (default: the environment of the current chain
+     * head). Records of the environment used before an explicit reset are skipped; one found after the chain started
+     * is reported.
      */
-    public function verify(string $issuerNif, ?string $anchor = null): ChainVerificationResult
+    public function verify(string $issuerNif, ?string $anchor = null, AeatEnvironment|string|null $environment = null): ChainVerificationResult
     {
+        $default       = AeatEnvironment::fromValue($this->defaultEnvironment);
+        $head          = $this->hashChainRepository->getLastState($issuerNif);
+        $environment   = $environment !== null ? AeatEnvironment::fromValue($environment) : ($head->environment ?? $default);
         $problems      = [];
         $previousHash  = strtoupper(trim($anchor ?? ''));
         $expected      = 1;
         $checked       = 0;
+        $skipped       = 0;
         $continuesFrom = null;
 
         foreach ($this->recordStore->findByIssuer($issuerNif) as $stored) {
-            ++$checked;
             $record = $stored->record;
+            if (($record->environment ?? $default) !== $environment) {
+                if ($checked === 0) {
+                    ++$skipped;
+                } else {
+                    $problems[] = ['position' => $stored->position, 'invoiceSeriesNumber' => $record->invoiceSeriesNumber, 'problem' => sprintf('A record of the "%s" environment is inside the "%s" chain.', ($record->environment ?? $default)->value, $environment->value)];
+                }
+
+                continue;
+            }
+            if ($checked === 0) {
+                $expected = $skipped + 1;
+            }
+            ++$checked;
             $hash   = strtoupper((string) $record->hash);
             $report = static function (string $problem) use (&$problems, $stored, $record): void {
                 $problems[] = ['position' => $stored->position, 'invoiceSeriesNumber' => $record->invoiceSeriesNumber, 'problem' => $problem];
@@ -91,12 +112,12 @@ final class ChainVerifier
             $expected     = $stored->position + 1;
         }
 
-        $head = $this->hashChainRepository->getLastState($issuerNif);
-        if ($checked > 0 && (!$head instanceof HashChainState || strtoupper($head->hash) !== $previousHash)) {
+        $headInEnvironment = $head instanceof HashChainState && ($head->environment ?? $default) === $environment;
+        if ($checked > 0 && (!$headInEnvironment || strtoupper($head->hash) !== $previousHash)) {
             $problems[] = ['position' => $expected - 1, 'invoiceSeriesNumber' => '', 'problem' => 'The chain head does not point at the last stored record.'];
         }
 
-        return new ChainVerificationResult(strtoupper(trim($issuerNif)), $checked, $problems, $continuesFrom);
+        return new ChainVerificationResult(strtoupper(trim($issuerNif)), $checked, $problems, $continuesFrom, $environment);
     }
 
     /**

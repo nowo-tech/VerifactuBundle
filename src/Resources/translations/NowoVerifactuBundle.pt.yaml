@@ -1,6 +1,7 @@
 validation:
   issuer_nif:
     invalid: 'O NIF/CIF/NIE do emissor é inválido.'
+    provider_mismatch: 'O número fiscal do emitente do registo não é o emitente desta aplicação (fornecedor do emitente).'
   invoice_series_number:
     empty: 'A série e o número da fatura não podem estar vazios.'
   issue_date:
@@ -40,6 +41,8 @@ validation:
       invalid: 'Cada linha de imposto leva uma qualificação (S1, S2, N1, N2) ou uma isenção (E1–E8), não ambas.'
     regime_key:
       invalid: 'A chave de regime (ClaveRegimen) não é um valor da AEAT.'
+    exemption_regime:
+      invalid: 'No regime geral (ClaveRegimen 01) as isenções E2 e E3 não são admitidas.'
     reverse_charge:
       invalid: 'As linhas com autoliquidação (S2) precisam de taxa 0 e imposto 0 e não são admitidas em faturas F2 nem R5.'
     not_taxed:

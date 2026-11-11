@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Provider;
 
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
+
 /**
- * Supplies the AEAT environment ("sandbox" or "production") at runtime.
+ * Supplies the AEAT environment at runtime, as an AeatEnvironment (only sandbox or production exist, so an unknown
+ * stored value can never be routed anywhere: map it explicitly, e.g. `AeatEnvironment::fromValue($stored)` or
+ * `$stored === 'test' ? AeatEnvironment::Sandbox : …`).
  *
  * The SOAP client, the QR Twig functions and the sandbox command ask it on every call, so a host can switch the
  * environment from its database without a cache clear. The default (ConfigAeatEnvironmentProvider) returns
@@ -17,11 +21,8 @@ namespace Nowo\VerifactuBundle\Provider;
  */
 interface AeatEnvironmentProviderInterface
 {
-    public const SANDBOX    = 'sandbox';
-    public const PRODUCTION = 'production';
-
     /**
-     * Returns "sandbox" or "production"; any other value is treated as "sandbox".
+     * Returns the environment of the current call.
      */
-    public function getEnvironment(): string;
+    public function getEnvironment(): AeatEnvironment;
 }

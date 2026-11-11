@@ -1,6 +1,7 @@
 validation:
   issuer_nif:
     invalid: 'Het btw-nummer van de afzender (NIF/CIF/NIE) is ongeldig.'
+    provider_mismatch: 'Het fiscaal nummer van de uitgever in het record is niet de uitgever van deze applicatie (uitgeversprovider).'
   invoice_series_number:
     empty: 'Serie en factuurnummer mogen niet leeg zijn.'
   issue_date:
@@ -40,6 +41,8 @@ validation:
       invalid: 'Elke belastingregel heeft een kwalificatie (S1, S2, N1, N2) of een vrijstelling (E1–E8), niet beide.'
     regime_key:
       invalid: 'De regimesleutel (ClaveRegimen) is geen AEAT-waarde.'
+    exemption_regime:
+      invalid: 'Onder het algemene regime (ClaveRegimen 01) zijn de vrijstellingen E2 en E3 niet toegestaan.'
     reverse_charge:
       invalid: 'Regels met verlegging (S2) hebben tarief 0 en belasting 0 nodig en zijn niet toegestaan op F2- en R5-facturen.'
     not_taxed:

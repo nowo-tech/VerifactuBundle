@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Qr;
 
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\Amount;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
@@ -48,9 +49,9 @@ final class QrUrlBuilder
      *
      * @param string|null $mode verifactu|no_verifactu; null uses the configured bundle mode
      */
-    public function buildUrl(BillingRecord $record, string $environment = 'sandbox', ?string $mode = null): string
+    public function buildUrl(BillingRecord $record, AeatEnvironment|string $environment = AeatEnvironment::Sandbox, ?string $mode = null): string
     {
-        $host    = $environment === 'production' ? self::PRODUCTION_HOST : self::SANDBOX_HOST;
+        $host    = AeatEnvironment::fromValue($environment) === AeatEnvironment::Production ? self::PRODUCTION_HOST : self::SANDBOX_HOST;
         $path    = ($mode ?? $this->mode) === 'no_verifactu' ? self::PATH_NO_VERIFACTU : self::PATH_VERIFACTU;
         $baseUrl = $host . $path;
 

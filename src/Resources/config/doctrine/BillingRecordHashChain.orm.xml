@@ -17,6 +17,7 @@
         <field name="invoiceSeriesNumber" column="invoice_series_number" type="string" length="60"/>
         <field name="issueDate" column="issue_date" type="string" length="10"/>
         <field name="hash" column="hash" type="string" length="64"/>
+        <field name="environment" column="environment" type="string" length="10" nullable="true"/>
         <field name="updatedAt" column="updated_at" type="datetime_immutable"/>
     </entity>
 </doctrine-mapping>

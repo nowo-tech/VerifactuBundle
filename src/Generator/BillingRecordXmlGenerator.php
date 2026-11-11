@@ -297,7 +297,8 @@ final class BillingRecordXmlGenerator
      */
     private function renderDetalleDesglose(TaxBreakdown $breakdown): string
     {
-        $regimeKey     = $breakdown->regimeKey ?? $this->defaultRegimeKey;
+        // The default ClaveRegimen only applies to IVA (01 or no Impuesto), IPSI (02) and IGIC (03) lines (§15.6).
+        $regimeKey     = $breakdown->regimeKey ?? (in_array(trim($breakdown->taxType), ['', '01', '02', '03'], true) ? $this->defaultRegimeKey : null);
         $exemption     = $breakdown->exemption !== null && trim($breakdown->exemption) !== '' ? trim($breakdown->exemption) : null;
         $qualification = $exemption === null ? strtoupper(trim($breakdown->qualification ?? '')) : '';
         $qualification = $exemption === null && $qualification === '' ? 'S1' : $qualification;

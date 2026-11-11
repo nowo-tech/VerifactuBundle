@@ -7,6 +7,7 @@ namespace Nowo\VerifactuBundle\Qr;
 use Endroid\QrCode\ErrorCorrectionLevel;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\PngWriter;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
@@ -34,7 +35,7 @@ final class QrCodeGenerator
      *
      * @param array<string, mixed> $qrConfig
      */
-    public function generatePng(BillingRecord $record, string $environment = 'sandbox', array $qrConfig = []): string
+    public function generatePng(BillingRecord $record, AeatEnvironment|string $environment = AeatEnvironment::Sandbox, array $qrConfig = []): string
     {
         $url    = $this->urlBuilder->buildUrl($record, $environment);
         $sizeMm = (int) ($qrConfig['size_mm'] ?? 35);
@@ -55,7 +56,7 @@ final class QrCodeGenerator
      *
      * @param array<string, mixed> $qrConfig
      */
-    public function generateDataUri(BillingRecord $record, string $environment = 'sandbox', array $qrConfig = []): string
+    public function generateDataUri(BillingRecord $record, AeatEnvironment|string $environment = AeatEnvironment::Sandbox, array $qrConfig = []): string
     {
         $png = $this->generatePng($record, $environment, $qrConfig);
 

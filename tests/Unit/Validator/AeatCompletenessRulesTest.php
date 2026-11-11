@@ -52,8 +52,15 @@ final class AeatCompletenessRulesTest extends TestCase
         yield 'foreign ID without country (not a VAT number)' => [['recipients' => [Recipient::withForeignId('X', '03', 'P123')]], ['validation.recipient.invalid']];
         yield 'foreign VAT number without country is fine' => [['recipients' => [Recipient::withForeignId('X', '02', 'FR12345678901')]], []];
         yield 'bad country code' => [['recipients' => [Recipient::withForeignId('X', '03', 'P1', 'FRA')]], ['validation.recipient.invalid']];
-        yield 'ES only with type 07' => [['recipients' => [Recipient::withForeignId('X', '03', 'P1', 'es')]], ['validation.recipient.invalid']];
+        yield 'ES only with type 03 or 07' => [['recipients' => [Recipient::withForeignId('X', '04', 'P1', 'es')]], ['validation.recipient.invalid']];
+        yield 'ES with type 03 is fine' => [['recipients' => [Recipient::withForeignId('X', '03', 'P1', 'ES')]], []];
         yield 'ES with type 07 is fine' => [['recipients' => [Recipient::withForeignId('X', '07', 'P1', 'ES')]], []];
+        yield 'type 07 only with ES' => [['recipients' => [Recipient::withForeignId('X', '07', 'P1', 'FR')]], ['validation.recipient.invalid']];
+        yield 'no regime key on Impuesto 05' => [['taxBreakdown' => [new TaxBreakdown('05', '21', '1', '0.21', '01')]], ['validation.tax_breakdown.regime_key.invalid']];
+        yield 'IPSI only with its keys' => [['taxBreakdown' => [new TaxBreakdown('02', '10', '1', '0.10', '02')]], ['validation.tax_breakdown.regime_key.invalid']];
+        yield 'IPSI with key 08 is fine' => [['taxBreakdown' => [new TaxBreakdown('02', '10', '1', '0.10', '08')]], []];
+        yield 'E2 not under the general regime' => [['taxBreakdown' => [new TaxBreakdown('01', '', '1', '', '01', null, 'E2')]], ['validation.tax_breakdown.exemption_regime.invalid']];
+        yield 'E2 under the export regime is fine' => [['taxBreakdown' => [new TaxBreakdown('', '', '1', '', '02', null, 'E2')]], []];
         yield 'qualification and exemption together' => [['taxBreakdown' => [new TaxBreakdown('01', '', '1', '', null, 'N1', 'E1')]], ['validation.tax_breakdown.qualification.invalid']];
         yield 'unknown qualification' => [['taxBreakdown' => [new TaxBreakdown('01', '21', '1', '0.21', null, 'S9')]], ['validation.tax_breakdown.qualification.invalid']];
         yield 'unknown exemption' => [['taxBreakdown' => [new TaxBreakdown('01', '', '1', '', null, null, 'E9')]], ['validation.tax_breakdown.qualification.invalid']];

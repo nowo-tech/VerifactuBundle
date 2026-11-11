@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Provider;
 
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
 /**
@@ -21,15 +22,15 @@ final class ConfigAeatEnvironmentProvider implements AeatEnvironmentProviderInte
      * Receives the configured environment.
      */
     public function __construct(
-        private readonly string $environment = self::SANDBOX,
+        private readonly string $environment = 'sandbox',
     ) {
     }
 
     /**
-     * Returns the configured environment.
+     * Returns the configured environment (the configuration only accepts sandbox / production).
      */
-    public function getEnvironment(): string
+    public function getEnvironment(): AeatEnvironment
     {
-        return $this->environment === self::PRODUCTION ? self::PRODUCTION : self::SANDBOX;
+        return AeatEnvironment::fromValue($this->environment);
     }
 }

@@ -24,6 +24,7 @@
         <field name="signedXml" column="signed_xml" type="text" nullable="true"/>
         <field name="submissionStatus" column="submission_status" type="string" length="16"/>
         <field name="submissionReference" column="submission_reference" type="string" length="120" nullable="true"/>
+        <field name="environment" column="environment" type="string" length="10" nullable="true"/>
         <field name="createdAt" column="created_at" type="datetime_immutable"/>
     </entity>
 </doctrine-mapping>

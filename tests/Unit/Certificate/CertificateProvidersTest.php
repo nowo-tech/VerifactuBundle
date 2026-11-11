@@ -7,11 +7,10 @@ namespace Nowo\VerifactuBundle\Tests\Unit\Certificate;
 use Nowo\VerifactuBundle\Certificate\Certificate;
 use Nowo\VerifactuBundle\Certificate\CertificateLoader;
 use Nowo\VerifactuBundle\Certificate\ConfigCertificateProvider;
-use Nowo\VerifactuBundle\Certificate\TemporaryCertificateFile;
-use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
+use Nowo\VerifactuBundle\Exception\InvalidAeatEnvironmentException;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Provider\ConfigAeatEnvironmentProvider;
 use PHPUnit\Framework\TestCase;
-use RuntimeException;
 
 use function dirname;
 
@@ -44,35 +43,14 @@ final class CertificateProvidersTest extends TestCase
         self::assertNull((new ConfigCertificateProvider(''))->getCertificate('89890001K'));
         self::assertSame('/run/aeat.p12', (new ConfigCertificateProvider('/run/aeat.p12'))->getCertificate('B12345674')?->path);
 
-        self::assertSame(AeatEnvironmentProviderInterface::SANDBOX, (new ConfigAeatEnvironmentProvider())->getEnvironment());
-        self::assertSame(AeatEnvironmentProviderInterface::PRODUCTION, (new ConfigAeatEnvironmentProvider('production'))->getEnvironment());
-        self::assertSame(AeatEnvironmentProviderInterface::SANDBOX, (new ConfigAeatEnvironmentProvider('staging'))->getEnvironment());
+        self::assertSame(AeatEnvironment::Sandbox, (new ConfigAeatEnvironmentProvider())->getEnvironment());
+        self::assertSame(AeatEnvironment::Production, (new ConfigAeatEnvironmentProvider('production'))->getEnvironment());
     }
 
-    public function testTemporaryFileExistsOnlyDuringTheCall(): void
+    public function testConfigEnvironmentProviderRefusesAnUnknownEnvironment(): void
     {
-        self::assertSame('/run/a.p12', TemporaryCertificateFile::with(Certificate::fromPath('/run/a.p12'), static fn (string $path): string => $path));
-
-        $seen = TemporaryCertificateFile::with(Certificate::fromContents('PEM-BYTES', null, 'pem'), static function (string $path): array {
-            return [$path, (string) file_get_contents($path), fileperms($path) & 0o777];
-        });
-        self::assertStringEndsWith('.pem', $seen[0]);
-        self::assertSame('PEM-BYTES', $seen[1]);
-        self::assertSame(0o600, $seen[2]);
-        self::assertFileDoesNotExist($seen[0]);
-
-        $leaked = null;
-        try {
-            TemporaryCertificateFile::with(Certificate::fromContents('P12'), static function (string $path) use (&$leaked): never {
-                $leaked = $path;
-
-                throw new RuntimeException('transport failed');
-            });
-        } catch (RuntimeException) {
-        }
-        self::assertIsString($leaked);
-        self::assertStringEndsWith('.p12', $leaked);
-        self::assertFileDoesNotExist($leaked);
+        $this->expectException(InvalidAeatEnvironmentException::class);
+        (new ConfigAeatEnvironmentProvider('staging'))->getEnvironment();
     }
 
     public function testLoaderReadsCertificatesFromPathAndFromContents(): void

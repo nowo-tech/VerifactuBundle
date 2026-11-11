@@ -15,6 +15,7 @@ use Nowo\VerifactuBundle\Command\SubmitToAeatSandboxCommand;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
 use Nowo\VerifactuBundle\Integration\InvoiceToBillingRecordMapper;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
@@ -194,7 +195,7 @@ final class SubmitToAeatSandboxCommandTest extends TestCase
     public function testProvidersDecideTheEnvironmentAndTheCertificate(): void
     {
         $environments = $this->createMock(AeatEnvironmentProviderInterface::class);
-        $environments->method('getEnvironment')->willReturn('production');
+        $environments->method('getEnvironment')->willReturn(AeatEnvironment::Production);
         $certificates = $this->createMock(CertificateProviderInterface::class);
         $certificates->method('getCertificate')->willReturnOnConsecutiveCalls(null, Certificate::fromPath('/run/aeat.p12'));
         $tester = $this->createTester($this->createProcessor(new NullAeatSubmissionClient()), null, 'sandbox', $environments, $certificates);

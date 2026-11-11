@@ -19,6 +19,10 @@ interface CertificateProviderInterface
 {
     /**
      * Returns the certificate to use for the issuer, or null when there is none.
+     *
+     * $issuerNif comes from the record (upper-cased, trimmed). The provider is the authorization point: return a
+     * certificate only when the current user / tenant may issue invoices for that NIF. With `providers.issuer`, the
+     * processor already refuses records whose NIF differs from the issuer provider.
      */
     public function getCertificate(string $issuerNif): ?Certificate;
 }

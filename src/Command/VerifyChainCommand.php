@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Command;
 
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Service\ChainVerifier;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -41,6 +42,7 @@ final class VerifyChainCommand extends Command
     {
         $this
             ->addOption('issuer', null, InputOption::VALUE_REQUIRED, 'Issuer NIF whose chain is verified')
+            ->addOption('environment', null, InputOption::VALUE_REQUIRED, 'AEAT environment to verify (sandbox or production; default: the environment of the current chain head)')
             ->addOption('anchor', null, InputOption::VALUE_REQUIRED, 'Hash of the chain head before the record store was enabled (the first stored record must continue from it)');
     }
 
@@ -54,8 +56,14 @@ final class VerifyChainCommand extends Command
             return Command::INVALID;
         }
 
-        $anchor = $input->getOption('anchor');
-        $result = $this->chainVerifier->verify($issuer, is_string($anchor) && trim($anchor) !== '' ? $anchor : null);
+        $anchor      = $input->getOption('anchor');
+        $environment = $input->getOption('environment');
+        if (is_string($environment) && $environment !== '' && AeatEnvironment::tryFrom($environment) === null) {
+            $io->error('The --environment option must be "sandbox" or "production".');
+
+            return Command::INVALID;
+        }
+        $result = $this->chainVerifier->verify($issuer, is_string($anchor) && trim($anchor) !== '' ? $anchor : null, is_string($environment) && $environment !== '' ? $environment : null);
         if ($result->continuesFrom !== null) {
             $io->note(sprintf('The stored log starts after an older record (previous hash %s); records before it are not in the store.', $result->continuesFrom));
         }

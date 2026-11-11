@@ -397,6 +397,21 @@ final class NowoVerifactuExtensionTest extends TestCase
         self::assertSame('app.software', (string) $container->getAlias(SoftwareIdentityProviderInterface::class));
     }
 
+    public function testIssuerEnforcementFollowsTheIssuerProviderAndCanBeTurnedOff(): void
+    {
+        $static = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[]], $static);
+        self::assertFalse($static->getParameter('nowo_verifactu.providers.issuer_enforced'));
+
+        $provider = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['providers' => ['issuer' => 'app.issuer']]], $provider);
+        self::assertTrue($provider->getParameter('nowo_verifactu.providers.issuer_enforced'));
+
+        $optOut = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['providers' => ['issuer' => 'app.issuer', 'issuer_enforced' => false]]], $optOut);
+        self::assertFalse($optOut->getParameter('nowo_verifactu.providers.issuer_enforced'));
+    }
+
     public function testWithoutRecordStoreTheChainVerifierIsRemoved(): void
     {
         $container = new ContainerBuilder();

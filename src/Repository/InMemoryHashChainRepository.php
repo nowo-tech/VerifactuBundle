@@ -64,6 +64,7 @@ final class InMemoryHashChainRepository implements HashChainRepositoryInterface
             $state->invoiceSeriesNumber,
             $state->issueDate,
             strtoupper($state->hash),
+            $state->environment,
         );
     }
 
@@ -103,6 +104,7 @@ final class InMemoryHashChainRepository implements HashChainRepositoryInterface
             $existing instanceof HashChainState ? $existing->invoiceSeriesNumber : '',
             $existing instanceof HashChainState ? $existing->issueDate : '',
             $hash,
+            $existing?->environment,
         ));
     }
 

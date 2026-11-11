@@ -109,6 +109,13 @@ services:
             $issuerProvider: '@Nowo\VerifactuBundle\Provider\IssuerProviderInterface'
             $softwareIdentityProvider: '@Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface'
             $clock: '@?clock'
+            $environmentProvider: '@Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface'
+            $defaultEnvironment: '%nowo_verifactu.aeat.environment%'
+            $enforceProviderIssuer: '%nowo_verifactu.providers.issuer_enforced%'
+
+    Nowo\VerifactuBundle\Service\ChainVerifier:
+        arguments:
+            $defaultEnvironment: '%nowo_verifactu.aeat.environment%'
 
     Nowo\VerifactuBundle\Qr\QrUrlBuilder:
         arguments:

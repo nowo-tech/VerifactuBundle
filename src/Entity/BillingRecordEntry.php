@@ -75,6 +75,10 @@ class BillingRecordEntry
     /** @phpstan-ignore property.unusedType (written by DoctrineBillingRecordStore::markSubmitted() through DBAL) */
     private ?string $submissionReference = null;
 
+    /** AEAT environment the record was chained for (sandbox / production); null for rows written before 1.6. */
+    #[ORM\Column(name: 'environment', type: Types::STRING, length: 10, nullable: true)]
+    private ?string $environment;
+
     #[ORM\Column(name: 'created_at', type: Types::DATETIME_IMMUTABLE)]
     private DateTimeImmutable $createdAt;
 
@@ -97,6 +101,7 @@ class BillingRecordEntry
         ?string $signedXml = null,
         ?string $issuerName = null,
         string $submissionStatus = 'pending',
+        ?string $environment = null,
     ) {
         $this->issuerNif           = strtoupper(trim($issuerNif));
         $this->position            = $position;
@@ -113,6 +118,7 @@ class BillingRecordEntry
         $this->signedXml           = $signedXml;
         $this->issuerName          = $issuerName;
         $this->submissionStatus    = $submissionStatus;
+        $this->environment         = $environment;
         $this->createdAt           = new DateTimeImmutable();
     }
 
@@ -162,6 +168,14 @@ class BillingRecordEntry
     public function getSubmissionStatus(): string
     {
         return $this->submissionStatus;
+    }
+
+    /**
+     * Returns the AEAT environment the record was chained for (null for rows written before 1.6).
+     */
+    public function getEnvironment(): ?string
+    {
+        return $this->environment;
     }
 
     /**

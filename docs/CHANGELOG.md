@@ -55,8 +55,34 @@ Complete AEAT records (V4) and the rest of the runtime providers (V5) for Symfon
   temporary file for the cURL call only. `CertificateLoader::loadCertificate()` loads either form.
 - **Tests:** every new element validated against the official AEAT XSD (F1 domestic / reverse charge / not subject /
   exempt / several lines, R1 by differences and by substitution, R5, F3).
+- **One AEAT environment per chain.** Records and chain heads carry the environment they were chained for (new nullable
+  `environment` column on `verifactu_hash_chain` and `verifactu_billing_record`; null = the configured
+  `aeat.environment`). The processor refuses to chain a record of one environment onto a head of the other
+  (`ChainEnvironmentMismatchException`); the SOAP client and the QR use the environment stored on the record.
+- **`nowo:verifactu:reset-chain --issuer=X [--force]`** removes the chain head of an issuer so the next record starts a
+  new chain, e.g. when moving from the sandbox to production. Stored records are kept.
+- **`nowo:verifactu:verify-chain --environment=sandbox|production`**: the verifier checks one environment (default:
+  the one of the current head), skips the records of the environment used before a reset and reports a record of
+  another environment inside the chain.
+- **`providers.issuer_enforced`** (default true): the opt-out of the issuer check below.
 
 ### Changed
+
+- **Issuer provider is enforced (security).** With `providers.issuer` set, a record whose issuer NIF differs from the
+  provider's NIF is refused (`validation.issuer_nif.provider_mismatch`): it is never chained, signed nor submitted, so a
+  caller-supplied NIF can never select another issuer's certificate. Before, such a record kept its own NIF. Multi-NIF
+  hosts should make the provider return the issuer of the current tenant; `providers.issuer_enforced: false` restores
+  the 1.5 behaviour. The certificate provider receives the NIF upper-cased and trimmed.
+- **AEAT validations v1.2.2:** a foreign recipient with country ES takes IDType 03 or 07, and IDType 07 only with ES
+  (§3.1.3 item 13); ClaveRegimen only on IVA, IPSI (keys 01, 08, 11, 18, 19, 20) and IGIC lines, and the default
+  regime key is only applied to them (§15.6); exemptions E2 / E3 are refused under the general regime (§15.5).
+- **An unknown environment is refused** (`InvalidAeatEnvironmentException`), never routed to a default; the
+  environment provider returns `Model\AeatEnvironment`. The production / in-memory chain check also names
+  `providers.aeat_environment` when that is what triggered it.
+- **Temporary certificate file (worker-safe).** The fallback for runtimes without `CURLOPT_SSLCERT_BLOB` no longer
+  changes the process umask nor keeps static state: a fresh 0700 directory, the file created exclusively and set to
+  0600 before the secret is written, removed in `finally`, on destruction and, after a fatal error, by a shutdown
+  function of that file only.
 
 - **Docs:** `ChainTransactionLostException` and UPGRADING say not to run any further statement of the lost unit of work
   on the connection (audit KW-D2-I1).
