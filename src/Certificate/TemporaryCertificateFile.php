@@ -57,9 +57,10 @@ final class TemporaryCertificateFile
             // @igor-ignore - Set once per process: a single shutdown handler, never one per file or per request.
             // @phpstan-ignore frankenphp.worker.noMutableStaticProperty (set once per process)
             self::$shutdownRegistered = true;
-            // @igor-ignore - One handler per process; it only deletes files a fatal error / exit() left pending.
+            // One handler per process (guarded by $shutdownRegistered), never one per file or per request; it only deletes
+            // files a fatal error / exit() left pending. Request cleanup is finally / __destruct.
             // @phpstan-ignore frankenphp.worker.noRegisterShutdownFunction (one handler per process for files left by a fatal error; request cleanup is finally / __destruct)
-            register_shutdown_function(self::removePending(...));
+            register_shutdown_function(self::removePending(...)); // @igor-ignore - One handler per process for files left by a fatal error.
         }
     }
 

@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Target: 1.7.1 (patch).
+
+### Changed
+
+- CI: standalone `igor` job (igor-php worker-state audit, REQ-CS-008). Its two findings on 1.7.0 are false positives,
+  annotated inline (`TemporaryCertificateFile` one-per-process shutdown handler, `BillingRecordBatchSubmitter` write to
+  the shared flow-control store) and recorded in `docs/FRANKENPHP-WORKER-AUDIT.md`. No behaviour change.
+
 ## [1.7.0] - 2026-11-11
 
 Batch submission to the AEAT (V7) for Symfony Beacon spec 226. Standard hosts need no change; with the Doctrine record

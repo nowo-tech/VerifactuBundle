@@ -372,6 +372,7 @@ final class BillingRecordBatchSubmitter
                 return $token === $pending->getTimestamp() ? $token : null;
             }
             $now = $this->now();
+            // @igor-ignore - Writes the shared flow-control store (cache / DB), meant to outlive the request; no service state.
             $flowControl->registerSubmission($key, $now, max(1, $until->getTimestamp() - $now->getTimestamp()));
 
             return $until->getTimestamp();
