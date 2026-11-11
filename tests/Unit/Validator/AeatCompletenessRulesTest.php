@@ -61,6 +61,19 @@ final class AeatCompletenessRulesTest extends TestCase
         yield 'IPSI with key 08 is fine' => [['taxBreakdown' => [new TaxBreakdown('02', '10', '1', '0.10', '08')]], []];
         yield 'E2 not under the general regime' => [['taxBreakdown' => [new TaxBreakdown('01', '', '1', '', '01', null, 'E2')]], ['validation.tax_breakdown.exemption_regime.invalid']];
         yield 'E3 not under the general regime of IGIC' => [['taxBreakdown' => [new TaxBreakdown('03', '', '1', '', '01', null, 'E3')]], ['validation.tax_breakdown.exemption_regime.invalid']];
+        yield 'Subsanacion S' => [['correction' => 'S'], []];
+        yield 'alta after a rejection (S + X)' => [['correction' => 's', 'previousRejection' => 'X'], []];
+        yield 'RechazoPrevio X needs Subsanacion S' => [['previousRejection' => 'X'], ['validation.correction_flags.invalid']];
+        // LJ-L5 (Validaciones v1.2.2 §3.1.3 item 2): RechazoPrevio S on an Alta needs Subsanacion S too.
+        yield 'RechazoPrevio S needs Subsanacion S' => [['previousRejection' => 'S'], ['validation.correction_flags.invalid']];
+        yield 'RechazoPrevio S with Subsanacion N' => [['correction' => 'N', 'previousRejection' => 's'], ['validation.correction_flags.invalid']];
+        yield 'RechazoPrevio S with Subsanacion S' => [['correction' => 'S', 'previousRejection' => 'S'], []];
+        yield 'RechazoPrevio N without Subsanacion' => [['previousRejection' => 'N'], []];
+        yield 'unknown Subsanacion' => [['correction' => 'Y'], ['validation.correction_flags.invalid']];
+        yield 'SinRegistroPrevio only on Anulacion' => [['withoutPreviousRecord' => 'S'], ['validation.correction_flags.invalid']];
+        yield 'Anulacion with SinRegistroPrevio and RechazoPrevio' => [['recordType' => RecordType::Anulacion, 'withoutPreviousRecord' => 'S', 'previousRejection' => 'S'], []];
+        yield 'no X on Anulacion' => [['recordType' => RecordType::Anulacion, 'previousRejection' => 'X'], ['validation.correction_flags.invalid']];
+        yield 'no Subsanacion on Anulacion' => [['recordType' => RecordType::Anulacion, 'correction' => 'S'], ['validation.correction_flags.invalid']];
         yield 'E2 under the export regime is fine' => [['taxBreakdown' => [new TaxBreakdown('', '', '1', '', '02', null, 'E2')]], []];
         yield 'qualification and exemption together' => [['taxBreakdown' => [new TaxBreakdown('01', '', '1', '', null, 'N1', 'E1')]], ['validation.tax_breakdown.qualification.invalid']];
         yield 'unknown qualification' => [['taxBreakdown' => [new TaxBreakdown('01', '21', '1', '0.21', null, 'S9')]], ['validation.tax_breakdown.qualification.invalid']];
@@ -137,6 +150,9 @@ final class AeatCompletenessRulesTest extends TestCase
             rectifiedInvoices: $fields['rectifiedInvoices'] ?? [],
             substitutedInvoices: $fields['substitutedInvoices'] ?? [],
             rectificationAmount: $fields['rectificationAmount'] ?? null,
+            correction: $fields['correction'] ?? null,
+            previousRejection: $fields['previousRejection'] ?? null,
+            withoutPreviousRecord: $fields['withoutPreviousRecord'] ?? null,
             operationDate: $fields['operationDate'] ?? null,
         );
     }

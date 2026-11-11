@@ -18,6 +18,8 @@ services:
             - '../../Exception/'
             - '../../Certificate/Certificate.php'
             - '../../Certificate/TemporaryCertificateFile.php'
+            - '../../Messenger/'
+            - '../../Submission/'
 
     Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface:
         alias: Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository

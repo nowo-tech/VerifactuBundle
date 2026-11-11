@@ -18,9 +18,56 @@ final class CurlSoapTransportTest extends TestCase
 {
     private CurlSoapTransport $transport;
 
+    private false|string $guard = false;
+
     protected function setUp(): void
     {
         $this->transport = new CurlSoapTransport();
+        // These tests reach only reserved, unroutable hosts (RFC 2606 / RFC 5737) to cover the cURL error paths, so
+        // they lift the network guard for themselves and restore it afterwards.
+        $this->guard = getenv(CurlSoapTransport::FORBID_NETWORK_ENV);
+        self::setGuard('0');
+    }
+
+    protected function tearDown(): void
+    {
+        // @phpstan-ignore frankenphp.classic.noPutenv (test: restores the process-wide network guard)
+        putenv($this->guard === false ? CurlSoapTransport::FORBID_NETWORK_ENV : CurlSoapTransport::FORBID_NETWORK_ENV . '=' . $this->guard);
+    }
+
+    public function testTheTestSuiteForbidsTheNetwork(): void
+    {
+        self::assertNotFalse($this->guard, 'phpunit.xml.dist must set VERIFACTU_FORBID_NETWORK');
+        self::assertNotSame('0', $this->guard);
+    }
+
+    public function testTheGuardRefusesEveryRequestBeforeCurl(): void
+    {
+        self::assertFalse(CurlSoapTransport::isNetworkForbidden());
+        self::setGuard('1');
+        self::assertTrue(CurlSoapTransport::isNetworkForbidden());
+        $certificate = dirname(__DIR__, 2) . '/Fixtures/certs/test.p12';
+
+        // Reserved hosts only: even a broken guard must never make this test reach a real endpoint.
+        foreach (['https://192.0.2.1/soap', 'https://invalid.localhost.test/soap'] as $endpoint) {
+            $started = microtime(true);
+            $result  = $this->transport->send($endpoint, 'submit', '<xml/>', $certificate, 'test', 5);
+            self::assertSame(0, $result['status_code']);
+            self::assertStringContainsString('VERIFACTU_FORBID_NETWORK', $result['error'] ?? '');
+            self::assertLessThan(0.5, microtime(true) - $started, 'Refused without any network access');
+
+            $memory = $this->transport->sendWithCertificate($endpoint, 'submit', '<xml/>', Certificate::fromContents('P12-BYTES'), 5);
+            self::assertStringContainsString('VERIFACTU_FORBID_NETWORK', $memory['error'] ?? '');
+        }
+
+        self::setGuard('');
+        self::assertFalse(CurlSoapTransport::isNetworkForbidden());
+    }
+
+    private static function setGuard(string $value): void
+    {
+        // @phpstan-ignore frankenphp.classic.noPutenv (test: lifts or sets the process-wide network guard)
+        putenv(CurlSoapTransport::FORBID_NETWORK_ENV . '=' . $value);
     }
 
     public function testSendReturnsErrorWhenCertificatePathIsEmpty(): void

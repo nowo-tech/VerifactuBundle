@@ -165,6 +165,20 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *         storage?: "none"|"memory"|"doctrine"|Param, // Default: "none"
  *         service?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface (overrides storage) // Default: null
  *     },
+ *     submission?: array{ // Batch submission of the stored records (BillingRecordBatchSubmitter, nowo:verifactu:submit-pending, SubmitPendingBillingRecords message); needs a record store
+ *         batch_size?: int|Param, // Records per AEAT request; the AEAT limit is 1000 (Servicios web v1.0.3 p. 10) // Default: 1000
+ *         claim_timeout?: int|Param, // Seconds after which a batch claimed by a process that died is claimed again (longer than aeat.timeout) // Default: 300
+ *         default_wait?: int|Param, // Seconds to wait between submissions when the AEAT returned no TiempoEsperaEnvio (initially 60, Orden HAC/1177/2024 art. 16.2) // Default: 60
+ *         max_attempts?: int|Param, // Times the AEAT may refuse a record sent on its own (a SOAP Client fault) before it is held; it is marked failed when the next record, sent alone, gets an answer, otherwise the issuer is paused (pause_seconds) // Default: 5
+ *         issuer_fault_codes?: list<int|Param>,
+ *         record_fault_codes?: list<int|Param>,
+ *         pause_seconds?: int|Param, // Circuit breaker: how long an issuer is paused when the AEAT refuses every request of it (kept in the flow control store) // Default: 3600
+ *         flow_control_scope?: "issuer"|"global"|Param, // issuer: one AEAT wait per issuer NIF, for issuers that are separate SIF installations (own NumeroInstalacion, AEAT FAQ v1.3 §4); global: one wait shared by every issuer of one SIF installation // Default: "issuer"
+ *         flow_control?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Submission\FlowControlInterface (null = CacheFlowControl over flow_control_cache_pool) // Default: null
+ *         flow_control_cache_pool?: scalar|Param|null, // PSR-6 cache pool of the default flow control; with several nodes it must be shared by all of them (Redis, database), never a per-node filesystem pool // Default: "cache.app"
+ *         duplicate_confirmation?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Submission\DuplicateConfirmationInterface (e.g. an AEAT query comparing the Huella); null = an AEAT duplicate for a record sent before is stored as unconfirmed, never accepted // Default: null
+ *         client?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Client\BatchAeatSubmissionClientInterface (null = the AEAT submission client) // Default: null
+ *     },
  *     doctrine?: array{ // Doctrine storage options (REQ-ORM-002)
  *         mapping?: "attribute"|"xml"|Param, // Mapping of the bundle entities: attribute (default) or xml (Resources/config/doctrine/*.orm.xml, for hosts that only load XML mappings) // Default: "attribute"
  *         table_prefix?: scalar|Param|null, // Prefix prepended to every bundle table, index and unique constraint name (e.g. "app_" yields app_verifactu_hash_chain). Empty = historical verifactu_hash_chain name. // Default: ""
@@ -485,7 +499,7 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *         resources?: Param|string|array<string, scalar|Param|null>,
  *     },
  *     messenger?: bool|array{ // Messenger configuration
- *         enabled?: bool|Param, // Default: false
+ *         enabled?: bool|Param, // Default: true
  *         routing?: array<string, Param|string|array{ // Default: []
  *             senders?: list<scalar|Param|null>,
  *         }>,

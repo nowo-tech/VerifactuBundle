@@ -32,9 +32,9 @@ We will acknowledge your report and work on a fix. We appreciate responsible dis
 
 ## Scope
 
-VerifactuBundle builds Spanish Veri*Factu billing records (registros de facturación): it validates invoice data, computes the SHA-256 hash chain per issuer NIF, renders the AEAT XML, optionally signs it, renders the invoice QR code and legend, and optionally submits the record to the AEAT SOAP service over mutual TLS.
+VerifactuBundle builds Spanish Veri*Factu billing records (registros de facturación): it validates invoice data, computes the SHA-256 hash chain per issuer NIF, renders the AEAT XML, optionally signs it, renders the invoice QR code and legend, optionally stores every chained record (record store, 1.6) and submits the record to the AEAT SOAP service over mutual TLS, one by one or in batches of up to 1000 records (batch submitter, 1.7).
 
-**Covered:** the bundle services, the Doctrine hash chain storage, the three console commands (`nowo:verifactu:validate-record`, `nowo:verifactu:verify-hash`, `nowo:verifactu:submit-sandbox`), the Twig functions and the AEAT client.
+**Covered:** the bundle services, the Doctrine hash chain storage, the record store (`verifactu_billing_record`), the batch submitter (`BillingRecordBatchSubmitter`, the `SubmitPendingBillingRecords` Messenger message and its handler, the flow control store), the six console commands (`nowo:verifactu:validate-record`, `nowo:verifactu:verify-hash`, `nowo:verifactu:submit-sandbox`, `nowo:verifactu:verify-chain`, `nowo:verifactu:reset-chain`, `nowo:verifactu:submit-pending`), the Twig functions and the AEAT client.
 
 **Not covered (host responsibility):** authentication / authorisation of whoever creates invoices in the host application, storage and backup of issued invoices, protection of the certificate files and of the database, the HTTP endpoints of the host (the bundle ships **no controllers or routes**), and legal compliance of the host invoicing workflow.
 
@@ -44,7 +44,11 @@ VerifactuBundle builds Spanish Veri*Factu billing records (registros de facturac
 |-------|--------|-------------|
 | Bundle configuration (`nowo_verifactu.*`: issuer, software, certificate path / password, environment, table prefix) | Host `config/packages`, environment variables / Symfony secrets | Operator (trusted) |
 | `BillingRecord` / `InvoiceDraft` values (NIF, series and number, dates, amounts, invoice type, issuer name, description, lines, tax breakdown) | Host code, often derived from user-entered invoice data | **Untrusted** |
-| Console command options (`--nif`, `--numserie`, `--fecha`, `--importe`, `--hash`, `--submit`, …) | CLI operator | Operator |
+| Console command options (`--nif`, `--numserie`, `--fecha`, `--importe`, `--hash`, `--submit`, `--issuer`, `--force`, …) | CLI operator | Operator |
+| `submit-pending` options `--fail=<position>`, `--resolve=<position> --as=… --csv=…`, `--retry-failed` | CLI operator; they change the fiscal state of stored records | **Operator, privileged** (like `submit-sandbox --submit`) |
+| Record store (`verifactu_billing_record`, optionally prefixed): stored XML, hash, submission state, AEAT CSV | Database | Trusted storage, integrity-critical (it is what the batch submitter sends) |
+| Flow control store (PSR-6 pool, default `cache.app`; keys per issuer NIF or `*`, `pause\|<NIF>`, `stalled\|<NIF>`, `noanswer\|<NIF>`, `wake\|<NIF>`) | Cache shared by every submitting process | Trusted; controls when requests go out (not integrity of records) |
+| `SubmitPendingBillingRecords` messages (issuer NIF, run counter, wake-up flag) | Host code / Messenger transport | Host (trusted); the NIF only selects stored records |
 | Certificate files (PKCS#12 / PEM) read by `CertificateLoader` | Path from configuration | Operator; file contents are secret |
 | AEAT SOAP responses parsed by `SoapAeatSubmissionClient` | Network (official AEAT endpoints over TLS) | Semi-trusted |
 | Hash chain state (`verifactu_hash_chain` table or custom repository) | Database | Trusted storage, integrity-critical |
@@ -60,7 +64,11 @@ VerifactuBundle builds Spanish Veri*Factu billing records (registros de facturac
 | Hash chain tampering or forking | Yes (legal integrity) | The chain head is read once, under the lock, and written inside `withChainLock()` (transaction, insert-if-absent of the issuer row, then `SELECT … FOR UPDATE` in the Doctrine repository), so concurrent processes never chain onto the same predecessor, the first record of an issuer included (multi-process tests on MySQL, MariaDB and PostgreSQL in CI); `nowo:verifactu:verify-chain` walks the stored log; `nowo:verifactu:verify-hash` recomputes a record hash. Protect the table with database permissions. |
 | SSRF / request to an attacker-controlled host | No | Endpoints are fixed AEAT URLs chosen by `AeatEndpointResolver` from `mode` / `environment` / `certificate_type` (enums); no URL comes from input. |
 | Man-in-the-middle on AEAT submission | Low | cURL with explicit `CURLOPT_SSL_VERIFYPEER` / `CURLOPT_SSL_VERIFYHOST = 2`, HTTPS only (`CURLOPT_PROTOCOLS`), no redirects, a 10 MiB response cap, plus the client certificate (mTLS). |
-| Accidental production registration | Yes | `nowo:verifactu:submit-sandbox --submit` refuses non-sandbox environments unless `--allow-production`, explicit `--nif` / `--numserie` and an interactive confirmation are given. |
+| Accidental production registration | Yes | `nowo:verifactu:submit-sandbox --submit` refuses non-sandbox environments unless `--allow-production`, explicit `--nif` / `--numserie` and an interactive confirmation are given. `submit-pending` and the Messenger handler send only stored records, to the AEAT environment each record was chained for; records without an environment (rows written before 1.6) are never sent. |
+| Wrong fiscal state set by hand (`submit-pending --fail` / `--resolve` / `--retry-failed`) | Yes (operator) | Each needs `--issuer` and a numeric position and touches one row of that issuer in the allowed states (`--fail`: pending, held, confirming; `--resolve`: unconfirmed; `--retry-failed`: only what the batch submitter or `--fail` failed). `--resolve --as=accepted\|accepted_errors` is the operator's word: it needs a CSV (at most 120 printable characters) but is **not verified** at the AEAT; check the record (Huella) at the AEAT first. A pending record already transmitted may be registered although its answer was lost: query it before `--fail`. Restrict these options like `submit-sandbox --submit`. |
+| Sending a record while it is stored failed, or two batches of one issuer at once | Low | Claims, probes, `--fail` and `--retry-failed` run under the issuer's chain lock (`withChainLock()`), one batch in flight per issuer; answers are stored only for the claim token that sent them (multi-process tests on MySQL, MariaDB and PostgreSQL in CI). |
+| Healthy records failed, or the queue blocked, by AEAT refusals | Yes (AEAT errors) | Only SOAP `Client` faults count; the AEAT code decides (`AeatFaultClassifier`; the configuration refuses a record code that is an issuer code); unknown codes are probed and a suspect is failed only after a probe was answered and the suspect was refused alone again; issuer-wide errors pause the issuer (`ISSUER_SUBMISSION_PAUSED`) instead of failing records. See [USAGE](USAGE.md#batch-submission-to-the-aeat). |
+| Flow control store cleared or not shared | Low | The next request may go before the AEAT wait time (art. 16.2), or a pause ends early; records are never lost or failed by it. Use one shared pool for every node and exclude it from routine `cache:pool:clear`. |
 | Chain lost between requests in production | Yes | The container refuses `aeat.environment: production` + an AEAT client + `hash_chain.storage: memory` without a custom repository. |
 | Denial of service (slow AEAT, huge payloads) | Yes | `aeat.timeout` (5–120 s, default 30) bounds `CURLOPT_TIMEOUT` and `CURLOPT_CONNECTTIMEOUT`; keep AEAT timeout < PHP `max_execution_time` < proxy timeout ([DEMO-FRANKENPHP](DEMO-FRANKENPHP.md)). |
 | XSS through Twig output | Low | `verifactu_qr_data_uri()` is marked safe but only returns `data:image/png;base64,…` built by the bundle; `verifactu_qr_url()` and `verifactu_legend()` are auto-escaped by Twig. |
@@ -80,6 +88,7 @@ VerifactuBundle builds Spanish Veri*Factu billing records (registros de facturac
 - **Strict AEAT success detection:** a submission is successful only when the HTTP status is 2xx and `EstadoRegistro` = `Correcto`; missing status, `AceptadoConErrores`, `Incorrecto`, SOAP faults and non-2xx responses are failures.
 - **Dry runs do not advance the chain:** `nowo:verifactu:submit-sandbox` without `--submit` (or with `--dry-run`) never stores a new chain head.
 - **Locked read-then-write:** custom repositories should implement `LockableHashChainRepositoryInterface`; without a lock, concurrent requests can fork the chain. SQLite ignores `FOR UPDATE`: use a server database in production.
+- **Batch submission:** the submitter refuses to run inside a database transaction, sends outside any transaction, counts an attempt right before transmission and commits the answers before dispatching events; an AEAT duplicate is never reported as accepted without a `DuplicateConfirmationInterface` confirming the Huella. Stateless in FrankenPHP worker mode (kernel reset off): everything is read again from the record store and the flow control store on every call.
 - **Safe defaults:** `aeat.environment: sandbox`, `hash_chain.storage: memory` (non-persistent, warns outside debug), `validate_xsd: true`, no certificate configured → `NullAeatSubmissionClient` (never contacts the AEAT).
 
 ## Secrets and cryptography
@@ -106,8 +115,18 @@ VerifactuBundle builds Spanish Veri*Factu billing records (registros de facturac
 ## Permissions and exposure
 
 - **HTTP:** none — the bundle registers no routes or controllers.
-- **CLI:** `nowo:verifactu:submit-sandbox --submit` sends a real record to the configured AEAT environment with the configured certificate; restrict who can run console commands in production. The other two commands are read-only.
-- **Database:** only the bundle table (`verifactu_hash_chain`, optionally prefixed) is written; grant the application user the minimum privileges and audit changes to it.
+- **CLI:** restrict who can run console commands in production. What each command writes:
+
+  | Command | Sends to the AEAT | Writes |
+  |---------|-------------------|--------|
+  | `validate-record`, `verify-hash`, `verify-chain` | No | Nothing (read-only) |
+  | `submit-sandbox` | Only with `--submit` (a real record, to the configured environment) | With `--submit`: the chain head (`verifactu_hash_chain`) and, with a record store, the record |
+  | `reset-chain` | No | Deletes the issuer's chain head (`verifactu_hash_chain`); asks for confirmation unless `--force` |
+  | `submit-pending` | Yes: the stored waiting records of the issuer(s), to each record's environment | Submission state, attempts, errors and AEAT CSV of the records (`verifactu_billing_record`); the flow control store; `--fail`, `--resolve`, `--retry-failed` change one issuer's stored states by hand and send nothing |
+
+- **Messenger:** the `SubmitPendingBillingRecords` handler sends like `submit-pending` (without the manual options) and dispatches itself again with a delay; only the host dispatches the first message.
+- **Database:** the bundle tables (`verifactu_hash_chain` and, with a record store, `verifactu_billing_record`, optionally prefixed) are written; grant the application user the minimum privileges and audit changes to them. The record store is integrity-relevant: its XML is what the batch submitter sends and its states are the fiscal status of each record.
+- **Cache:** the flow control pool holds the AEAT wait, the pauses and the alert markers; share it between nodes and do not let untrusted code write to it.
 - **Network:** outbound HTTPS to the official AEAT endpoints only, and only when a certificate is configured.
 
 ## Release security checklist (12.4.1)

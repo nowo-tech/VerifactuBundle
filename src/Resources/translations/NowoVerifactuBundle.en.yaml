@@ -1,4 +1,6 @@
 validation:
+  correction_flags:
+    invalid: 'Invalid Subsanacion / RechazoPrevio / SinRegistroPrevio: Alta takes Subsanacion S/N and RechazoPrevio N/S/X (X only with Subsanacion S); Anulacion takes SinRegistroPrevio and RechazoPrevio S/N.'
   issuer_nif:
     invalid: 'The issuer tax ID (NIF/CIF/NIE) is invalid.'
     provider_mismatch: 'The issuer tax ID of the record is not the issuer of this application (issuer provider).'

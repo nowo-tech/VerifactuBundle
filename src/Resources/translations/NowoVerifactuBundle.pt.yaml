@@ -1,4 +1,6 @@
 validation:
+  correction_flags:
+    invalid: 'Subsanacion / RechazoPrevio / SinRegistroPrevio inválidos: o Alta admite Subsanacion S/N e RechazoPrevio N/S/X (X apenas com Subsanacion S); a Anulacion admite SinRegistroPrevio e RechazoPrevio S/N.'
   issuer_nif:
     invalid: 'O NIF/CIF/NIE do emissor é inválido.'
     provider_mismatch: 'O número fiscal do emitente do registo não é o emitente desta aplicação (fornecedor do emitente).'

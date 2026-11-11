@@ -1,4 +1,6 @@
 validation:
+  correction_flags:
+    invalid: 'Ongeldige Subsanacion / RechazoPrevio / SinRegistroPrevio: Alta staat Subsanacion S/N en RechazoPrevio N/S/X toe (X alleen met Subsanacion S); Anulacion staat SinRegistroPrevio en RechazoPrevio S/N toe.'
   issuer_nif:
     invalid: 'Het btw-nummer van de afzender (NIF/CIF/NIE) is ongeldig.'
     provider_mismatch: 'Het fiscaal nummer van de uitgever in het record is niet de uitgever van deze applicatie (uitgeversprovider).'

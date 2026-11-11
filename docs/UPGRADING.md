@@ -34,6 +34,88 @@
 
 ## Unreleased
 
+From **1.6.0** — minor:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- **Nothing changes until you use the batch submitter.** `process(..., submitToAeat: true)` still sends one record and
+  marks it `accepted` / `failed`.
+- **Database (with `record_store.storage: doctrine`):** new nullable / defaulted columns and one index on the record
+  log. Generate a migration (`php bin/console doctrine:migrations:diff`, then `migrate`) or apply (add your
+  `doctrine.table_prefix`):
+
+  ```sql
+  -- MySQL / MariaDB
+  ALTER TABLE verifactu_billing_record ADD submission_attempts INT DEFAULT 0 NOT NULL, ADD submission_claim VARCHAR(32) DEFAULT NULL,
+      ADD submission_claimed_at DATETIME DEFAULT NULL, ADD submission_error_code INT DEFAULT NULL,
+      ADD submission_error LONGTEXT DEFAULT NULL, ADD submission_failures INT DEFAULT 0 NOT NULL,
+      ADD submitted_at DATETIME DEFAULT NULL;
+  CREATE INDEX idx_verifactu_billing_record_submission ON verifactu_billing_record (issuer_nif, submission_status, position);
+
+  -- PostgreSQL
+  ALTER TABLE verifactu_billing_record ADD submission_attempts INT DEFAULT 0 NOT NULL, ADD submission_claim VARCHAR(32) DEFAULT NULL,
+      ADD submission_claimed_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL, ADD submission_error_code INT DEFAULT NULL,
+      ADD submission_error TEXT DEFAULT NULL, ADD submission_failures INT DEFAULT 0 NOT NULL,
+      ADD submitted_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;
+  CREATE INDEX idx_verifactu_billing_record_submission ON verifactu_billing_record (issuer_nif, submission_status, position);
+
+  -- SQLite
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_attempts INTEGER DEFAULT 0 NOT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_claim VARCHAR(32) DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_claimed_at DATETIME DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_error_code INTEGER DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_error CLOB DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_failures INTEGER DEFAULT 0 NOT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submitted_at DATETIME DEFAULT NULL;
+  CREATE INDEX idx_verifactu_billing_record_submission ON verifactu_billing_record (issuer_nif, submission_status, position);
+  ```
+
+  Existing rows keep their status: `pending` rows are sent by the batch submitter; `accepted` and `failed` rows (from
+  `process(..., submitToAeat: true)`) are not sent again.
+- **Rows written before 1.6 are never sent.** They have no `environment` (NULL), so nothing tells whether they were
+  chained for the sandbox or for production. The batch submitter never claims them: a host that tested in the sandbox
+  with the record store on 1.5 and runs production now would otherwise send its test records to production. Check what
+  they are first:
+
+  ```sql
+  SELECT issuer_nif, COUNT(*) FROM verifactu_billing_record
+   WHERE environment IS NULL AND submission_status = 'pending' GROUP BY issuer_nif;
+  ```
+
+  Then, only if you are sure, stamp them explicitly (`'production'` or `'sandbox'`) and they are sent with the next
+  batch; or leave them alone (or set them to `failed`) if they must never be sent:
+
+  ```sql
+  UPDATE verifactu_billing_record SET environment = 'production'
+   WHERE environment IS NULL AND submission_status = 'pending' AND issuer_nif = 'YOUR_NIF';
+  ```
+- **Adopting batch submission:** chain with `process()` / `processBatch()` without `submitToAeat`, then, after your
+  commit, dispatch `SubmitPendingBillingRecords($nif)` (route it to an async transport) or run
+  `nowo:verifactu:submit-pending` from a scheduler. Do not mix both paths for the same records. Listen to
+  `AFTER_RECORD_SUBMISSION` for the per-record outcome; correct `rejected` records with a new record
+  (`correction: 'S', previousRejection: 'X'`).
+- **Custom code:** a host `record_store.service` must implement `SubmissionQueueInterface` to use the submitter; a
+  custom `aeat.submission_client` must implement `BatchAeatSubmissionClientInterface` (or set `submission.client`).
+  `submission.claim_timeout` must be longer than `aeat.timeout`. A custom `BatchAeatSubmissionClientInterface` must call
+  its `$beforeTransmit` callable right before the request leaves (attempts are counted there).
+- **Flow control state:** it lives in `submission.flow_control_cache_pool` (default `cache.app`, a per-node filesystem
+  pool). With several nodes, point it to a shared pool (Redis, Memcached, Doctrine DBAL); see CONFIGURATION.
+- **Flow control scope:** keep `issuer` only when every issuer is its own SIF installation (own `NumeroInstalacion`,
+  AEAT FAQ v1.3 §4); several issuers under one installation number need `global`.
+- **Duplicates and refused records:** an AEAT duplicate for a record sent before is stored as `unconfirmed` unless you
+  configure `submission.duplicate_confirmation` (resolve it with `--resolve` after checking at the AEAT); a record the
+  AEAT keeps refusing on its own (SOAP Client fault with a record code, or confirmed after a probe was answered)
+  becomes `failed` and dispatches `RECORD_SUBMISSION_FAILED`; an issuer the AEAT refuses as a whole (an issuer code
+  such as 4104, or every probe refused) is paused instead and dispatches `ISSUER_SUBMISSION_PAUSED`; two requests in a
+  row without any answer dispatch `ISSUER_SUBMISSION_STALLED`. Listen to the three and alert someone. `--list` shows the records
+  that need a person, `--fail` marks one failed, `--retry-failed` requeues. The default AEAT code lists are in
+  `Submission\AeatFaultClassifier`; extend them with `submission.issuer_fault_codes` / `record_fault_codes` if the
+  AEAT adds codes.
+- **Tests of your own:** set `VERIFACTU_FORBID_NETWORK=1` in your PHPUnit configuration and CI so the bundle's cURL
+  transport can never reach the AEAT from a test.
+
 ## To 1.6.0
 
 From **1.5.0**:

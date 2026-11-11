@@ -1,4 +1,6 @@
 validation:
+  correction_flags:
+    invalid: 'Subsanacion / RechazoPrevio / SinRegistroPrevio invalides : l''Alta admet Subsanacion S/N et RechazoPrevio N/S/X (X uniquement avec Subsanacion S) ; l''Anulacion admet SinRegistroPrevio et RechazoPrevio S/N.'
   issuer_nif:
     invalid: 'Le NIF/CIF/NIE de l''émetteur est invalide.'
     provider_mismatch: 'L''identifiant fiscal de l''émetteur de l''enregistrement n''est pas l''émetteur de cette application (fournisseur d''émetteur).'

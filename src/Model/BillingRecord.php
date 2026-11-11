@@ -18,6 +18,13 @@ final class BillingRecord
     public const RECTIFICATION_BY_SUBSTITUTION = 'S';
     public const RECTIFICATION_BY_DIFFERENCES  = 'I';
 
+    /** Subsanacion / RechazoPrevio / SinRegistroPrevio flag values (AEAT SuministroInformacion.xsd). */
+    public const FLAG_YES = 'S';
+    public const FLAG_NO  = 'N';
+
+    /** RechazoPrevio X: a new Alta of a record the AEAT rejected (with Subsanacion S). Servicios web v1.0.3 §9.1.3. */
+    public const PREVIOUS_REJECTION_NOT_REGISTERED = 'X';
+
     /**
      * Creates a billing record (registro de facturación) value object.
      *
@@ -30,6 +37,10 @@ final class BillingRecord
      * @param RectificationAmount|null $rectificationAmount ImporteRectificacion (required with, and only with, TipoRectificativa S)
      * @param string|null $operationDate FechaOperacion (dd-mm-yyyy) when it differs from the issue date
      * @param AeatEnvironment|null $environment the AEAT environment the record was chained for (set by the processor)
+     * @param string|null $correction Subsanacion (S / N): a new record that corrects one already sent (1.7)
+     * @param string|null $previousRejection RechazoPrevio: Alta N / S / X (X = corrects an Alta the AEAT rejected, with
+     *                                       Subsanacion S); Anulacion S / N
+     * @param string|null $withoutPreviousRecord SinRegistroPrevio (S / N), Anulacion only
      */
     public function __construct(
         public readonly RecordType $recordType,
@@ -55,6 +66,9 @@ final class BillingRecord
         public readonly ?RectificationAmount $rectificationAmount = null,
         public readonly ?string $operationDate = null,
         public readonly ?AeatEnvironment $environment = null,
+        public readonly ?string $correction = null,
+        public readonly ?string $previousRejection = null,
+        public readonly ?string $withoutPreviousRecord = null,
     ) {
     }
 
@@ -108,6 +122,9 @@ final class BillingRecord
             $this->rectificationAmount,
             $this->operationDate,
             $this->environment,
+            $this->correction,
+            $this->previousRejection,
+            $this->withoutPreviousRecord,
         );
     }
 }

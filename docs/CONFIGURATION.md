@@ -138,6 +138,65 @@ R1 – R5 need TipoRectificativa (AEAT "Validaciones y errores" v1.2.2, §3.1.3 
 schema but the AEAT warns when an IVA line has none and rejects it from 2027-01-01 (§15.6): pass it per line or set
 `xml.default_regime_key` (for example `'01'`, general regime).
 
+### Batch submission (1.7)
+
+```yaml
+nowo_verifactu:
+    record_store:
+        storage: doctrine          # the queue of records to send
+    submission:
+        batch_size: 1000           # records per AEAT request (1 – 1000)
+        claim_timeout: 300         # s; a batch claimed by a process that died is claimed again (> aeat.timeout)
+        default_wait: 60           # s between submissions when the AEAT gave no TiempoEsperaEnvio
+        flow_control_scope: issuer # issuer: one AEAT wait per NIF (one SIF installation per issuer); global: one wait for every issuer
+        flow_control: null         # service id of a Submission\FlowControlInterface (null = CacheFlowControl over the pool below)
+        flow_control_cache_pool: cache.app # PSR-6 pool of the default flow control; must be SHARED by every node
+        max_attempts: 5            # SOAP Client refusals of a record sent on its own before it is failed (record code) or held (unknown code)
+        pause_seconds: 3600        # circuit breaker pause, and at most one ISSUER_SUBMISSION_STALLED alert per this long
+        issuer_fault_codes: [4104, 4105, 4107, 4108, …] # Client fault Codigo about the issuer: pause at once (default: AeatFaultClassifier)
+        record_fault_codes: [4102, 4106, 4119, 4136, 4137] # Client fault Codigo about a record: fail it without probing
+        duplicate_confirmation: null # service id of a Submission\DuplicateConfirmationInterface (null = duplicates stay unconfirmed)
+        client: null               # service id of a Client\BatchAeatSubmissionClientInterface (null = the AEAT client)
+```
+
+Without a record store the submitter, `nowo:verifactu:submit-pending` and the Messenger handler are not registered.
+With symfony/messenger installed, `SubmitPendingBillingRecordsHandler` handles `SubmitPendingBillingRecords`; route the
+message to an async transport. A custom `aeat.submission_client` must also implement `BatchAeatSubmissionClientInterface`
+(or set `submission.client`). See [USAGE](USAGE.md#batch-submission-to-the-aeat).
+
+- **`flow_control_scope`.** Orden HAC/1177/2024 art. 16.2 sets the wait per *sistema informático*. The AEAT FAQ for
+  developers (v1.3, §4) says a "multi-OT" SIF must meet the requirements individually for each taxpayer it manages, and
+  that in a SaaS each separate invoicing (each issuer) has its own installation number because it counts as an
+  independent "SIF virtual". So `issuer` (the default) is right when every issuer is its own SIF installation, with its
+  own `NumeroInstalacion` (`providers.software_identity` per issuer). When several issuers share ONE installation
+  number, it is literally one SIF: use `global` (one wait for all of them, serialised under one database lock).
+- **`flow_control_cache_pool`.** The wait must be seen by every process and every node that submits. `cache.app` is a
+  per-node filesystem pool by default: with several nodes, define a shared pool (Redis, Memcached, PDO/Doctrine DBAL)
+  and set it here, e.g. `framework.cache.pools.cache.verifactu_flow: { adapter: cache.adapter.redis }`. Clearing the
+  pool forgets the wait (the next submission may go early): exclude it from routine `cache:pool:clear` runs.
+- **`max_attempts`, `issuer_fault_codes`, `record_fault_codes` (circuit breaker).** Only a SOAP Fault with faultcode
+  `Client` (*Servicios web* v1.0.3 §5.1: the message is malformed or carries wrong data) is about what the message
+  carries; its `Codigo[NNNN]` says whom it is about (`Submission\AeatFaultClassifier`, defaults from the AEAT list of
+  message-level errors, `errores.properties` of the Veri*Factu services):
+  - an issuer code (header, NIF, representative, certificate, authorisation, service: 4104, 4105, 4107, 4108, 4110 –
+    4112, 4115 – 4118, 4120 – 4135, 4139 – 4141): nothing is counted, the issuer is paused at once;
+  - a record code (4102 schema, 4106 date format, 4119 encoding, 4136 / 4137 node): the batch is halved until the
+    record at fault goes alone; after `max_attempts` refusals on its own it is marked `failed`;
+  - any other code (4103, 4109, 4113, 4114, 4138, new codes): the batch is halved the same way, but the record is then
+    held as a suspect and other records go alone as probes (see USAGE). Unknown is the safe fallback.
+  Both lists take 4-digit AEAT codes (1000 – 9999). The issuer list wins at runtime, and the configuration refuses a
+  record code that is in `issuer_fault_codes` or in the default issuer list (`AeatFaultClassifier::DEFAULT_ISSUER_CODES`):
+  moving an issuer code such as 4104 to the record list would fail every record on a header error. To stop treating a
+  default issuer code as one, remove it from `issuer_fault_codes` only (it is then probed as unknown).
+  Never counted: `Server` faults ("Reenviar mensaje"), HTML / empty / non-SOAP bodies, HTTP 401 / 403 / 404 / 405 / 407
+  / 408 / 429 / 500 pages / 502 – 504 and transport errors; the records stay pending and, from the second request in a
+  row without an answer (no answer in between; an earlier refusal does not count), `ISSUER_SUBMISSION_STALLED` is
+  dispatched (at most once per `pause_seconds`; marker key `noanswer|<NIF>` in the flow control store).
+- **`pause_seconds`.** How long a paused issuer waits (kept in the flow control store with the key `pause|<NIF>`; the
+  pending Messenger wake-up is `wake|<NIF>`). The container always wires a flow control; a submitter built by hand
+  without one never pauses and never dispatches `ISSUER_SUBMISSION_STALLED`.
+- **`duplicate_confirmation`.** See [duplicates](USAGE.md#batch-submission-to-the-aeat).
+
 ### XAdES signing (No-Veri*Factu)
 
 In `no_verifactu` mode, billing records are signed automatically when a certificate is configured. You can force signing in Veri*Factu mode with `aeat.sign_xades: true`.

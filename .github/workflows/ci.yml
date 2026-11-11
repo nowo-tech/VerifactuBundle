@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, master]
 
+# LJ-I4: the real cURL transport refuses every request in CI (no AEAT call from tests).
+env:
+  VERIFACTU_FORBID_NETWORK: '1'
+
 jobs:
   git-hygiene:
     name: Git history (no Cursor co-author)

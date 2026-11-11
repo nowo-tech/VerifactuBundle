@@ -38,7 +38,10 @@ use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 use Throwable;
 
+use function array_key_first;
+use function array_values;
 use function is_string;
+use function ksort;
 
 /**
  * Orchestrates validation, hash chaining, XML generation, XSD validation, signing, and AEAT submission.
@@ -197,6 +200,107 @@ final class BillingRecordProcessor
     }
 
     /**
+     * Chains several records of ONE issuer in the given order, in one chain lock (V7): record n+1 chains onto record n.
+     * All or nothing: when any record fails (issuer check, veto, validation, XSD, signing) nothing is chained, stored or
+     * appended, so the chain head never points at a record that was not stored (and will not be sent). The records
+     * are not submitted here: BillingRecordBatchSubmitter sends the stored records later, up to 1000 per request.
+     *
+     * AFTER_BILLING_RECORD_GENERATED is dispatched once per record after the lock returns (as for process(): inside a
+     * host transaction that is before the host commits; listeners that need the commit must defer).
+     *
+     * @param list<BillingRecord> $records
+     *
+     * @return array{records: list<BillingRecord>, errors: array<int, list<string>>, event_errors?: list<array{event: string, exception: Throwable}>}
+     */
+    public function processBatch(array $records, bool $persistChainState = true): array
+    {
+        if ($records === []) {
+            return ['records' => [], 'errors' => []];
+        }
+
+        $issuer   = $this->resolveIssuer();
+        $software = $this->resolveSoftwareIdentity();
+        $prepared = [];
+        $errors   = [];
+        foreach (array_values($records) as $index => $record) {
+            if (trim($record->issuerNif) === '' && trim($issuer->nif) !== '') {
+                $record = $this->copy($record, issuerNif: $issuer->nif);
+            }
+            if ($record->issuerName === null && $issuer->name !== '') {
+                $record = $this->copy($record, issuerName: $issuer->name);
+            }
+            if ($this->enforceProviderIssuer && trim($issuer->nif) !== '' && strtoupper(trim($record->issuerNif)) !== strtoupper(trim($issuer->nif))) {
+                $errors[$index] = $this->validator->issuerMismatchErrors();
+
+                continue;
+            }
+            $beforeEvent = new BeforeBillingRecordGenerationEvent($record);
+            $this->eventDispatcher->dispatch($beforeEvent, VerifactuEvents::BEFORE_BILLING_RECORD_GENERATION);
+            $record       = $beforeEvent->getRecord();
+            $stampInLock  = trim($record->generatedAt) === '';
+            $recordErrors = $this->validator->validate($stampInLock ? $this->copy($record, generatedAt: GenerationTimestamp::now($this->clock)) : $record);
+            if ($recordErrors !== []) {
+                $errors[$index] = $recordErrors;
+
+                continue;
+            }
+            $prepared[$index] = [$record, $stampInLock];
+        }
+
+        $issuerNif = strtoupper(trim($prepared[array_key_first($prepared) ?? 0][0]->issuerNif ?? ''));
+        foreach ($prepared as $index => [$record]) {
+            if (strtoupper(trim($record->issuerNif)) !== $issuerNif) {
+                $errors[$index] = ['processBatch() chains the records of one issuer; record ' . $index . ' belongs to another issuer.'];
+            }
+        }
+        if ($errors !== []) {
+            ksort($errors);
+
+            return ['records' => [], 'errors' => $errors];
+        }
+
+        $environment = $this->environmentProvider?->getEnvironment() ?? AeatEnvironment::fromValue($this->defaultEnvironment);
+        $operation   = function (?HashChainState ...$locked) use ($prepared, $software, $environment, $issuerNif, $persistChainState): array {
+            $head    = $locked === [] ? $this->hashChainRepository->getLastState($issuerNif) : $locked[0];
+            $chained = [];
+            foreach ($prepared as $index => [$record, $stampInLock]) {
+                $result = $this->buildChained(
+                    $stampInLock ? $this->copy($record, generatedAt: GenerationTimestamp::now($this->clock)) : $record,
+                    $software,
+                    $head,
+                    $environment,
+                );
+                if ($result['errors'] !== []) {
+                    return ['records' => [], 'errors' => [$index => $result['errors']]];
+                }
+                $chained[] = $result['record'];
+                $head      = $result['state'];
+            }
+            if ($persistChainState && $head instanceof HashChainState && $chained !== []) {
+                $this->persistChained($chained, $head);
+            }
+
+            return ['records' => $chained, 'errors' => []];
+        };
+        $result = $persistChainState && $this->hashChainRepository instanceof LockableHashChainRepositoryInterface
+            ? $this->hashChainRepository->withChainLock($issuerNif, $operation)
+            : $operation();
+        if ($result['errors'] !== []) {
+            return $result;
+        }
+
+        $eventErrors = [];
+        foreach ($result['records'] as $record) {
+            $this->dispatchObserverEvent(new AfterBillingRecordGeneratedEvent(clone $record), VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, $eventErrors);
+        }
+        if ($eventErrors !== []) {
+            $result['event_errors'] = $eventErrors;
+        }
+
+        return $result;
+    }
+
+    /**
      * Chains the record onto the given head, hashes, renders, validates and signs it, then stores the new head.
      *
      * Runs inside the repository chain lock when available (read-then-write must be atomic per issuer), with the head
@@ -205,6 +309,21 @@ final class BillingRecordProcessor
      * @return array{record: BillingRecord, errors: list<string>}
      */
     private function chainRecord(BillingRecord $record, bool $persistChainState, SoftwareIdentity $software, ?HashChainState $previousState, AeatEnvironment $environment): array
+    {
+        $chained = $this->buildChained($record, $software, $previousState, $environment);
+        if ($chained['errors'] === [] && $persistChainState) {
+            $this->persistChained([$chained['record']], $chained['state']);
+        }
+
+        return ['record' => $chained['record'], 'errors' => $chained['errors']];
+    }
+
+    /**
+     * Chains the record onto the given head, hashes, renders, validates and signs it, without storing anything.
+     *
+     * @return array{record: BillingRecord, errors: list<string>, state: HashChainState}
+     */
+    private function buildChained(BillingRecord $record, SoftwareIdentity $software, ?HashChainState $previousState, AeatEnvironment $environment): array
     {
         // Never chain a record of one AEAT environment onto a head of another (a production record onto a test one):
         // switching needs an explicit reset of the issuer's chain (nowo:verifactu:reset-chain).
@@ -235,31 +354,34 @@ final class BillingRecordProcessor
         $schemaType = $record->recordType === RecordType::Alta
             ? XsdValidator::SCHEMA_REGISTRO_ALTA
             : XsdValidator::SCHEMA_REGISTRO_ANULACION;
+        $state     = new HashChainState($record->issuerNif, $record->invoiceSeriesNumber, $record->issueDate, $hash, $environment);
         $xsdErrors = $this->xsdValidator->validate($xml, $schemaType);
         if ($xsdErrors !== []) {
-            return ['record' => $record, 'errors' => $xsdErrors];
+            return ['record' => $record, 'errors' => $xsdErrors, 'state' => $state];
         }
 
         if ($this->shouldSign()) {
             if (!$this->recordSigner instanceof BillingRecordSignerInterface) {
-                return ['record' => $record, 'errors' => ['XAdES signing is required but no signer service is configured.']];
+                return ['record' => $record, 'errors' => ['XAdES signing is required but no signer service is configured.'], 'state' => $state];
             }
 
             $record = $record->withSignedXml($this->recordSigner->sign($xml));
         }
 
-        if ($persistChainState) {
-            $this->hashChainRepository->storeLastState(new HashChainState(
-                $record->issuerNif,
-                $record->invoiceSeriesNumber,
-                $record->issueDate,
-                $hash,
-                $environment,
-            ));
+        return ['record' => $record, 'errors' => [], 'state' => $state];
+    }
+
+    /**
+     * Stores the new chain head and appends the records to the record store, in chain order (inside the chain lock).
+     *
+     * @param non-empty-list<BillingRecord> $records
+     */
+    private function persistChained(array $records, HashChainState $head): void
+    {
+        $this->hashChainRepository->storeLastState($head);
+        foreach ($records as $record) {
             $this->recordStore?->append($record);
         }
-
-        return ['record' => $record, 'errors' => []];
     }
 
     /**
@@ -339,6 +461,9 @@ final class BillingRecordProcessor
             rectificationAmount: $record->rectificationAmount,
             operationDate: $record->operationDate,
             environment: $environment ?? $record->environment,
+            correction: $record->correction,
+            previousRejection: $record->previousRejection,
+            withoutPreviousRecord: $record->withoutPreviousRecord,
         );
     }
 

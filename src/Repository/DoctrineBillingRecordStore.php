@@ -6,6 +6,7 @@ namespace Nowo\VerifactuBundle\Repository;
 
 use DateTimeImmutable;
 use Doctrine\DBAL\LockMode;
+use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\QueryBuilder;
 use Doctrine\Persistence\ManagerRegistry;
@@ -13,12 +14,17 @@ use LogicException;
 use Nowo\VerifactuBundle\Doctrine\DbalRowWriter;
 use Nowo\VerifactuBundle\Entity\BillingRecordEntry;
 use Nowo\VerifactuBundle\Model\AeatEnvironment;
+use Nowo\VerifactuBundle\Model\AeatRecordResponse;
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Model\RecordSubmissionStatus;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
+use Nowo\VerifactuBundle\Submission\BatchSplit;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
+use Throwable;
 
 use function count;
+use function sprintf;
 
 /**
  * Doctrine record log (record_store.storage: doctrine), table `verifactu_billing_record`.
@@ -39,7 +45,7 @@ use function count;
  * @copyright 2026 Nowo.tech
  */
 #[AsAlias(id: self::SERVICE_NAME, public: true)]
-final class DoctrineBillingRecordStore implements BillingRecordStoreInterface
+final class DoctrineBillingRecordStore implements BillingRecordStoreInterface, SubmissionQueueInterface
 {
     public const SERVICE_NAME = 'nowo_verifactu.repository.doctrine_billing_record_store';
 
@@ -136,6 +142,416 @@ final class DoctrineBillingRecordStore implements BillingRecordStoreInterface
         );
     }
 
+    public function hasSubmissionInFlight(string $issuerNif, DateTimeImmutable $now, int $claimTimeoutSeconds): bool
+    {
+        $count = $this->entityManager()->createQueryBuilder()
+            ->select('COUNT(e.position)')
+            ->from(BillingRecordEntry::class, 'e')
+            ->where('e.issuerNif = :issuerNif')
+            ->andWhere('e.submissionStatus = :sending')
+            ->andWhere('e.submissionClaimedAt >= :cutoff')
+            ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
+            ->setParameter('sending', StoredBillingRecord::STATUS_SENDING)
+            ->setParameter('cutoff', $this->cutoff($now, $claimTimeoutSeconds), Types::DATETIME_IMMUTABLE)
+            ->getQuery()
+            ->getSingleScalarResult();
+
+        return (int) $count > 0;
+    }
+
+    public function countPending(string $issuerNif, DateTimeImmutable $now, int $claimTimeoutSeconds): int
+    {
+        return (int) $this->waitingQuery($issuerNif, $now, $claimTimeoutSeconds)
+            ->select('COUNT(e.position)')
+            ->getQuery()
+            ->getSingleScalarResult();
+    }
+
+    public function claimNext(string $issuerNif, int $limit, string $claimToken, DateTimeImmutable $now, int $claimTimeoutSeconds): array
+    {
+        $entityManager = $this->entityManager();
+        $rows          = $this->waitingQuery($issuerNif, $now, $claimTimeoutSeconds)
+            ->select('e')
+            ->orderBy('e.position', 'ASC')
+            ->setMaxResults(max(1, $limit))
+            ->getQuery()
+            ->getArrayResult();
+
+        $claimed = [];
+        $seen    = [];
+        $max     = max(1, $limit);
+        foreach ($rows as $row) {
+            $stored = $this->toStored($row);
+            if ($claimed === []) {
+                $max = BatchSplit::claimLimit($limit, $stored->submissionFailures);
+            }
+            $key = AeatRecordResponse::key($stored->record->issuerNif, $stored->record->invoiceSeriesNumber, $stored->record->issueDate, $stored->record->recordType);
+            if (count($claimed) >= $max || isset($seen[$key]) || ($claimed !== [] && $stored->record->environment !== $claimed[0]->record->environment)) {
+                break;
+            }
+            $seen[$key] = true;
+            $claimed[]  = $stored;
+        }
+        if ($claimed === []) {
+            return [];
+        }
+
+        // The claimed records are the waiting ones between the first and the last claimed position: one statement.
+        // The attempt is counted later, when the request is transmitted (markTransmitted()).
+        $column = static fn (string $field): string => DbalRowWriter::column($entityManager, BillingRecordEntry::class, $field);
+        $entityManager->getConnection()->executeStatement(
+            'UPDATE ' . DbalRowWriter::table($entityManager, BillingRecordEntry::class)
+            . ' SET ' . $column('submissionStatus') . ' = ?, ' . $column('submissionClaim') . ' = ?, ' . $column('submissionClaimedAt') . ' = ?'
+            . ' WHERE ' . $column('issuerNif') . ' = ? AND ' . $column('position') . ' BETWEEN ? AND ? AND ' . $column('environment') . ' IS NOT NULL'
+            . ' AND (' . $column('submissionStatus') . ' = ? OR (' . $column('submissionStatus') . ' = ? AND ' . $column('submissionClaimedAt') . ' < ?))',
+            [
+                StoredBillingRecord::STATUS_SENDING,
+                $claimToken,
+                $now,
+                $this->normalizeKey($issuerNif),
+                $claimed[0]->position,
+                $claimed[count($claimed) - 1]->position,
+                StoredBillingRecord::STATUS_PENDING,
+                StoredBillingRecord::STATUS_SENDING,
+                $this->cutoff($now, $claimTimeoutSeconds),
+            ],
+            [
+                Types::STRING, Types::STRING, Types::DATETIME_IMMUTABLE, Types::STRING, Types::INTEGER, Types::INTEGER,
+                Types::STRING, Types::STRING, Types::DATETIME_IMMUTABLE,
+            ],
+        );
+
+        return array_map(static fn (StoredBillingRecord $stored): StoredBillingRecord => new StoredBillingRecord(
+            $stored->position,
+            $stored->record,
+            StoredBillingRecord::STATUS_SENDING,
+            $stored->submissionReference,
+            $stored->submissionAttempts,
+            $stored->submissionErrorCode,
+            $stored->submissionError,
+            $stored->submissionFailures,
+        ), $claimed);
+    }
+
+    public function markTransmitted(string $issuerNif, string $claimToken): int
+    {
+        $entityManager = $this->entityManager();
+        $column        = static fn (string $field): string => DbalRowWriter::column($entityManager, BillingRecordEntry::class, $field);
+
+        return (int) $entityManager->getConnection()->executeStatement(
+            'UPDATE ' . DbalRowWriter::table($entityManager, BillingRecordEntry::class)
+            . ' SET ' . $column('submissionAttempts') . ' = ' . $column('submissionAttempts') . ' + 1'
+            . ' WHERE ' . $column('issuerNif') . ' = ? AND ' . $column('submissionClaim') . ' = ? AND ' . $column('submissionStatus') . ' = ?',
+            [$this->normalizeKey($issuerNif), $claimToken, StoredBillingRecord::STATUS_SENDING],
+            [Types::STRING, Types::STRING, Types::STRING],
+        );
+    }
+
+    public function recordOutcomes(string $issuerNif, string $claimToken, array $outcomes, DateTimeImmutable $now): array
+    {
+        $entityManager = $this->entityManager();
+        $connection    = $entityManager->getConnection();
+        $updated       = [];
+        $connection->beginTransaction();
+        try {
+            foreach ($outcomes as $outcome) {
+                $hash   = strtoupper(trim((string) $outcome->stored->record->hash));
+                $answer = $outcome->status !== null;
+                $count  = DbalRowWriter::update($entityManager, BillingRecordEntry::class, [
+                    'submissionStatus'    => $outcome->storeStatus(),
+                    'submissionReference' => $answer ? $outcome->reference : $outcome->stored->submissionReference,
+                    'submissionErrorCode' => $outcome->errorCode,
+                    'submissionError'     => $outcome->errorDescription === null ? null : mb_substr($outcome->errorDescription, 0, 1500),
+                    'submissionClaim'     => null,
+                    'submissionClaimedAt' => null,
+                    'submissionFailures'  => 0,
+                    'submittedAt'         => $answer ? $now : null,
+                ], [
+                    'issuerNif'       => $this->normalizeKey($issuerNif),
+                    'hash'            => $hash,
+                    'submissionClaim' => $claimToken,
+                ]);
+                if ($count > 0) {
+                    $updated[] = $hash;
+                }
+            }
+            $connection->commit();
+            // @codeCoverageIgnoreStart
+        } catch (Throwable $exception) {
+            if ($connection->isTransactionActive()) {
+                $connection->rollBack();
+            }
+
+            throw $exception;
+            // @codeCoverageIgnoreEnd
+        }
+
+        return $updated;
+    }
+
+    public function releaseClaim(string $issuerNif, string $claimToken, ?string $failure = null, bool $countFailure = false): int
+    {
+        $entityManager = $this->entityManager();
+        $column        = static fn (string $field): string => DbalRowWriter::column($entityManager, BillingRecordEntry::class, $field);
+        $set           = [$column('submissionStatus') . ' = ?', $column('submissionClaim') . ' = NULL', $column('submissionClaimedAt') . ' = NULL'];
+        $params        = [StoredBillingRecord::STATUS_PENDING];
+        $types         = [Types::STRING];
+        if ($failure !== null) {
+            $set[]    = $column('submissionError') . ' = ?';
+            $params[] = mb_substr($failure, 0, 1500);
+            $types[]  = Types::TEXT;
+        }
+        if ($countFailure) {
+            $set[] = $column('submissionFailures') . ' = ' . $column('submissionFailures') . ' + 1';
+        }
+
+        return (int) $entityManager->getConnection()->executeStatement(
+            'UPDATE ' . DbalRowWriter::table($entityManager, BillingRecordEntry::class) . ' SET ' . implode(', ', $set)
+            . ' WHERE ' . $column('issuerNif') . ' = ? AND ' . $column('submissionClaim') . ' = ? AND ' . $column('submissionStatus') . ' = ?',
+            [...$params, $this->normalizeKey($issuerNif), $claimToken, StoredBillingRecord::STATUS_SENDING],
+            [...$types, Types::STRING, Types::STRING, Types::STRING],
+        );
+    }
+
+    public function suspects(string $issuerNif): array
+    {
+        $rows = $this->entityManager()->createQueryBuilder()
+            ->select('e')
+            ->from(BillingRecordEntry::class, 'e')
+            ->where('e.issuerNif = :issuerNif')
+            ->andWhere('e.submissionStatus IN (:statuses)')
+            ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
+            ->setParameter('statuses', [StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_CONFIRMING])
+            ->orderBy('e.position', 'ASC')
+            ->getQuery()
+            ->getArrayResult();
+
+        return array_values(array_map(fn (array $row): StoredBillingRecord => $this->toStored($row), $rows));
+    }
+
+    public function newestWaitingPosition(string $issuerNif, DateTimeImmutable $now, int $claimTimeoutSeconds): ?int
+    {
+        $position = $this->waitingQuery($issuerNif, $now, $claimTimeoutSeconds)
+            ->select('MAX(e.position)')
+            ->getQuery()
+            ->getSingleScalarResult();
+
+        return $position === null ? null : (int) $position;
+    }
+
+    public function claimRecord(string $issuerNif, int $position, string $claimToken, DateTimeImmutable $now, int $claimTimeoutSeconds): ?StoredBillingRecord
+    {
+        $entityManager = $this->entityManager();
+        $column        = static fn (string $field): string => DbalRowWriter::column($entityManager, BillingRecordEntry::class, $field);
+        $count         = (int) $entityManager->getConnection()->executeStatement(
+            'UPDATE ' . DbalRowWriter::table($entityManager, BillingRecordEntry::class)
+            . ' SET ' . $column('submissionStatus') . ' = ?, ' . $column('submissionClaim') . ' = ?, ' . $column('submissionClaimedAt') . ' = ?'
+            . ' WHERE ' . $column('issuerNif') . ' = ? AND ' . $column('position') . ' = ? AND ' . $column('environment') . ' IS NOT NULL'
+            . ' AND (' . $column('submissionStatus') . ' IN (?, ?, ?) OR (' . $column('submissionStatus') . ' = ? AND ' . $column('submissionClaimedAt') . ' < ?))',
+            [
+                StoredBillingRecord::STATUS_SENDING, $claimToken, $now, $this->normalizeKey($issuerNif), $position,
+                StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_CONFIRMING,
+                StoredBillingRecord::STATUS_SENDING, $this->cutoff($now, $claimTimeoutSeconds),
+            ],
+            [
+                Types::STRING, Types::STRING, Types::DATETIME_IMMUTABLE, Types::STRING, Types::INTEGER,
+                Types::STRING, Types::STRING, Types::STRING, Types::STRING, Types::DATETIME_IMMUTABLE,
+            ],
+        );
+        if ($count === 0) {
+            return null;
+        }
+        $row = $this->entityManager()->createQueryBuilder()
+            ->select('e')
+            ->from(BillingRecordEntry::class, 'e')
+            ->where('e.issuerNif = :issuerNif')
+            ->andWhere('e.position = :position')
+            ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
+            ->setParameter('position', $position)
+            ->getQuery()
+            ->getArrayResult();
+
+        return $row === [] ? null : $this->toStored($row[0]);
+    }
+
+    public function parkClaim(string $issuerNif, string $claimToken, string $status, ?string $failure = null, bool $countFailure = false): int
+    {
+        $entityManager = $this->entityManager();
+        $column        = static fn (string $field): string => DbalRowWriter::column($entityManager, BillingRecordEntry::class, $field);
+        $set           = [$column('submissionStatus') . ' = ?', $column('submissionClaim') . ' = NULL', $column('submissionClaimedAt') . ' = NULL'];
+        $params        = [$status];
+        $types         = [Types::STRING];
+        if ($failure !== null) {
+            $set[]    = $column('submissionError') . ' = ?';
+            $params[] = mb_substr($failure, 0, 1500);
+            $types[]  = Types::TEXT;
+        }
+        if ($countFailure) {
+            $set[] = $column('submissionFailures') . ' = ' . $column('submissionFailures') . ' + 1';
+        }
+
+        return (int) $entityManager->getConnection()->executeStatement(
+            'UPDATE ' . DbalRowWriter::table($entityManager, BillingRecordEntry::class) . ' SET ' . implode(', ', $set)
+            . ' WHERE ' . $column('issuerNif') . ' = ? AND ' . $column('submissionClaim') . ' = ? AND ' . $column('submissionStatus') . ' = ?',
+            [...$params, $this->normalizeKey($issuerNif), $claimToken, StoredBillingRecord::STATUS_SENDING],
+            [...$types, Types::STRING, Types::STRING, Types::STRING],
+        );
+    }
+
+    public function failClaim(string $issuerNif, string $claimToken, string $failure, DateTimeImmutable $now): array
+    {
+        $entityManager = $this->entityManager();
+        $connection    = $entityManager->getConnection();
+        $column        = static fn (string $field): string => DbalRowWriter::column($entityManager, BillingRecordEntry::class, $field);
+        $table         = DbalRowWriter::table($entityManager, BillingRecordEntry::class);
+        $where         = ' WHERE ' . $column('issuerNif') . ' = ? AND ' . $column('submissionClaim') . ' = ? AND ' . $column('submissionStatus') . ' = ?';
+        $criteria      = [$this->normalizeKey($issuerNif), $claimToken, StoredBillingRecord::STATUS_SENDING];
+
+        $connection->beginTransaction();
+        try {
+            $hashes = array_map(
+                static fn (mixed $hash): string => strtoupper((string) $hash),
+                $connection->fetchFirstColumn('SELECT ' . $column('hash') . ' FROM ' . $table . $where, $criteria),
+            );
+            $connection->executeStatement(
+                'UPDATE ' . $table . ' SET ' . $column('submissionStatus') . ' = ?, ' . $column('submissionClaim') . ' = NULL, '
+                . $column('submissionClaimedAt') . ' = NULL, ' . $column('submissionError') . ' = ?, ' . $column('submissionErrorCode') . ' = NULL, '
+                . $column('submissionFailures') . ' = ' . $column('submissionFailures') . ' + 1, ' . $column('submittedAt') . ' = ?' . $where,
+                [StoredBillingRecord::STATUS_FAILED, mb_substr($failure, 0, 1500), $now, ...$criteria],
+                [Types::STRING, Types::TEXT, Types::DATETIME_IMMUTABLE, Types::STRING, Types::STRING, Types::STRING],
+            );
+            $connection->commit();
+            // @codeCoverageIgnoreStart
+        } catch (Throwable $exception) {
+            if ($connection->isTransactionActive()) {
+                $connection->rollBack();
+            }
+
+            throw $exception;
+            // @codeCoverageIgnoreEnd
+        }
+
+        return array_values($hashes);
+    }
+
+    public function confirmSuspects(string $issuerNif): int
+    {
+        return DbalRowWriter::update($this->entityManager(), BillingRecordEntry::class, [
+            'submissionStatus' => StoredBillingRecord::STATUS_CONFIRMING,
+        ], [
+            'issuerNif'        => $this->normalizeKey($issuerNif),
+            'submissionStatus' => StoredBillingRecord::STATUS_HELD,
+        ]);
+    }
+
+    public function failRecord(string $issuerNif, int $position, string $reason, DateTimeImmutable $now): ?StoredBillingRecord
+    {
+        $entityManager = $this->entityManager();
+        $column        = static fn (string $field): string => DbalRowWriter::column($entityManager, BillingRecordEntry::class, $field);
+        $rows          = $entityManager->createQueryBuilder()
+            ->select('e')
+            ->from(BillingRecordEntry::class, 'e')
+            ->where('e.issuerNif = :issuerNif')
+            ->andWhere('e.position = :position')
+            ->andWhere('e.submissionStatus IN (:statuses)')
+            ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
+            ->setParameter('position', $position)
+            ->setParameter('statuses', [StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_CONFIRMING])
+            ->getQuery()
+            ->getArrayResult();
+        if ($rows === []) {
+            return null;
+        }
+        $count = (int) $entityManager->getConnection()->executeStatement(
+            'UPDATE ' . DbalRowWriter::table($entityManager, BillingRecordEntry::class) . ' SET ' . $column('submissionStatus') . ' = ?, '
+            . $column('submissionError') . ' = ?, ' . $column('submissionFailures') . ' = ' . $column('submissionFailures') . ' + 1, ' . $column('submittedAt') . ' = ?'
+            . ' WHERE ' . $column('issuerNif') . ' = ? AND ' . $column('position') . ' = ? AND ' . $column('submissionStatus') . ' IN (?, ?, ?)',
+            [
+                StoredBillingRecord::STATUS_FAILED, mb_substr($reason, 0, 1500), $now, $this->normalizeKey($issuerNif), $position,
+                StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_CONFIRMING,
+            ],
+            [Types::STRING, Types::TEXT, Types::DATETIME_IMMUTABLE, Types::STRING, Types::INTEGER, Types::STRING, Types::STRING, Types::STRING],
+        );
+
+        return $count > 0 ? $this->toStored($rows[0]) : null;
+    }
+
+    public function requeueFailed(string $issuerNif): int
+    {
+        $entityManager = $this->entityManager();
+        $column        = static fn (string $field): string => DbalRowWriter::column($entityManager, BillingRecordEntry::class, $field);
+
+        // Only the records the batch submitter failed (submission failures ≥ 1): an AEAT `Incorrecto` stored as failed by
+        // process(..., submitToAeat: true) is never sent again.
+        return (int) $entityManager->getConnection()->executeStatement(
+            'UPDATE ' . DbalRowWriter::table($entityManager, BillingRecordEntry::class) . ' SET ' . $column('submissionStatus') . ' = ?, '
+            . $column('submissionFailures') . ' = 0 WHERE ' . $column('issuerNif') . ' = ? AND ' . $column('submissionStatus') . ' = ? AND '
+            . $column('submissionFailures') . ' > 0',
+            [StoredBillingRecord::STATUS_PENDING, $this->normalizeKey($issuerNif), StoredBillingRecord::STATUS_FAILED],
+            [Types::STRING, Types::STRING, Types::STRING],
+        );
+    }
+
+    public function resolveUnconfirmed(string $issuerNif, int $position, RecordSubmissionStatus $status, ?string $reference, DateTimeImmutable $now): bool
+    {
+        return DbalRowWriter::update($this->entityManager(), BillingRecordEntry::class, [
+            'submissionStatus'    => $status->storeStatus(),
+            'submissionReference' => $status->isRegistered() ? $reference : null,
+            'submittedAt'         => $now,
+        ], [
+            'issuerNif'        => $this->normalizeKey($issuerNif),
+            'position'         => $position,
+            'submissionStatus' => StoredBillingRecord::STATUS_UNCONFIRMED,
+        ]) > 0;
+    }
+
+    public function issuersWithPendingRecords(): array
+    {
+        $rows = $this->entityManager()->createQueryBuilder()
+            ->select('DISTINCT e.issuerNif')
+            ->from(BillingRecordEntry::class, 'e')
+            ->where('e.submissionStatus IN (:statuses)')
+            ->andWhere('e.environment IS NOT NULL')
+            ->setParameter('statuses', [StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_SENDING, StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_CONFIRMING])
+            ->orderBy('e.issuerNif', 'ASC')
+            ->getQuery()
+            ->getArrayResult();
+
+        return array_values(array_map(static fn (array $row): string => (string) $row['issuerNif'], $rows));
+    }
+
+    public function isInsideTransaction(): bool
+    {
+        return $this->entityManager()->getConnection()->isTransactionActive();
+    }
+
+    /**
+     * Pending records, plus those of a stale claim (the process that claimed them died). Records without an AEAT
+     * environment (written before 1.6) are never claimed: they could be test records (see UPGRADING, 1.7).
+     */
+    private function waitingQuery(string $issuerNif, DateTimeImmutable $now, int $claimTimeoutSeconds): QueryBuilder
+    {
+        return $this->entityManager()->createQueryBuilder()
+            ->from(BillingRecordEntry::class, 'e')
+            ->where('e.issuerNif = :issuerNif')
+            ->andWhere('e.environment IS NOT NULL')
+            ->andWhere('e.submissionStatus = :pending OR (e.submissionStatus = :sending AND e.submissionClaimedAt < :cutoff)')
+            ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
+            ->setParameter('pending', StoredBillingRecord::STATUS_PENDING)
+            ->setParameter('sending', StoredBillingRecord::STATUS_SENDING)
+            ->setParameter('cutoff', $this->cutoff($now, $claimTimeoutSeconds), Types::DATETIME_IMMUTABLE);
+    }
+
+    private function cutoff(DateTimeImmutable $now, int $claimTimeoutSeconds): DateTimeImmutable
+    {
+        return $now->modify(sprintf('-%d seconds', max(1, $claimTimeoutSeconds)));
+    }
+
+    private function entityManager(): EntityManagerInterface
+    {
+        return $this->resolveEntityManager();
+    }
+
     /**
      * Position of the previous record + 1, or the last stored position + 1 when the previous record is not in the log.
      * Both reads are locking reads inside a transaction (the chain lock), so they never see a stale snapshot.
@@ -209,6 +625,10 @@ final class DoctrineBillingRecordStore implements BillingRecordStoreInterface
             ),
             (string) $row['submissionStatus'],
             isset($row['submissionReference']) ? (string) $row['submissionReference'] : null,
+            (int) ($row['submissionAttempts'] ?? 0),
+            isset($row['submissionErrorCode']) ? (int) $row['submissionErrorCode'] : null,
+            isset($row['submissionError']) ? (string) $row['submissionError'] : null,
+            (int) ($row['submissionFailures'] ?? 0),
         );
     }
 

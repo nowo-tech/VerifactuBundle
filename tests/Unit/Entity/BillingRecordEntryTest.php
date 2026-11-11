@@ -34,6 +34,7 @@ final class BillingRecordEntryTest extends TestCase
         self::assertSame('Issuer', $entry->getIssuerName());
         self::assertSame('accepted', $entry->getSubmissionStatus());
         self::assertSame('production', $entry->getEnvironment());
+        self::assertSame([0, null, null, null], [$entry->getSubmissionAttempts(), $entry->getSubmissionErrorCode(), $entry->getSubmissionError(), $entry->getSubmittedAt()]);
         self::assertNull($entry->getSubmissionReference());
         self::assertLessThanOrEqual((new DateTimeImmutable())->getTimestamp(), $entry->getCreatedAt()->getTimestamp());
     }

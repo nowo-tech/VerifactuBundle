@@ -28,6 +28,30 @@ final class ConfigurationTest extends TestCase
         self::assertSame(35, $config['qr']['size_mm']);
     }
 
+    /**
+     * LJD3-I1: fault codes are 4-digit AEAT codes; a record code that is an issuer code (configured or default) is
+     * refused, since it would fail every record on an error about the issuer.
+     */
+    public function testFaultCodeListsAreValidated(): void
+    {
+        $config = (new Processor())->processConfiguration(new Configuration(), [['submission' => ['issuer_fault_codes' => [4104, 4999], 'record_fault_codes' => [4102, 4103]]]]);
+        self::assertSame([[4104, 4999], [4102, 4103]], [$config['submission']['issuer_fault_codes'], $config['submission']['record_fault_codes']]);
+
+        foreach ([
+            'not 4 digits'          => [['issuer_fault_codes' => [104]], 'Should be greater than or equal to 1000'],
+            'too long'              => [['record_fault_codes' => [41020]], 'Should be less than or equal to 9999'],
+            'in both lists'         => [['issuer_fault_codes' => [4104, 4999], 'record_fault_codes' => [4999, 4102]], 'issuer_fault_codes or a default issuer code (an error about the issuer would fail every record): 4999.'],
+            'default issuer, moved' => [['issuer_fault_codes' => [4105], 'record_fault_codes' => [4104, 4102]], ': 4104.'],
+        ] as $name => [$submission, $message]) {
+            try {
+                (new Processor())->processConfiguration(new Configuration(), [['submission' => $submission]]);
+                self::fail($name . ': accepted');
+            } catch (InvalidConfigurationException $exception) {
+                self::assertStringContainsString($message, $exception->getMessage(), $name);
+            }
+        }
+    }
+
     public function testDoctrineTablePrefixDefaultsToEmpty(): void
     {
         $config = (new Processor())->processConfiguration(new Configuration(), [[]]);
