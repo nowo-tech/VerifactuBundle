@@ -1,6 +1,7 @@
 validation:
   issuer_nif:
     invalid: 'The issuer tax ID (NIF/CIF/NIE) is invalid.'
+    provider_mismatch: 'The issuer tax ID of the record is not the issuer of this application (issuer provider).'
   invoice_series_number:
     empty: 'The invoice series and number must not be empty.'
   issue_date:
@@ -17,3 +18,32 @@ validation:
     parse_failed: 'Invalid XML: %errors%'
     xsd:
       failed: 'XSD validation failed: %errors%'
+  rectification_type:
+    invalid: 'The rectification type (TipoRectificativa) must be S or I, and only rectifying invoices (R1–R5) may carry it.'
+    missing: 'Rectifying invoices (R1–R5) need a rectification type (S or I).'
+  rectified_invoices:
+    not_allowed: 'Rectified invoices may only be listed on rectifying invoices (R1–R5).'
+  substituted_invoices:
+    not_allowed: 'Substituted invoices may only be listed on F3 invoices.'
+  invoice_reference:
+    invalid: 'Each referenced invoice needs a valid issuer tax ID, a series and number and a dd-mm-yyyy date.'
+  rectification_amount:
+    invalid: 'The rectified amounts (base and tax, valid numbers) are required with rectification type S and not allowed otherwise.'
+  operation_date:
+    invalid: 'The operation date must be a real dd-mm-yyyy date.'
+  recipients:
+    not_allowed: 'F2 and R5 invoices may not list recipients.'
+    missing: 'F1, F3 and R1–R4 invoices need at least one recipient.'
+  recipient:
+    invalid: 'Each recipient needs a name and either a valid Spanish tax ID or a foreign ID (type 02–07, a two-letter country code unless the type is 02, and ES only with type 07).'
+  tax_breakdown:
+    qualification:
+      invalid: 'Each tax line takes either an operation qualification (S1, S2, N1, N2) or an exemption (E1–E8), not both.'
+    regime_key:
+      invalid: 'The tax regime key (ClaveRegimen) is not an AEAT value.'
+    exemption_regime:
+      invalid: 'Under the general regime (ClaveRegimen 01) the exemptions E2 and E3 are not allowed.'
+    reverse_charge:
+      invalid: 'Reverse-charge (S2) lines need a 0 rate and a 0 tax, and are not allowed on F2 or R5 invoices.'
+    not_taxed:
+      invalid: 'Not subject (N1, N2) and exempt lines carry no tax: the tax amount must be 0 or empty.'

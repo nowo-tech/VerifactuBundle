@@ -16,7 +16,7 @@ final class BillingRecordEntryTest extends TestCase
 {
     public function testAccessors(): void
     {
-        $entry = new BillingRecordEntry(' 89890001k ', 3, 'Alta', 'F-3', '09-07-2026', 'F1', '21.00', '121.00', '2026-07-09T16:00:00+02:00', 'PREV', 'HASH', '<xml/>', '<signed/>', 'Issuer', 'accepted');
+        $entry = new BillingRecordEntry(' 89890001k ', 3, 'Alta', 'F-3', '09-07-2026', 'F1', '21.00', '121.00', '2026-07-09T16:00:00+02:00', 'PREV', 'HASH', '<xml/>', '<signed/>', 'Issuer', 'accepted', 'production');
 
         self::assertSame('89890001K', $entry->getIssuerNif());
         self::assertSame(3, $entry->getPosition());
@@ -33,6 +33,7 @@ final class BillingRecordEntryTest extends TestCase
         self::assertSame('<signed/>', $entry->getSignedXml());
         self::assertSame('Issuer', $entry->getIssuerName());
         self::assertSame('accepted', $entry->getSubmissionStatus());
+        self::assertSame('production', $entry->getEnvironment());
         self::assertNull($entry->getSubmissionReference());
         self::assertLessThanOrEqual((new DateTimeImmutable())->getTimestamp(), $entry->getCreatedAt()->getTimestamp());
     }

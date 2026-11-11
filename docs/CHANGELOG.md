@@ -30,6 +30,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Complete AEAT records (V4) and the rest of the runtime providers (V5) for Symfony Beacon spec 226. A record built as in
+1.5 produces the same XML. See [UPGRADING](UPGRADING.md#unreleased).
+
+### Added
+
+- **Recipients, rectification and operation date (V4).** `BillingRecord` (and `InvoiceDraft`) take, as optional
+  trailing arguments: `recipients` (`Model\Recipient::withNif()` / `withForeignId()`: Destinatarios with NIF or IDOtro),
+  `rectificationType` (TipoRectificativa S / I), `rectifiedInvoices` (FacturasRectificadas), `substitutedInvoices`
+  (FacturasSustituidas, F3), `rectificationAmount` (`Model\RectificationAmount`: ImporteRectificacion) and
+  `operationDate` (FechaOperacion). The generator writes them in the order of the AEAT `SuministroInformacion.xsd`
+  (`RegistroFacturacionAltaType`).
+- **Tax qualification (V4).** `TaxBreakdown` takes `regimeKey` (ClaveRegimen), `qualification` (CalificacionOperacion
+  S1 / S2 / N1 / N2; S1 when null, as before) and `exemption` (OperacionExenta E1 – E8). Not subject (N1 / N2) and
+  exempt lines are written without TipoImpositivo and CuotaRepercutida (AEAT validations v1.2.2, §15.4 / §15.5).
+  `xml.default_regime_key` fills lines without a ClaveRegimen.
+- **AEAT business rules for the new fields** (validations v1.2.2, §3.1.3 items 3 – 7, 13, 15), translated in the 7
+  locales, and `validation.strict` for the two rules 1.5 records could not meet (recipients on F1 / F3 / R1 – R4,
+  TipoRectificativa on R1 – R5).
+- **Runtime AEAT environment and certificate (V5, rest).** `Provider\AeatEnvironmentProviderInterface` and
+  `Certificate\CertificateProviderInterface` (per issuer NIF; `Certificate::fromPath()` or `fromContents()` for
+  PKCS#12 / PEM bytes kept in a database), resolved on every call by the SOAP client, the XAdES signer, the QR Twig
+  functions and `nowo:verifactu:submit-sandbox`. The defaults read today's configuration. Contents go to a 0600
+  temporary file for the cURL call only. `CertificateLoader::loadCertificate()` loads either form.
+- **Tests:** every new element validated against the official AEAT XSD (F1 domestic / reverse charge / not subject /
+  exempt / several lines, R1 by differences and by substitution, R5, F3).
+- **One AEAT environment per chain.** Records and chain heads carry the environment they were chained for (new nullable
+  `environment` column on `verifactu_hash_chain` and `verifactu_billing_record`; null = the configured
+  `aeat.environment`). The processor refuses to chain a record of one environment onto a head of the other
+  (`ChainEnvironmentMismatchException`); the SOAP client and the QR use the environment stored on the record.
+- **`nowo:verifactu:reset-chain --issuer=X [--force]`** removes the chain head of an issuer so the next record starts a
+  new chain, e.g. when moving from the sandbox to production. Stored records are kept.
+- **`nowo:verifactu:verify-chain --environment=sandbox|production`**: the verifier checks one environment (default:
+  the one of the current head), skips the records of the environment used before a reset and reports a record of
+  another environment inside the chain.
+- **`providers.issuer_enforced`** (default true): the opt-out of the issuer check below.
+
+### Changed
+
+- **Issuer provider is enforced (security).** With `providers.issuer` set, a record whose issuer NIF differs from the
+  provider's NIF is refused (`validation.issuer_nif.provider_mismatch`): it is never chained, signed nor submitted, so a
+  caller-supplied NIF can never select another issuer's certificate. Before, such a record kept its own NIF. Multi-NIF
+  hosts should make the provider return the issuer of the current tenant; `providers.issuer_enforced: false` restores
+  the 1.5 behaviour. The certificate provider receives the NIF upper-cased and trimmed.
+- **AEAT validations v1.2.2:** a foreign recipient with country ES takes IDType 03 or 07, and IDType 07 only with ES
+  (§3.1.3 item 13); ClaveRegimen only on IVA, IPSI (keys 01, 08, 11, 18, 19, 20) and IGIC lines, and the default
+  regime key is only applied to them (§15.6); exemptions E2 / E3 are refused under the general regime of IVA or IGIC,
+  also when 01 comes from `xml.default_regime_key` (§15.5).
+- **An unknown environment is refused** (`InvalidAeatEnvironmentException`), never routed to a default; the
+  environment provider returns `Model\AeatEnvironment`. The production / in-memory chain check also names
+  `providers.aeat_environment` when that is what triggered it.
+- **Temporary certificate file (worker-safe).** The fallback for runtimes without `CURLOPT_SSLCERT_BLOB` no longer
+  changes the process umask nor keeps static state: a fresh 0700 directory, the file created exclusively and set to
+  0600 before the secret is written, removed in `finally`, on destruction and, after a fatal error, by one shutdown
+  function per process over a registry of the files in flight (emptied as each file is deleted, so memory stays flat
+  in worker mode).
+
+- **Docs:** `ChainTransactionLostException` and UPGRADING say not to run any further statement of the lost unit of work
+  on the connection (audit KW-D2-I1).
+
 ## [1.5.0] - 2026-11-10
 
 Record store with attribute/XML mapping and verify-chain, runtime issuer and software-identity providers, one canonical amount in XML/hash/QR, Madrid timestamps, no host EM flush, and a concurrency-safe per-issuer chain lock. See [UPGRADING](https://github.com/nowo-tech/VerifactuBundle/blob/v1.5.0/docs/UPGRADING.md#to-150).

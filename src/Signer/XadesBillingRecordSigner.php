@@ -7,7 +7,9 @@ namespace Nowo\VerifactuBundle\Signer;
 use DOMDocument;
 use DOMElement;
 use InvalidArgumentException;
+use Nowo\VerifactuBundle\Certificate\Certificate;
 use Nowo\VerifactuBundle\Certificate\CertificateLoader;
+use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use RobRichards\XMLSecLibs\XMLSecurityDSig;
 use RobRichards\XMLSecLibs\XMLSecurityKey;
 use SensitiveParameter;
@@ -25,13 +27,17 @@ final class XadesBillingRecordSigner implements BillingRecordSignerInterface
     public const SERVICE_NAME = 'nowo_verifactu.signer.xades';
 
     /**
-     * Receives the certificate loader and the configured certificate path and password.
+     * Receives the certificate loader and the configured certificate path and password, or a certificate provider.
+     *
+     * With a provider, the certificate is asked on every signature for the issuer of the record (IDEmisorFactura /
+     * IDEmisorFacturaAnulada of the XML), and the static path is ignored.
      */
     public function __construct(
         private readonly CertificateLoader $certificateLoader,
         private readonly ?string $certificatePath = null,
         #[SensitiveParameter]
         private readonly ?string $certificatePassword = null,
+        private readonly ?CertificateProviderInterface $certificateProvider = null,
     ) {
     }
 
@@ -40,11 +46,14 @@ final class XadesBillingRecordSigner implements BillingRecordSignerInterface
      */
     public function sign(string $xml): string
     {
-        if ($this->certificatePath === null || $this->certificatePath === '') {
+        $certificate = $this->certificateProvider instanceof CertificateProviderInterface
+            ? $this->certificateProvider->getCertificate($this->issuerOf($xml))
+            : ($this->certificatePath === null || $this->certificatePath === '' ? null : Certificate::fromPath($this->certificatePath, $this->certificatePassword));
+        if (!$certificate instanceof Certificate) {
             throw new InvalidArgumentException('A certificate path is required for XAdES signing.');
         }
 
-        $material = $this->certificateLoader->load($this->certificatePath, $this->certificatePassword);
+        $material = $this->certificateLoader->loadCertificate($certificate);
 
         $document                     = new DOMDocument();
         $document->preserveWhiteSpace = false;
@@ -77,5 +86,13 @@ final class XadesBillingRecordSigner implements BillingRecordSignerInterface
         $dsig->appendSignature($root);
 
         return $document->saveXML() ?: $xml;
+    }
+
+    /**
+     * The issuer NIF of the record (the first IDEmisorFactura / IDEmisorFacturaAnulada; RegistroAnterior comes later).
+     */
+    private function issuerOf(string $xml): string
+    {
+        return preg_match('/<(?:[\w.-]+:)?IDEmisorFactura(?:Anulada)?>([^<]*)</', $xml, $matches) === 1 ? strtoupper(trim($matches[1])) : '';
     }
 }

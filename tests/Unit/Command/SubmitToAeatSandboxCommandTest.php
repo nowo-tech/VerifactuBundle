@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Unit\Command;
 
+use Nowo\VerifactuBundle\Certificate\Certificate;
 use Nowo\VerifactuBundle\Certificate\CertificateLoader;
+use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use Nowo\VerifactuBundle\Client\AeatEndpointResolver;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
@@ -13,7 +15,9 @@ use Nowo\VerifactuBundle\Command\SubmitToAeatSandboxCommand;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
 use Nowo\VerifactuBundle\Integration\InvoiceToBillingRecordMapper;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\HashChainState;
+use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
@@ -188,10 +192,27 @@ final class SubmitToAeatSandboxCommandTest extends TestCase
         self::assertSame('SANDBOX-001', $repository->getLastState('89890001K')?->invoiceSeriesNumber);
     }
 
+    public function testProvidersDecideTheEnvironmentAndTheCertificate(): void
+    {
+        $environments = $this->createMock(AeatEnvironmentProviderInterface::class);
+        $environments->method('getEnvironment')->willReturn(AeatEnvironment::Production);
+        $certificates = $this->createMock(CertificateProviderInterface::class);
+        $certificates->method('getCertificate')->willReturnOnConsecutiveCalls(null, Certificate::fromPath('/run/aeat.p12'));
+        $tester = $this->createTester($this->createProcessor(new NullAeatSubmissionClient()), null, 'sandbox', $environments, $certificates);
+
+        self::assertSame(1, $tester->execute(['--submit' => true]));
+        self::assertStringContainsString('AEAT certificate is not configured', $tester->getDisplay());
+
+        self::assertSame(1, $tester->execute(['--nif' => '89890001K', '--numserie' => 'FAC-1', '--submit' => true]));
+        self::assertStringContainsString('Refusing to submit to the AEAT "production" environment', $tester->getDisplay());
+    }
+
     private function createTester(
         BillingRecordProcessor $processor,
         ?string $certificatePath = null,
         string $environment = 'sandbox',
+        ?AeatEnvironmentProviderInterface $environmentProvider = null,
+        ?CertificateProviderInterface $certificateProvider = null,
     ): CommandTester {
         $command = new SubmitToAeatSandboxCommand(
             new InvoiceToBillingRecordMapper(),
@@ -199,6 +220,8 @@ final class SubmitToAeatSandboxCommandTest extends TestCase
             $certificatePath,
             $environment,
             ['nif' => '89890001K', 'name' => 'Test Issuer'],
+            $environmentProvider,
+            $certificateProvider,
         );
 
         return new CommandTester($command);

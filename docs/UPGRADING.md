@@ -33,6 +33,84 @@
 
 ## Unreleased
 
+From **1.5.0** — minor. With Doctrine storage, add two columns (below). With `providers.issuer`, check the issuer
+enforcement.
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- **Database: two nullable `environment` columns.** With `hash_chain.storage: doctrine` and/or
+  `record_store.storage: doctrine`, the chain head (`verifactu_hash_chain`) and the record log
+  (`verifactu_billing_record`) get `environment` (string, length 10, nullable: `sandbox` or `production`). Existing
+  rows keep null, which means the configured `nowo_verifactu.aeat.environment`: chains started before 1.6 continue as
+  they are. Generate the migration with `php bin/console doctrine:migrations:diff` and run
+  `php bin/console doctrine:migrations:migrate`, or apply the SQL below (add your `doctrine.table_prefix` to the table
+  names; skip a table you do not use):
+
+  ```sql
+  -- MySQL / MariaDB
+  ALTER TABLE verifactu_hash_chain ADD environment VARCHAR(10) DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD environment VARCHAR(10) DEFAULT NULL;
+
+  -- PostgreSQL
+  ALTER TABLE verifactu_hash_chain ADD environment VARCHAR(10) DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD environment VARCHAR(10) DEFAULT NULL;
+
+  -- SQLite
+  ALTER TABLE verifactu_hash_chain ADD COLUMN environment VARCHAR(10) DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN environment VARCHAR(10) DEFAULT NULL;
+  ```
+
+- **One AEAT environment per chain.** A record is never chained onto a head of the other environment
+  (`ChainEnvironmentMismatchException`). Before your first production record after testing in the sandbox with the
+  same issuer, run `php bin/console nowo:verifactu:reset-chain --issuer=<NIF>` (add `--force` in non-interactive
+  runs); the next record starts a new chain. `verify-chain` checks the environment of the current head unless you pass
+  `--environment`; after the reset, `--environment sandbox` reports the later production records, as that chain is
+  closed.
+- **Issuer enforcement (security).** With `providers.issuer` set, a record whose `issuerNif` differs from the provider's
+  NIF is now refused (`validation.issuer_nif.provider_mismatch`) and never chained, signed nor submitted. Why: the
+  certificate is selected by the record's NIF, so a caller-supplied NIF could otherwise make the bundle sign and submit
+  with another issuer's certificate. Recommended for multi-tenant hosts: make your `IssuerProviderInterface` return
+  the issuer of the current tenant (records may then leave `issuerNif` empty). Opt out only if your provider returns a
+  single issuer while you send records for several NIFs:
+
+  ```yaml
+  nowo_verifactu:
+      providers:
+          issuer: App\Verifactu\IssuerProvider
+          issuer_enforced: false
+  ```
+
+  Your `CertificateProviderInterface` then stays the only check: return a certificate only for NIFs the current user
+  or tenant may issue for.
+- **Environment provider values.** `AeatEnvironmentProviderInterface::getEnvironment()` returns
+  `Model\AeatEnvironment`; map stored values with `AeatEnvironment::fromValue()`, which throws
+  `InvalidAeatEnvironmentException` for anything but `sandbox` / `production` (never a silent fallback).
+- **Stricter AEAT rules** (validations v1.2.2): IDType 07 only with country ES (and ES only with 03 or 07),
+  ClaveRegimen only on IVA / IPSI / IGIC lines (IPSI: 01, 08, 11, 18, 19, 20), no E2 / E3 under ClaveRegimen 01 on
+  IVA or IGIC lines, including lines that get 01 from `xml.default_regime_key`.
+- **Custom SOAP transports.** A transport that only implements `SoapTransportInterface` (a decorator, a retrying or
+  logging transport) receives certificates given by contents as a temporary file on every submission. Implement
+  `CertificateAwareSoapTransportInterface` (delegating to `CurlSoapTransport::sendWithCertificate()`) to keep the key
+  in memory.
+
+- **Same XML for the same input.** The new `BillingRecord` / `InvoiceDraft` / `TaxBreakdown` arguments are optional and
+  trailing; a record built as in 1.5 produces the same RegistroAlta.
+- **Complete your records.** The AEAT rejects F1, F3 and R1 – R4 invoices without recipients and R1 – R5 without
+  TipoRectificativa. Pass `recipients` and `rectificationType` (and `rectifiedInvoices` / `rectificationAmount`), then
+  set `nowo_verifactu.validation.strict: true` so incomplete records are refused before they are chained. Pass a
+  ClaveRegimen per tax line or set `nowo_verifactu.xml.default_regime_key` (the AEAT rejects IVA lines without one from
+  2027-01-01).
+- **New validation messages** for the new fields only; existing records validate as before unless `strict` is on.
+- **Runtime environment and certificate.** Nothing changes with the static configuration. To read them from your
+  database, implement `AeatEnvironmentProviderInterface` / `CertificateProviderInterface` and set
+  `providers.aeat_environment` / `providers.certificate`. If you construct `SoapAeatSubmissionClient`,
+  `XadesBillingRecordSigner`, `VerifactuTwigExtension`, `AeatBusinessRulesValidator`, `BillingRecordXmlGenerator` or
+  `SubmitToAeatSandboxCommand` yourself, the new arguments are optional and last.
+- **After `ChainTransactionLostException`** run no further statement of that unit of work on the connection: it
+  autocommits on the reconnected session. Start a new transaction and redo the whole unit.
+
 ## To 1.5.0
 
 From **1.4.1**:

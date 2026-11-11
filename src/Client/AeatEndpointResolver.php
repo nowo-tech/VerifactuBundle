@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Client;
 
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
+
 /**
  * Resolves AEAT SOAP endpoints for Veri*Factu and No-Veri*Factu modes.
  *
@@ -16,10 +18,13 @@ final class AeatEndpointResolver
 
     /**
      * Returns the AEAT SOAP endpoint URL for the mode, environment and certificate type.
+     *
+     * @throws \Nowo\VerifactuBundle\Exception\InvalidAeatEnvironmentException for anything but sandbox / production
      */
-    public function resolve(string $mode, string $environment, string $certificateType = 'personal'): string
+    public function resolve(string $mode, AeatEnvironment|string $environment, string $certificateType = 'personal'): string
     {
-        $isSandbox = $environment === 'sandbox';
+        // Fail closed: before 1.6 any value other than exactly "sandbox" was sent to production.
+        $isSandbox = AeatEnvironment::fromValue($environment) === AeatEnvironment::Sandbox;
         $isSeal    = $certificateType === 'seal';
 
         if ($mode === 'no_verifactu') {

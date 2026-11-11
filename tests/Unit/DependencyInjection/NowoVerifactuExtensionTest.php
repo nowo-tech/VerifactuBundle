@@ -6,6 +6,8 @@ namespace Nowo\VerifactuBundle\Tests\Unit\DependencyInjection;
 
 use ArrayObject;
 use LogicException;
+use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
+use Nowo\VerifactuBundle\Certificate\ConfigCertificateProvider;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
@@ -13,6 +15,8 @@ use Nowo\VerifactuBundle\Command\VerifyChainCommand;
 use Nowo\VerifactuBundle\DependencyInjection\NowoVerifactuExtension;
 use Nowo\VerifactuBundle\Doctrine\TablePrefixListener;
 use Nowo\VerifactuBundle\EventSubscriber\WorkerStateResetSubscriber;
+use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
+use Nowo\VerifactuBundle\Provider\ConfigAeatEnvironmentProvider;
 use Nowo\VerifactuBundle\Provider\ConfigIssuerProvider;
 use Nowo\VerifactuBundle\Provider\ConfigSoftwareIdentityProvider;
 use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
@@ -393,6 +397,21 @@ final class NowoVerifactuExtensionTest extends TestCase
         self::assertSame('app.software', (string) $container->getAlias(SoftwareIdentityProviderInterface::class));
     }
 
+    public function testIssuerEnforcementFollowsTheIssuerProviderAndCanBeTurnedOff(): void
+    {
+        $static = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[]], $static);
+        self::assertFalse($static->getParameter('nowo_verifactu.providers.issuer_enforced'));
+
+        $provider = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['providers' => ['issuer' => 'app.issuer']]], $provider);
+        self::assertTrue($provider->getParameter('nowo_verifactu.providers.issuer_enforced'));
+
+        $optOut = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['providers' => ['issuer' => 'app.issuer', 'issuer_enforced' => false]]], $optOut);
+        self::assertFalse($optOut->getParameter('nowo_verifactu.providers.issuer_enforced'));
+    }
+
     public function testWithoutRecordStoreTheChainVerifierIsRemoved(): void
     {
         $container = new ContainerBuilder();
@@ -473,5 +492,40 @@ final class NowoVerifactuExtensionTest extends TestCase
         $loaded = new ContainerBuilder();
         (new NowoVerifactuExtension())->load([['doctrine' => ['mapping' => 'xml']]], $loaded);
         self::assertSame('xml', $loaded->getParameter('nowo_verifactu.doctrine.mapping'));
+    }
+
+    public function testCompletenessAndRuntimeProviderOptions(): void
+    {
+        $defaults = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[]], $defaults);
+        self::assertFalse($defaults->getParameter('nowo_verifactu.validation.strict'));
+        self::assertNull($defaults->getParameter('nowo_verifactu.xml.default_regime_key'));
+        self::assertSame(ConfigAeatEnvironmentProvider::class, (string) $defaults->getAlias(AeatEnvironmentProviderInterface::class));
+        self::assertSame(ConfigCertificateProvider::class, (string) $defaults->getAlias(CertificateProviderInterface::class));
+        self::assertSame(NullAeatSubmissionClient::class, (string) $defaults->getAlias('nowo_verifactu.aeat_submission_client'));
+
+        $custom = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[
+            'mode'       => 'no_verifactu',
+            'validation' => ['strict' => true],
+            'xml'        => ['default_regime_key' => '01'],
+            'providers'  => ['aeat_environment' => 'app.environment', 'certificate' => 'app.certificates'],
+            'hash_chain' => ['storage' => 'doctrine'],
+        ]], $custom);
+        self::assertTrue($custom->getParameter('nowo_verifactu.validation.strict'));
+        self::assertSame('01', $custom->getParameter('nowo_verifactu.xml.default_regime_key'));
+        self::assertSame('app.environment', (string) $custom->getAlias(AeatEnvironmentProviderInterface::class));
+        self::assertSame('app.certificates', (string) $custom->getAlias(CertificateProviderInterface::class));
+        self::assertSame(SoapAeatSubmissionClient::class, (string) $custom->getAlias(AeatSubmissionClientInterface::class), 'A certificate provider enables the SOAP client');
+        self::assertSame(XadesBillingRecordSigner::class, (string) $custom->getAlias(BillingRecordSignerInterface::class));
+    }
+
+    public function testARuntimeEnvironmentProviderCountsAsProductionForTheChainStorageCheck(): void
+    {
+        $this->expectException(LogicException::class);
+
+        (new NowoVerifactuExtension())->load([[
+            'providers' => ['aeat_environment' => 'app.environment', 'certificate' => 'app.certificates'],
+        ]], new ContainerBuilder());
     }
 }

@@ -7,6 +7,7 @@ The bundle provides console commands for common Veri*Factu operations.
 - [Validate billing record](#validate-billing-record)
 - [Verify hash](#verify-hash)
 - [Verify a stored chain](#verify-a-stored-chain)
+- [Reset a chain](#reset-a-chain)
 - [Submit to AEAT sandbox](#submit-to-aeat-sandbox)
 
 ## Validate billing record
@@ -43,7 +44,7 @@ accepted, as the AEAT treats both forms as equal.
 ## Verify a stored chain
 
 ```bash
-php bin/console nowo:verifactu:verify-chain --issuer=89890001K [--anchor=<hash of the head before the log started>]
+php bin/console nowo:verifactu:verify-chain --issuer=89890001K [--environment=sandbox|production] [--anchor=<hash of the head before the log started>]
 ```
 
 Available when a record store is configured (`nowo_verifactu.record_store`). Walks every stored record of the issuer
@@ -52,6 +53,22 @@ and checks consecutive positions, each fingerprint, each previous-hash link, tha
 `0` when valid, `1` with a table of problems otherwise, `2` without `--issuer`. When the log was enabled on an issuer
 that already had a chain, the first stored record continues from the old head: the command prints that hash, and
 `--anchor` requires it to be exactly the given one. The Doctrine store is read in pages of 500 records.
+
+One AEAT environment is checked at a time: by default the environment of the current chain head (`--environment` picks
+another). Records of the environment used before a reset are skipped; a record of another environment inside the chain
+is reported. Rows written before 1.6 count as the configured `aeat.environment`. A reset closes the chain of the older
+environment: after a sandbox → production reset, `verify-chain --environment sandbox` reports the later production
+records (and the head) as problems. That is expected; verify the current environment instead.
+
+## Reset a chain
+
+```bash
+php bin/console nowo:verifactu:reset-chain --issuer=89890001K [--force]
+```
+
+Removes the chain head of the issuer, so its next record starts a new chain (no previous hash). Needed before the first
+production record of an issuer that was tested in the sandbox: a record is never chained onto a head of the other
+environment. Stored records are kept. Asks for confirmation; `--force` skips it (required in non-interactive runs).
 
 ## Submit to AEAT sandbox
 

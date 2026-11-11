@@ -36,6 +36,12 @@ final class InvoiceToBillingRecordMapper
             $invoice->taxBreakdown,
             issuerName: $invoice->issuerName,
             operationDescription: $invoice->operationDescription,
+            recipients: $invoice->recipients,
+            rectificationType: $invoice->rectificationType,
+            rectifiedInvoices: $invoice->rectifiedInvoices,
+            substitutedInvoices: $invoice->substitutedInvoices,
+            rectificationAmount: $invoice->rectificationAmount,
+            operationDate: $invoice->operationDate,
         );
     }
 }

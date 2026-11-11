@@ -14,13 +14,19 @@ use Nowo\VerifactuBundle\Event\AfterBillingRecordGeneratedEvent;
 use Nowo\VerifactuBundle\Event\BeforeAeatSubmissionEvent;
 use Nowo\VerifactuBundle\Event\BeforeBillingRecordGenerationEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
+use Nowo\VerifactuBundle\Exception\ChainEnvironmentMismatchException;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\IssuerIdentity;
+use Nowo\VerifactuBundle\Model\Recipient;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Model\RectifiedInvoice;
 use Nowo\VerifactuBundle\Model\SoftwareIdentity;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
+use Nowo\VerifactuBundle\Model\TaxBreakdown;
+use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
 use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
@@ -697,6 +703,42 @@ final class BillingRecordProcessorTest extends TestCase
         self::assertSame('89890001K', $result['record']->issuerNif);
     }
 
+    public function testAnEnforcedIssuerProviderRefusesARecordForAnotherNif(): void
+    {
+        $issuer = $this->createMock(IssuerProviderInterface::class);
+        $issuer->method('getIssuer')->willReturn(new IssuerIdentity('B12345674', 'Provider Issuer'));
+        $store = new InMemoryBillingRecordStore();
+
+        $result = $this->createProcessor(recordStore: $store, issuerProvider: $issuer, enforceProviderIssuer: true)->process($this->createValidRecord('FAC-OTHER-1'), true);
+
+        self::assertSame(['validation.issuer_nif.provider_mismatch'], $result['errors']);
+        self::assertNull($result['record']->hash);
+        self::assertNull($this->repository->getLastState('89890001K'));
+        self::assertSame([], $store->findByIssuer('89890001K'));
+    }
+
+    public function testRecordsCarryTheEnvironmentAndAChainNeverCrossesEnvironments(): void
+    {
+        $environments = $this->createMock(AeatEnvironmentProviderInterface::class);
+        $environments->method('getEnvironment')->willReturnOnConsecutiveCalls(AeatEnvironment::Sandbox, AeatEnvironment::Production, AeatEnvironment::Production);
+        $processor = $this->createProcessor(environmentProvider: $environments);
+
+        $first = $processor->process($this->createValidRecord('FAC-ENV-1'));
+        self::assertSame(AeatEnvironment::Sandbox, $first['record']->environment);
+        self::assertSame(AeatEnvironment::Sandbox, $this->repository->getLastState('89890001K')?->environment);
+
+        try {
+            $processor->process($this->createValidRecord('FAC-ENV-2'));
+            self::fail('A production record was chained onto a sandbox head.');
+        } catch (ChainEnvironmentMismatchException) {
+        }
+
+        $this->repository->reset('89890001K');
+        $third = $processor->process($this->createValidRecord('FAC-ENV-3'));
+        self::assertSame(AeatEnvironment::Production, $third['record']->environment);
+        self::assertNull($third['record']->previousHash);
+    }
+
     public function testRecordStoreReceivesTheChainedRecordAndTheSubmissionOutcome(): void
     {
         $store     = new InMemoryBillingRecordStore();
@@ -744,6 +786,32 @@ final class BillingRecordProcessorTest extends TestCase
         self::assertStringNotContainsString('database gone', json_encode($logger->records, JSON_THROW_ON_ERROR));
     }
 
+    public function testCompleteRecordFieldsSurviveChainingAndPassTheAeatSchema(): void
+    {
+        $record = new BillingRecord(
+            RecordType::Alta,
+            '89890001K',
+            'R-2026-001',
+            '09-07-2026',
+            'R1',
+            '21.00',
+            '121.00',
+            '',
+            taxBreakdown: [new TaxBreakdown('01', '21.00', '100.00', '21.00', '01', 'S1')],
+            recipients: [Recipient::withForeignId('Kunde GmbH', Recipient::ID_TYPE_VAT_NUMBER, 'DE123456789', 'DE')],
+            rectificationType: 'I',
+            rectifiedInvoices: [new RectifiedInvoice('89890001K', 'FAC-2026-001', '01-07-2026')],
+            operationDate: '30-06-2026',
+        );
+
+        $result = $this->processor->process($record);
+
+        self::assertSame([], $result['errors'], 'XSD validation is on in this processor');
+        self::assertSame($record->recipients, $result['record']->recipients);
+        self::assertStringContainsString('<TipoRectificativa>I</TipoRectificativa>', (string) $result['record']->xml);
+        self::assertStringContainsString('<Destinatarios>', (string) $result['record']->xml);
+    }
+
     private function recordWithoutIssuer(string $seriesNumber): BillingRecord
     {
         return new BillingRecord(RecordType::Alta, '', $seriesNumber, '09-07-2026', 'F1', '21.00', '121.00', '2026-07-09T16:00:00+02:00');
@@ -776,6 +844,8 @@ final class BillingRecordProcessorTest extends TestCase
         ?BillingRecordStoreInterface $recordStore = null,
         ?IssuerProviderInterface $issuerProvider = null,
         ?SoftwareIdentityProviderInterface $softwareIdentityProvider = null,
+        ?AeatEnvironmentProviderInterface $environmentProvider = null,
+        bool $enforceProviderIssuer = false,
     ): BillingRecordProcessor {
         $translator = $this->createMock(TranslatorInterface::class);
         $translator->method('trans')->willReturnCallback(TranslationHelper::createTranslatorCallback());
@@ -804,6 +874,10 @@ final class BillingRecordProcessorTest extends TestCase
             $recordStore,
             $issuerProvider,
             $softwareIdentityProvider,
+            null,
+            $environmentProvider,
+            'sandbox',
+            $enforceProviderIssuer,
         );
     }
 }

@@ -8,6 +8,7 @@
 - [Dates in Europe/Madrid](#dates-in-europemadrid)
 - [Issuer and software identity at runtime](#issuer-and-software-identity-at-runtime)
 - [Record store and chain verification](#record-store-and-chain-verification)
+- [Complete records: recipients, rectifications, tax qualification](#complete-records-recipients-rectifications-tax-qualification)
 - [Hash only](#hash-only)
 - [QR in Twig](#qr-in-twig)
 - [Console](#console)
@@ -156,6 +157,53 @@ exact starting hash. The Doctrine store reads the log in pages, so long chains v
 the submission result is still returned and the exception is in `$result['store_errors']`. Your invoice references the
 record by issuer NIF and hash (or position); there is no Doctrine relation to your entities.
 
+## Complete records: recipients, rectifications, tax qualification
+
+The AEAT needs more than the totals for most invoices. All of these are optional constructor arguments of
+`BillingRecord` (and `InvoiceDraft`, for the mapper); left out, the XML is the one of 1.5.
+
+```php
+use Nowo\VerifactuBundle\Model\{BillingRecord, Recipient, RecordType, RectificationAmount, RectifiedInvoice, TaxBreakdown};
+
+// F1 to a customer in another EU country, reverse charge, OSS regime key
+$record = new BillingRecord(
+    RecordType::Alta, '89890001K', 'FAC-2026-100', '09-07-2026', 'F1', '0.00', '100.00', '',
+    taxBreakdown: [new TaxBreakdown('01', '0', '100.00', '0', regimeKey: '17', qualification: 'S2')],
+    recipients: [Recipient::withForeignId('Kunde GmbH', Recipient::ID_TYPE_VAT_NUMBER, 'DE123456789', 'DE')],
+);
+
+// Outside the EU (not subject by location rules): no rate nor tax in the XML
+new TaxBreakdown('01', '', '100.00', '', regimeKey: '01', qualification: 'N2');
+
+// Exempt line
+new TaxBreakdown('01', '', '50.00', '', regimeKey: '01', exemption: 'E1');
+
+// Rectifying invoice by differences
+new BillingRecord(
+    RecordType::Alta, '89890001K', 'R-2026-001', '09-07-2026', 'R1', '-21.00', '-121.00', '',
+    taxBreakdown: [new TaxBreakdown('01', '21.00', '-100.00', '-21.00', '01', 'S1')],
+    recipients: [Recipient::withNif('Cliente SL', 'B12345674')],
+    rectificationType: BillingRecord::RECTIFICATION_BY_DIFFERENCES,
+    rectifiedInvoices: [new RectifiedInvoice('89890001K', 'FAC-2026-001', '01-07-2026')],
+);
+// By substitution: rectificationType: 'S' plus rectificationAmount: new RectificationAmount($base, $tax)
+```
+
+| AEAT element | Argument | Rule (validations v1.2.2, §3.1.3) |
+| --- | --- | --- |
+| Destinatarios | `recipients` | Required on F1, F3, R1 – R4; not allowed on F2, R5 (item 13). NIF, or IDOtro: IDType 02 – 07, country code unless 02, `ES` only with 07. |
+| TipoRectificativa | `rectificationType` | `S` or `I`, only and (with `strict`) always on R1 – R5 (item 3). |
+| FacturasRectificadas / FacturasSustituidas | `rectifiedInvoices` / `substitutedInvoices` | R1 – R5 / F3 only (items 4, 5). |
+| ImporteRectificacion | `rectificationAmount` | With, and only with, `S` (item 6). |
+| FechaOperacion | `operationDate` | When it differs from the issue date (item 7). |
+| ClaveRegimen | `TaxBreakdown::$regimeKey` or `xml.default_regime_key` | AEAT list L8A; rejected without it for IVA from 2027 (§15.6). |
+| CalificacionOperacion / OperacionExenta | `qualification` / `exemption` | One of them; S2 with rate and tax 0; N1, N2, E1 – E8 without rate nor tax (§15.4, §15.5). |
+
+Set `nowo_verifactu.validation.strict: true` to refuse F1 / F3 / R1 – R4 without recipients and R1 – R5 without
+TipoRectificativa before anything is chained. The element order and types follow the official
+`SuministroInformacion.xsd` (shipped in `src/Resources/schemas/aeat`), and the tests validate every combination above
+against it.
+
 ## Hash only
 
 ```php
@@ -295,7 +343,9 @@ domain event when the AEAT answers, either map `$result['submission']` in the ad
 - `Repository\HashChainRepositoryInterface` (or `LockableHashChainRepositoryInterface`) via `hash_chain.repository`,
   to keep the chain in your own persistence.
 - `Repository\BillingRecordStoreInterface` via `record_store.service`, to keep the record log in your own persistence.
-- `Provider\IssuerProviderInterface` / `Provider\SoftwareIdentityProviderInterface` via `providers.*`.
+- `Provider\IssuerProviderInterface` / `Provider\SoftwareIdentityProviderInterface` /
+  `Provider\AeatEnvironmentProviderInterface` / `Certificate\CertificateProviderInterface` via `providers.*` (values
+  kept in your database, resolved on every call; see [CONFIGURATION](CONFIGURATION.md#runtime-aeat-environment-and-certificate)).
 - `Client\AeatSubmissionClientInterface` via `aeat.submission_client`; `Signer\BillingRecordSignerInterface`.
 
 ### Known limitations
@@ -308,7 +358,7 @@ domain event when the AEAT answers, either map `$result['submission']` in the ad
   same issuer wait meanwhile.
 - Retrying: outside a transaction of yours, retry `process()` on a DBAL `RetryableException`. Inside your transaction,
   roll back and retry the whole unit of work; on `ChainTransactionLostException` (MySQL / MariaDB deadlock) your
-  transaction is already gone and the connection was closed, so just start the unit of work again
+  transaction is already gone and the connection was closed, so run nothing more of it and start the unit of work again
   ([CONFIGURATION](CONFIGURATION.md#hash-chain-persistence)).
 
 ## Forms in Twig (REQ-TWIG-005)

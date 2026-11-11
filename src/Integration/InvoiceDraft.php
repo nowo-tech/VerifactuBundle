@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Integration;
 
+use Nowo\VerifactuBundle\Model\Recipient;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Model\RectificationAmount;
+use Nowo\VerifactuBundle\Model\RectifiedInvoice;
 use Nowo\VerifactuBundle\Model\TaxBreakdown;
 
 /**
@@ -22,6 +25,9 @@ final class InvoiceDraft
      *
      * @param list<\Nowo\VerifactuBundle\Model\InvoiceLine> $lines
      * @param list<TaxBreakdown> $taxBreakdown
+     * @param list<Recipient> $recipients
+     * @param list<RectifiedInvoice> $rectifiedInvoices
+     * @param list<RectifiedInvoice> $substitutedInvoices
      */
     public function __construct(
         public readonly string $issuerNif,
@@ -36,6 +42,12 @@ final class InvoiceDraft
         public readonly ?string $operationDescription = null,
         public readonly array $lines = [],
         public readonly array $taxBreakdown = [],
+        public readonly array $recipients = [],
+        public readonly ?string $rectificationType = null,
+        public readonly array $rectifiedInvoices = [],
+        public readonly array $substitutedInvoices = [],
+        public readonly ?RectificationAmount $rectificationAmount = null,
+        public readonly ?string $operationDate = null,
     ) {
     }
 }

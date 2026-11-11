@@ -1,6 +1,7 @@
 validation:
   issuer_nif:
     invalid: 'Le NIF/CIF/NIE de l''émetteur est invalide.'
+    provider_mismatch: 'L''identifiant fiscal de l''émetteur de l''enregistrement n''est pas l''émetteur de cette application (fournisseur d''émetteur).'
   invoice_series_number:
     empty: 'La série et le numéro de facture ne peuvent pas être vides.'
   issue_date:
@@ -17,3 +18,32 @@ validation:
     parse_failed: 'XML invalide : %errors%'
     xsd:
       failed: 'Échec de la validation XSD : %errors%'
+  rectification_type:
+    invalid: 'Le type de rectification (TipoRectificativa) doit être S ou I, et seules les factures rectificatives (R1–R5) peuvent le porter.'
+    missing: 'Les factures rectificatives (R1–R5) exigent un type de rectification (S ou I).'
+  rectified_invoices:
+    not_allowed: 'Les factures rectifiées ne peuvent figurer que sur des factures rectificatives (R1–R5).'
+  substituted_invoices:
+    not_allowed: 'Les factures remplacées ne peuvent figurer que sur des factures F3.'
+  invoice_reference:
+    invalid: 'Chaque facture référencée exige un identifiant fiscal d''émetteur valide, une série et un numéro et une date jj-mm-aaaa.'
+  rectification_amount:
+    invalid: 'Les montants rectifiés (base et taxe, nombres valides) sont obligatoires avec le type de rectification S et interdits sinon.'
+  operation_date:
+    invalid: 'La date d''opération doit être une date réelle au format jj-mm-aaaa.'
+  recipients:
+    not_allowed: 'Les factures F2 et R5 ne peuvent pas indiquer de destinataires.'
+    missing: 'Les factures F1, F3 et R1–R4 exigent au moins un destinataire.'
+  recipient:
+    invalid: 'Chaque destinataire exige un nom et soit un identifiant fiscal espagnol valide, soit un identifiant étranger (type 02–07, code pays à deux lettres sauf avec le type 02, ES seulement avec le type 07).'
+  tax_breakdown:
+    qualification:
+      invalid: 'Chaque ligne de taxe porte soit une qualification (S1, S2, N1, N2), soit une exonération (E1–E8), pas les deux.'
+    regime_key:
+      invalid: 'La clé de régime (ClaveRegimen) n''est pas une valeur de l''AEAT.'
+    exemption_regime:
+      invalid: 'Sous le régime général (ClaveRegimen 01), les exonérations E2 et E3 ne sont pas admises.'
+    reverse_charge:
+      invalid: 'Les lignes en autoliquidation (S2) exigent un taux 0 et une taxe 0, et sont interdites sur les factures F2 et R5.'
+    not_taxed:
+      invalid: 'Les lignes non assujetties (N1, N2) et exonérées ne portent pas de taxe : le montant de taxe doit être 0 ou vide.'

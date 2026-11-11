@@ -978,12 +978,30 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *     installation?: array{
  *         number?: scalar|Param|null, // Default: "001"
  *     },
+ *     providers?: array{ // Runtime providers, resolved on every record (e.g. values the host keeps in its database). Null = the static issuer / software / installation configuration.
+ *         issuer?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Provider\IssuerProviderInterface // Default: null
+ *         issuer_enforced?: bool|Param, // With providers.issuer set, refuse records whose issuer NIF differs from the provider (never signed nor submitted with that certificate). Opt out (false) only for multi-NIF hosts whose provider returns a single issuer; a per-tenant issuer provider is preferred. // Default: true
+ *         software_identity?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface // Default: null
+ *         aeat_environment?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface (null = aeat.environment) // Default: null
+ *         certificate?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Certificate\CertificateProviderInterface, per issuer NIF (null = aeat.certificate_path / certificate_password) // Default: null
+ *     },
  *     hash_chain?: array{
  *         storage?: "memory"|"doctrine"|Param, // Default: "memory"
  *         repository?: scalar|Param|null, // Default: null
  *         table_prefix?: scalar|Param|null, // Deprecated: The "nowo_verifactu.hash_chain.table_prefix.table_prefix" option is deprecated and has no effect: use "nowo_verifactu.doctrine.table_prefix" (prepended to the verifactu_hash_chain table name) instead. // Deprecated: never read. Use doctrine.table_prefix to prefix the verifactu_hash_chain table. // Default: "verifactu_"
  *     },
+ *     validation?: array{
+ *         strict?: bool|Param, // Also reject records the AEAT rejects for a field 1.5 could not send: recipients on F1, F3, R1 – R4 and TipoRectificativa on R1 – R5 (validations v1.2.2, §3.1.3 items 3 and 13). Recommended; false keeps 1.5 behaviour. // Default: false
+ *     },
+ *     xml?: array{
+ *         default_regime_key?: null|"01"|"02"|"03"|"04"|"05"|"06"|"07"|"08"|"09"|"10"|"11"|"14"|"15"|"17"|"18"|"19"|"20"|"21"|Param, // ClaveRegimen written on tax lines that bring none (e.g. "01", general regime). Null omits it (1.5 output); the AEAT rejects IVA records without it from 2027-01-01 (validations v1.2.2, §15.6). // Default: null
+ *     },
+ *     record_store?: array{ // Optional log of every chained record (hash, XML, submission state) and the nowo:verifactu:verify-chain command
+ *         storage?: "none"|"memory"|"doctrine"|Param, // Default: "none"
+ *         service?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface (overrides storage) // Default: null
+ *     },
  *     doctrine?: array{ // Doctrine storage options (REQ-ORM-002)
+ *         mapping?: "attribute"|"xml"|Param, // Mapping of the bundle entities: attribute (default) or xml (Resources/config/doctrine/*.orm.xml, for hosts that only load XML mappings) // Default: "attribute"
  *         table_prefix?: scalar|Param|null, // Prefix prepended to every bundle table, index and unique constraint name (e.g. "app_" yields app_verifactu_hash_chain). Empty = historical verifactu_hash_chain name. // Default: ""
  *     },
  *     aeat?: array{

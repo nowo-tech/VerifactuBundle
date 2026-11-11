@@ -16,6 +16,8 @@ services:
             - '../../Repository/DoctrineBillingRecordStore.php'
             - '../../Clock/'
             - '../../Exception/'
+            - '../../Certificate/Certificate.php'
+            - '../../Certificate/TemporaryCertificateFile.php'
 
     Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface:
         alias: Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository
@@ -45,6 +47,30 @@ services:
     Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface:
         alias: Nowo\VerifactuBundle\Provider\ConfigSoftwareIdentityProvider
 
+    Nowo\VerifactuBundle\Provider\ConfigAeatEnvironmentProvider:
+        arguments:
+            $environment: '%nowo_verifactu.aeat.environment%'
+
+    Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface:
+        alias: Nowo\VerifactuBundle\Provider\ConfigAeatEnvironmentProvider
+
+    Nowo\VerifactuBundle\Certificate\ConfigCertificateProvider:
+        arguments:
+            $certificatePath: '%nowo_verifactu.aeat.certificate_path%'
+            $certificatePassword: '%nowo_verifactu.aeat.certificate_password%'
+
+    Nowo\VerifactuBundle\Certificate\CertificateProviderInterface:
+        alias: Nowo\VerifactuBundle\Certificate\ConfigCertificateProvider
+
+    Nowo\VerifactuBundle\Validator\AeatBusinessRulesValidator:
+        arguments:
+            $strict: '%nowo_verifactu.validation.strict%'
+            $defaultRegimeKey: '%nowo_verifactu.xml.default_regime_key%'
+
+    Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator:
+        arguments:
+            $defaultRegimeKey: '%nowo_verifactu.xml.default_regime_key%'
+
     Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface:
         alias: Nowo\VerifactuBundle\Client\NullAeatSubmissionClient
 
@@ -61,12 +87,15 @@ services:
             $certificatePassword: '%nowo_verifactu.aeat.certificate_password%'
             $certificateType: '%nowo_verifactu.aeat.certificate_type%'
             $timeout: '%nowo_verifactu.aeat.timeout%'
+            $certificateProvider: '@Nowo\VerifactuBundle\Certificate\CertificateProviderInterface'
+            $environmentProvider: '@Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface'
             $issuerProvider: '@Nowo\VerifactuBundle\Provider\IssuerProviderInterface'
 
     Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner:
         arguments:
             $certificatePath: '%nowo_verifactu.aeat.certificate_path%'
             $certificatePassword: '%nowo_verifactu.aeat.certificate_password%'
+            $certificateProvider: '@Nowo\VerifactuBundle\Certificate\CertificateProviderInterface'
 
     Nowo\VerifactuBundle\Service\BillingRecordProcessor:
         arguments:
@@ -81,6 +110,13 @@ services:
             $issuerProvider: '@Nowo\VerifactuBundle\Provider\IssuerProviderInterface'
             $softwareIdentityProvider: '@Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface'
             $clock: '@?clock'
+            $environmentProvider: '@Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface'
+            $defaultEnvironment: '%nowo_verifactu.aeat.environment%'
+            $enforceProviderIssuer: '%nowo_verifactu.providers.issuer_enforced%'
+
+    Nowo\VerifactuBundle\Service\ChainVerifier:
+        arguments:
+            $defaultEnvironment: '%nowo_verifactu.aeat.environment%'
 
     Nowo\VerifactuBundle\Qr\QrUrlBuilder:
         arguments:
@@ -90,6 +126,7 @@ services:
         arguments:
             $aeatEnvironment: '%nowo_verifactu.aeat.environment%'
             $qrConfig: '%nowo_verifactu.qr%'
+            $environmentProvider: '@Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface'
         tags:
             - { name: twig.extension }
 

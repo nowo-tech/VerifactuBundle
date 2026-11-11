@@ -6,11 +6,13 @@ namespace Nowo\VerifactuBundle\DependencyInjection;
 
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use LogicException;
+use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
 use Nowo\VerifactuBundle\Command\VerifyChainCommand;
 use Nowo\VerifactuBundle\Doctrine\TablePrefixListener;
+use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
 use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
@@ -80,6 +82,11 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         $container->setParameter('nowo_verifactu.aeat.sign_xades', $config['aeat']['sign_xades']);
         $container->setParameter('nowo_verifactu.doctrine.table_prefix', $config['doctrine']['table_prefix']);
         $container->setParameter('nowo_verifactu.doctrine.mapping', $config['doctrine']['mapping']);
+        $container->setParameter('nowo_verifactu.validation.strict', $config['validation']['strict']);
+        // A host issuer provider is the authority on the issuer NIF: records for another NIF are refused (opt-out:
+        // providers.issuer_enforced false, for multi-NIF hosts whose provider returns a single issuer).
+        $container->setParameter('nowo_verifactu.providers.issuer_enforced', $config['providers']['issuer'] !== null && $config['providers']['issuer_enforced']);
+        $container->setParameter('nowo_verifactu.xml.default_regime_key', $config['xml']['default_regime_key']);
 
         $this->assertPersistentChainForProduction($config);
         $this->configureHashChainRepository($container, $config);
@@ -133,15 +140,19 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
      */
     private function assertPersistentChainForProduction(array $config): void
     {
-        $submitsToAeat = $config['aeat']['submission_client'] !== null
-            || ($config['aeat']['certificate_path'] !== null && $config['aeat']['certificate_path'] !== '');
+        $submitsToAeat = $config['aeat']['submission_client'] !== null || $this->hasCertificate($config);
 
-        if ($config['aeat']['environment'] === 'production'
+        // A runtime environment provider may switch to production at any time, so it counts as production here.
+        if (($config['aeat']['environment'] === 'production' || $config['providers']['aeat_environment'] !== null)
             && $submitsToAeat
             && $config['hash_chain']['repository'] === null
             && $config['hash_chain']['storage'] === 'memory'
         ) {
-            throw new LogicException('nowo_verifactu.aeat.environment "production" submits records to the AEAT, but nowo_verifactu.hash_chain.storage is "memory" (request-scoped: every request would start a new hash chain). Set hash_chain.storage: doctrine or a persistent hash_chain.repository.');
+            $source = $config['aeat']['environment'] === 'production'
+                ? 'nowo_verifactu.aeat.environment "production"'
+                : 'nowo_verifactu.providers.aeat_environment (it may return production at runtime)';
+
+            throw new LogicException($source . ' submits records to the AEAT, but nowo_verifactu.hash_chain.storage is "memory" (request-scoped: every request would start a new hash chain). Set hash_chain.storage: doctrine or a persistent hash_chain.repository.');
         }
     }
 
@@ -199,6 +210,14 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         if ($config['providers']['software_identity'] !== null) {
             $container->setAlias(SoftwareIdentityProviderInterface::class, $config['providers']['software_identity']);
         }
+
+        if ($config['providers']['aeat_environment'] !== null) {
+            $container->setAlias(AeatEnvironmentProviderInterface::class, $config['providers']['aeat_environment']);
+        }
+
+        if ($config['providers']['certificate'] !== null) {
+            $container->setAlias(CertificateProviderInterface::class, $config['providers']['certificate']);
+        }
     }
 
     /**
@@ -251,7 +270,7 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
             return;
         }
 
-        if ($config['aeat']['certificate_path'] !== null && $config['aeat']['certificate_path'] !== '') {
+        if ($this->hasCertificate($config)) {
             $container->setAlias(AeatSubmissionClientInterface::class, SoapAeatSubmissionClient::class);
             $container->setAlias('nowo_verifactu.aeat_submission_client', SoapAeatSubmissionClient::class);
 
@@ -266,12 +285,20 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
      */
     private function configureSigner(ContainerBuilder $container, array $config): void
     {
-        if (($config['aeat']['sign_xades'] || $config['mode'] === 'no_verifactu')
-            && $config['aeat']['certificate_path'] !== null
-            && $config['aeat']['certificate_path'] !== ''
-        ) {
+        if (($config['aeat']['sign_xades'] || $config['mode'] === 'no_verifactu') && $this->hasCertificate($config)) {
             $container->setAlias(BillingRecordSignerInterface::class, XadesBillingRecordSigner::class);
         }
+    }
+
+    /**
+     * A static certificate path or a runtime certificate provider.
+     *
+     * @param array<string, mixed> $config
+     */
+    private function hasCertificate(array $config): bool
+    {
+        return ($config['aeat']['certificate_path'] !== null && $config['aeat']['certificate_path'] !== '')
+            || $config['providers']['certificate'] !== null;
     }
 
     /**

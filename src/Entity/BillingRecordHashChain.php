@@ -38,6 +38,11 @@ class BillingRecordHashChain
     #[ORM\Column(name: 'hash', type: Types::STRING, length: 64)]
     private string $hash;
 
+    /** AEAT environment of the chain (sandbox / production); null for heads written before 1.6. */
+    #[ORM\Column(name: 'environment', type: Types::STRING, length: 10, nullable: true)]
+    /** @phpstan-ignore property.unusedType (written by DoctrineHashChainRepository through DBAL) */
+    private ?string $environment = null;
+
     #[ORM\Column(name: 'updated_at', type: Types::DATETIME_IMMUTABLE)]
     private DateTimeImmutable $updatedAt;
 
@@ -95,6 +100,14 @@ class BillingRecordHashChain
     public function getHash(): string
     {
         return $this->hash;
+    }
+
+    /**
+     * Returns the AEAT environment of the chain (null for heads written before 1.6).
+     */
+    public function getEnvironment(): ?string
+    {
+        return $this->environment;
     }
 
     /**

@@ -8,9 +8,13 @@ use Nowo\VerifactuBundle\Model\Amount;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Model\RectificationAmount;
+use Nowo\VerifactuBundle\Model\RectifiedInvoice;
+use Nowo\VerifactuBundle\Model\TaxBreakdown;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
 use function htmlspecialchars;
+use function in_array;
 use function is_numeric;
 
 use const ENT_QUOTES;
@@ -29,6 +33,19 @@ final class BillingRecordXmlGenerator
     public const SERVICE_NAME = 'nowo_verifactu.generator.billing_record_xml_generator';
 
     public const NS_SUMINISTRO = 'https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/aplicaciones/es/aeat/tike/cont/ws/SuministroInformacion.xsd';
+
+    /** CalificacionOperacion / OperacionExenta values that carry no TipoImpositivo nor CuotaRepercutida. */
+    private const WITHOUT_RATE = ['N1', 'N2'];
+
+    /**
+     * Receives the ClaveRegimen written on breakdown lines that bring none (null = omitted, the output of 1.5).
+     *
+     * @param string|null $defaultRegimeKey nowo_verifactu.xml.default_regime_key
+     */
+    public function __construct(
+        private readonly ?string $defaultRegimeKey = null,
+    ) {
+    }
 
     /**
      * Renders the billing record XML (RegistroAlta or RegistroAnulacion).
@@ -74,7 +91,12 @@ final class BillingRecordXmlGenerator
         $xml .= $this->renderIdFactura($record);
         $xml .= '  <NombreRazonEmisor>' . $this->escape($issuerName) . '</NombreRazonEmisor>' . "\n";
         $xml .= '  <TipoFactura>' . $this->escape($record->invoiceType) . '</TipoFactura>' . "\n";
+        $xml .= $this->renderRectification($record);
+        if ($record->operationDate !== null && trim($record->operationDate) !== '') {
+            $xml .= '  <FechaOperacion>' . $this->escape($record->operationDate) . '</FechaOperacion>' . "\n";
+        }
         $xml .= '  <DescripcionOperacion>' . $this->escape($description) . '</DescripcionOperacion>' . "\n";
+        $xml .= $this->renderDestinatarios($record);
         $xml .= $this->renderDesglose($record);
         // The same canonical strings as the fingerprint (HashChainGenerator), so the XML and the Huella always agree.
         $xml .= '  <CuotaTotal>' . $this->escape(Amount::canonical($record->totalTaxAmount)) . '</CuotaTotal>' . "\n";
@@ -174,7 +196,82 @@ final class BillingRecordXmlGenerator
     }
 
     /**
-     * Renders one DetalleDesglose per TaxBreakdown entry; without breakdown, a single line derived from the totals.
+     * TipoRectificativa, FacturasRectificadas, FacturasSustituidas and ImporteRectificacion, in the XSD order; nothing
+     * when the record has none of them.
+     */
+    private function renderRectification(BillingRecord $record): string
+    {
+        $xml = '';
+        if ($record->rectificationType !== null && trim($record->rectificationType) !== '') {
+            $xml .= '  <TipoRectificativa>' . $this->escape($record->rectificationType) . '</TipoRectificativa>' . "\n";
+        }
+        $xml .= $this->renderInvoiceReferences('FacturasRectificadas', 'IDFacturaRectificada', $record->rectifiedInvoices);
+        $xml .= $this->renderInvoiceReferences('FacturasSustituidas', 'IDFacturaSustituida', $record->substitutedInvoices);
+
+        if ($record->rectificationAmount instanceof RectificationAmount) {
+            $amount = $record->rectificationAmount;
+            $xml .= '  <ImporteRectificacion>' . "\n";
+            $xml .= '    <BaseRectificada>' . $this->escape(Amount::canonical($amount->base)) . '</BaseRectificada>' . "\n";
+            $xml .= '    <CuotaRectificada>' . $this->escape(Amount::canonical($amount->tax)) . '</CuotaRectificada>' . "\n";
+            if ($amount->surcharge !== null) {
+                $xml .= '    <CuotaRecargoRectificado>' . $this->escape(Amount::canonical($amount->surcharge)) . '</CuotaRecargoRectificado>' . "\n";
+            }
+            $xml .= '  </ImporteRectificacion>' . "\n";
+        }
+
+        return $xml;
+    }
+
+    /**
+     * @param list<RectifiedInvoice> $invoices
+     */
+    private function renderInvoiceReferences(string $group, string $element, array $invoices): string
+    {
+        if ($invoices === []) {
+            return '';
+        }
+
+        $xml = '  <' . $group . '>' . "\n";
+        foreach ($invoices as $invoice) {
+            $xml .= '    <' . $element . '>' . "\n";
+            $xml .= '      <IDEmisorFactura>' . $this->escape($invoice->issuerNif) . '</IDEmisorFactura>' . "\n";
+            $xml .= '      <NumSerieFactura>' . $this->escape($invoice->invoiceSeriesNumber) . '</NumSerieFactura>' . "\n";
+            $xml .= '      <FechaExpedicionFactura>' . $this->escape($invoice->issueDate) . '</FechaExpedicionFactura>' . "\n";
+            $xml .= '    </' . $element . '>' . "\n";
+        }
+
+        return $xml . '  </' . $group . '>' . "\n";
+    }
+
+    private function renderDestinatarios(BillingRecord $record): string
+    {
+        if ($record->recipients === []) {
+            return '';
+        }
+
+        $xml = '  <Destinatarios>' . "\n";
+        foreach ($record->recipients as $recipient) {
+            $xml .= '    <IDDestinatario>' . "\n";
+            $xml .= '      <NombreRazon>' . $this->escape($recipient->name) . '</NombreRazon>' . "\n";
+            if ($recipient->nif !== null) {
+                $xml .= '      <NIF>' . $this->escape($recipient->nif) . '</NIF>' . "\n";
+            } else {
+                $xml .= '      <IDOtro>' . "\n";
+                if ($recipient->countryCode !== null && trim($recipient->countryCode) !== '') {
+                    $xml .= '        <CodigoPais>' . $this->escape(strtoupper($recipient->countryCode)) . '</CodigoPais>' . "\n";
+                }
+                $xml .= '        <IDType>' . $this->escape((string) $recipient->foreignIdType) . '</IDType>' . "\n";
+                $xml .= '        <ID>' . $this->escape((string) $recipient->foreignId) . '</ID>' . "\n";
+                $xml .= '      </IDOtro>' . "\n";
+            }
+            $xml .= '    </IDDestinatario>' . "\n";
+        }
+
+        return $xml . '  </Destinatarios>' . "\n";
+    }
+
+    /**
+     * Renders one DetalleDesglose per TaxBreakdown entry; without breakdown, a single S1 line derived from the totals.
      */
     private function renderDesglose(BillingRecord $record): string
     {
@@ -182,30 +279,48 @@ final class BillingRecordXmlGenerator
 
         if ($record->taxBreakdown !== []) {
             foreach ($record->taxBreakdown as $breakdown) {
-                $xml .= $this->renderDetalleDesglose($breakdown->taxRate, $breakdown->taxBase, $breakdown->taxAmount, $breakdown->taxType);
+                $xml .= $this->renderDetalleDesglose($breakdown);
             }
         } else {
             $taxBase = $this->calculateTaxBase($record->totalAmount, $record->totalTaxAmount);
-            $xml .= $this->renderDetalleDesglose($this->resolveTaxRate($record, $taxBase), $taxBase, $record->totalTaxAmount);
+            $xml .= $this->renderDetalleDesglose(new TaxBreakdown('', $this->resolveTaxRate($record, $taxBase), $taxBase, $record->totalTaxAmount));
         }
 
         return $xml . ('  </Desglose>' . "\n");
     }
 
     /**
-     * Impuesto (AEAT ImpuestoType: 01 IVA, 02 IPSI, 03 IGIC, 05 Otros) is the first child of DetalleDesglose
-     * and is optional (AEAT assumes 01 when absent), so it is only emitted when a tax type is given.
+     * DetalleDesglose in the XSD order: Impuesto?, ClaveRegimen?, CalificacionOperacion | OperacionExenta,
+     * TipoImpositivo?, BaseImponibleOimporteNoSujeto, CuotaRepercutida?. Impuesto (AEAT ImpuestoType: 01 IVA, 02 IPSI,
+     * 03 IGIC, 05 Otros) is optional (AEAT assumes 01). N1 / N2 and exempt lines carry no rate nor tax (validations
+     * v1.2.2, §15.4 and §15.5).
      */
-    private function renderDetalleDesglose(string $taxRate, string $taxBase, string $taxAmount, string $taxType = ''): string
+    private function renderDetalleDesglose(TaxBreakdown $breakdown): string
     {
+        // The default ClaveRegimen only applies to IVA (01 or no Impuesto), IPSI (02) and IGIC (03) lines (§15.6).
+        $regimeKey     = $breakdown->regimeKey ?? (in_array(trim($breakdown->taxType), ['', '01', '02', '03'], true) ? $this->defaultRegimeKey : null);
+        $exemption     = $breakdown->exemption !== null && trim($breakdown->exemption) !== '' ? trim($breakdown->exemption) : null;
+        $qualification = $exemption === null ? strtoupper(trim($breakdown->qualification ?? '')) : '';
+        $qualification = $exemption === null && $qualification === '' ? 'S1' : $qualification;
+        $withRate      = $exemption === null && !in_array($qualification, self::WITHOUT_RATE, true);
+
         $xml = '    <DetalleDesglose>' . "\n";
-        if (trim($taxType) !== '') {
-            $xml .= '      <Impuesto>' . $this->escape($taxType) . '</Impuesto>' . "\n";
+        if (trim($breakdown->taxType) !== '') {
+            $xml .= '      <Impuesto>' . $this->escape($breakdown->taxType) . '</Impuesto>' . "\n";
         }
-        $xml .= '      <CalificacionOperacion>S1</CalificacionOperacion>' . "\n";
-        $xml .= '      <TipoImpositivo>' . $this->escape($taxRate) . '</TipoImpositivo>' . "\n";
-        $xml .= '      <BaseImponibleOimporteNoSujeto>' . $this->escape($taxBase) . '</BaseImponibleOimporteNoSujeto>' . "\n";
-        $xml .= '      <CuotaRepercutida>' . $this->escape($taxAmount) . '</CuotaRepercutida>' . "\n";
+        if ($regimeKey !== null && trim($regimeKey) !== '') {
+            $xml .= '      <ClaveRegimen>' . $this->escape($regimeKey) . '</ClaveRegimen>' . "\n";
+        }
+        $xml .= $exemption !== null
+            ? '      <OperacionExenta>' . $this->escape($exemption) . '</OperacionExenta>' . "\n"
+            : '      <CalificacionOperacion>' . $this->escape($qualification) . '</CalificacionOperacion>' . "\n";
+        if ($withRate) {
+            $xml .= '      <TipoImpositivo>' . $this->escape($breakdown->taxRate) . '</TipoImpositivo>' . "\n";
+        }
+        $xml .= '      <BaseImponibleOimporteNoSujeto>' . $this->escape($breakdown->taxBase) . '</BaseImponibleOimporteNoSujeto>' . "\n";
+        if ($withRate) {
+            $xml .= '      <CuotaRepercutida>' . $this->escape($breakdown->taxAmount) . '</CuotaRepercutida>' . "\n";
+        }
 
         return $xml . ('    </DetalleDesglose>' . "\n");
     }

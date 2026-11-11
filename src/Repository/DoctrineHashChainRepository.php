@@ -13,6 +13,7 @@ use LogicException;
 use Nowo\VerifactuBundle\Doctrine\DbalRowWriter;
 use Nowo\VerifactuBundle\Entity\BillingRecordHashChain;
 use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 use Throwable;
@@ -128,6 +129,7 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
             'invoiceSeriesNumber' => trim($state->invoiceSeriesNumber),
             'issueDate'           => trim($state->issueDate),
             'hash'                => strtoupper(trim($state->hash)),
+            'environment'         => $state->environment?->value,
             'updatedAt'           => new DateTimeImmutable(),
         ], ['issuerNif' => $key]);
     }
@@ -163,6 +165,7 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
             $existing instanceof HashChainState ? $existing->invoiceSeriesNumber : '',
             $existing instanceof HashChainState ? $existing->issueDate : '',
             $hash,
+            $existing?->environment,
         ));
     }
 
@@ -196,6 +199,8 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
             (string) $row['invoiceSeriesNumber'],
             (string) $row['issueDate'],
             (string) $row['hash'],
+            // Null for heads written before 1.6: the processor applies the configured aeat.environment.
+            isset($row['environment']) ? AeatEnvironment::fromValue((string) $row['environment']) : null,
         );
     }
 
@@ -207,7 +212,7 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     private function findRow(EntityManagerInterface $entityManager, string $issuerNif, bool $lock): ?array
     {
         $query = $entityManager->createQueryBuilder()
-            ->select('h.issuerNif', 'h.invoiceSeriesNumber', 'h.issueDate', 'h.hash')
+            ->select('h.issuerNif', 'h.invoiceSeriesNumber', 'h.issueDate', 'h.hash', 'h.environment')
             ->from(BillingRecordHashChain::class, 'h')
             ->where('h.issuerNif = :issuerNif')
             ->setParameter('issuerNif', $this->normalizeKey($issuerNif))
