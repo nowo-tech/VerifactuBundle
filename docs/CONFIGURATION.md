@@ -184,11 +184,17 @@ message to an async transport. A custom `aeat.submission_client` must also imple
     record at fault goes alone; after `max_attempts` refusals on its own it is marked `failed`;
   - any other code (4103, 4109, 4113, 4114, 4138, new codes): the batch is halved the same way, but the record is then
     held as a suspect and other records go alone as probes (see USAGE). Unknown is the safe fallback.
+  Both lists take 4-digit AEAT codes (1000 – 9999). The issuer list wins at runtime, and the configuration refuses a
+  record code that is in `issuer_fault_codes` or in the default issuer list (`AeatFaultClassifier::DEFAULT_ISSUER_CODES`):
+  moving an issuer code such as 4104 to the record list would fail every record on a header error. To stop treating a
+  default issuer code as one, remove it from `issuer_fault_codes` only (it is then probed as unknown).
   Never counted: `Server` faults ("Reenviar mensaje"), HTML / empty / non-SOAP bodies, HTTP 401 / 403 / 404 / 405 / 407
   / 408 / 429 / 500 pages / 502 – 504 and transport errors; the records stay pending and, from the second request in a
-  row without an answer, `ISSUER_SUBMISSION_STALLED` is dispatched (at most once per `pause_seconds`).
-- **`pause_seconds`.** How long a paused issuer waits (kept in the flow control store with the key `pause|<NIF>`). The
-  container always wires a flow control; a submitter built by hand without one never pauses.
+  row without an answer (no answer in between; an earlier refusal does not count), `ISSUER_SUBMISSION_STALLED` is
+  dispatched (at most once per `pause_seconds`; marker key `noanswer|<NIF>` in the flow control store).
+- **`pause_seconds`.** How long a paused issuer waits (kept in the flow control store with the key `pause|<NIF>`; the
+  pending Messenger wake-up is `wake|<NIF>`). The container always wires a flow control; a submitter built by hand
+  without one never pauses and never dispatches `ISSUER_SUBMISSION_STALLED`.
 - **`duplicate_confirmation`.** See [duplicates](USAGE.md#batch-submission-to-the-aeat).
 
 ### XAdES signing (No-Veri*Factu)

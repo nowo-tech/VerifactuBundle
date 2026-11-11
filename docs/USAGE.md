@@ -214,7 +214,7 @@ After a Client refusal, its `Codigo[NNNN]` decides (`Submission\AeatFaultClassif
   `pending` with one more submission failure and the next batch is halved until the record at fault goes on its own.
   After `submission.max_attempts` refusals on its own it is marked `failed`,
   `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`, after the commit) is dispatched
-  and an error is logged; the records after it keep flowing. A run of bad records is failed one by one, never blocked;
+  and an error is logged; the records after it keep flowing. A run of bad records is failed one by one;
 - **any other code**: halved the same way, but a record refused on its own `max_attempts` times becomes a **suspect**
   (`held`) and other records go alone as **probes**: the next waiting record, the one after it, and, once
   `BillingRecordBatchSubmitter::MAX_SUSPECTS` (3) suspects are held, the **newest** waiting record (away from a run of
@@ -222,9 +222,14 @@ After a Client refusal, its `Codigo[NNNN]` decides (`Submission\AeatFaultClassif
   - A probe is answered: the AEAT accepts this issuer's requests. Every suspect turns `confirming` and is sent alone
     once more: refused again, it is marked `failed`; answered, it takes its answer (an issuer-wide error that went
     away never fails a healthy record).
-  - The suspects and the newest record are all refused: the error is issuer-wide. Nothing is failed; the suspects
-    stay `held` (failures kept, listed); the issuer is paused (reason `issuer_refused`, `heldPositions`). After the
-    pause the newest record goes alone again.
+  - The suspects and the newest record are all refused: the error is issuer-wide, or the newest record is bad too.
+    Nothing is failed; the suspects stay `held` (failures kept, listed) and the refused newest record is held with
+    them; the issuer is paused (reason `issuer_refused`, `heldPositions`). After the pause the newest record that is
+    not held goes alone: answered, every suspect (the held newest one included) is confirmed alone as above. So a run
+    of bad records followed by a bad newest record delays the healthy records between them by one pause per bad record
+    at the tail, and never blocks them until someone acts; a new invoice (a new newest record) or `--fail` ends it
+    sooner. While an issuer-wide error with an unknown code lasts, one more record is held per pause; each is
+    confirmed alone once the AEAT answers again (one request per `TiempoEsperaEnvio`).
   - A suspect and nothing else waiting: it cannot be told apart from an issuer error. It is never failed on its own
     word: the issuer is paused (reason `awaiting_probe`, `heldPositions`), the suspect is sent alone again after the
     pause, and the next invoice is the probe.
@@ -233,7 +238,11 @@ An answer resets the failures of a record. The operator always sees and can act:
 `nowo:verifactu:submit-pending --issuer=… --list` (`recordsToReview()`) lists the `unconfirmed`, `held`,
 `confirming` and `failed` records; `--fail=<position>` (`failRecord()`) marks a pending, held or confirming record
 failed by hand (RECORD_SUBMISSION_FAILED, `response` null); `--retry-failed` (`requeueFailed()`) puts back what the
-submitter (or `--fail`) failed. The Messenger message is dispatched again once at the end of each pause.
+submitter (or `--fail`) failed. `--fail` and `--retry-failed` take the issuer's chain lock, like a claim. A `pending`
+record with `submissionAttempts` above 0 was transmitted before and may be registered at the AEAT although its answer
+was lost: query it at the AEAT before failing it by hand. During a pause one Messenger message per issuer stays alive
+and is dispatched again once, at the end of the pause; every other message that finds the issuer paused is dropped
+(`BillingRecordBatchSubmitter::scheduleWakeUp()`, key `wake|<NIF>` in the flow control store).
 
 **Attempts and duplicates.** `submissionAttempts` counts the requests that carried the record, counted right before the
 request is transmitted (a claim that died before sending, or a client that failed before sending, is not an attempt).
@@ -252,7 +261,8 @@ used the same invoice id (FAQ v1.3 §6). Therefore:
 
 `IdPeticionRegistroDuplicado` and `EstadoRegistroDuplicado` are kept in `submissionError`. After checking an
 `unconfirmed` record at the AEAT, resolve it with `nowo:verifactu:submit-pending --issuer=… --resolve=<position>
---as=accepted|accepted_errors|rejected [--csv=…]` (`BillingRecordBatchSubmitter::resolveUnconfirmed()`). A batch claimed by a process
+--as=accepted|accepted_errors|rejected [--csv=…]` (`BillingRecordBatchSubmitter::resolveUnconfirmed()`; the CSV is at
+most 120 printable characters and is the operator's word, not checked at the AEAT). A batch claimed by a process
 that died is claimed again after `submission.claim_timeout`.
 
 **Flow control** (Orden HAC/1177/2024 art. 16.2 c; *Servicios web* §6.4.4.1, p. 40): the AEAT returns

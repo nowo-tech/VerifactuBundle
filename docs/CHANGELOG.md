@@ -46,23 +46,29 @@ store, add the new submission columns. See [UPGRADING](UPGRADING.md#unreleased).
   DTD in any encoding, no network; only `Correcto` / `ParcialmenteCorrecto` / `Incorrecto` are an answer). Records
   become `accepted`, `accepted_errors` or `rejected`; a record without a line goes back to `pending`; a request without
   an answer (transport error, HTTP 502 / 503 / 504) puts the batch back to `pending`.
-- **Requests refused as a whole never block an issuer, and never fail healthy records.** Only a SOAP Fault with
-  faultcode `Client` counts (*Servicios web* v1.0.3 §5.1); `Server` faults, HTML / empty bodies, HTTP 401 / 403 / 404 /
-  405 / 407 / 408 / 429 / 500 pages / 502 – 504 and transport errors leave the records pending and, when repeated,
-  dispatch `VerifactuEvents::ISSUER_SUBMISSION_STALLED` (at most once per `submission.pause_seconds`). The fault's
+- **Requests refused as a whole never fail healthy records, and a bad record never blocks an issuer for good.**
+  Only a SOAP Fault with faultcode `Client` counts (*Servicios web* v1.0.3 §5.1); `Server` faults, HTML / empty bodies, HTTP 401 / 403 / 404 /
+  405 / 407 / 408 / 429 / 500 pages / 502 – 504 and transport errors leave the records pending and, from the second
+  request in a row without any answer, dispatch `VerifactuEvents::ISSUER_SUBMISSION_STALLED` (at most once per
+  `submission.pause_seconds`). The fault's
   `Codigo` decides (`Submission\AeatFaultClassifier`, AEAT list of message-level errors, configurable with
-  `submission.issuer_fault_codes` / `record_fault_codes`): an issuer code (header, certificate, authorisation, e.g.
+  `submission.issuer_fault_codes` / `record_fault_codes`, 4-digit codes; a record code that is also an issuer code is
+  refused at container build): an issuer code (header, certificate, authorisation, e.g.
   4104) pauses the issuer at once; a record code (e.g. 4102) halves the batch until the record at fault goes alone and
   marks it `failed` after `submission.max_attempts` refusals; any other code holds that record as a suspect (`held`)
   and sends other records alone as probes (the next ones, then the newest): an answered probe turns the suspects
   `confirming` and each is sent alone once more (failed only if refused again); the suspects and the newest record all
-  refused pause the issuer, keeping the suspects. Runs of consecutive bad records are failed one by one, never block
-  the queue. `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`) and
+  refused pause the issuer, keeping the suspects, and the refused newest record is held too, so the next probe goes to
+  the record before it. Runs of consecutive bad records are failed one by one; when the newest records are bad too,
+  the healthy records wait one pause per bad record at the tail (a new invoice or `--fail` ends it sooner), never
+  until someone acts. `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`) and
   `VerifactuEvents::ISSUER_SUBMISSION_PAUSED` (`Event\IssuerSubmissionPausedEvent`, reason `issuer_refused` or
-  `awaiting_probe`, held positions, AEAT code) are dispatched after the commit; the Messenger message is dispatched
-  again at the end of a pause. `nowo:verifactu:submit-pending --list` / `--fail=<position>` / `--retry-failed` /
+  `awaiting_probe`, held positions, AEAT code) are dispatched after the commit; during a pause one Messenger message
+  per issuer stays alive and is dispatched again once at its end, the others are dropped (`wake|<NIF>` key). `nowo:verifactu:submit-pending --list` / `--fail=<position>` / `--retry-failed` /
   `--resolve` (`recordsToReview()`, `failRecord()`, `requeueFailed()`, `resolveUnconfirmed()`) let an operator see and
   act on every record that needs a person; `--retry-failed` puts back only what the submitter (or `--fail`) failed.
+  `--fail` and `--retry-failed` run under the issuer's chain lock, like a claim, so they never interleave with a batch
+  being claimed; `--csv` is checked against the stored column (at most 120 printable characters).
 - **Retries and duplicates.** Resends carry the same stored XML. An attempt is counted right before the request is
   transmitted (`BatchAeatSubmissionClientInterface::submitBatch($records, $beforeTransmit)`), never at the claim. An
   AEAT duplicate (`RegistroDuplicado`, no Huella) becomes a registered state only when a
@@ -108,6 +114,10 @@ store, add the new submission columns. See [UPGRADING](UPGRADING.md#unreleased).
   index `idx_verifactu_billing_record_submission`. `StoredBillingRecord` exposes the attempts, the submission failures
   and the last error.
 - `psr/cache` is a dependency (flow control state).
+- **SECURITY.md** covers 1.7: the record store table, the batch submitter, the Messenger message, the flow control
+  pool, `submit-pending` and its manual options (`--fail`, `--resolve`, `--retry-failed`), and what each command writes.
+- **Configuration:** `submission.issuer_fault_codes` / `record_fault_codes` take 4-digit codes only, and a record code
+  that is also an issuer code (configured or default) is refused.
 
 ## [1.6.0] - 2026-11-11
 

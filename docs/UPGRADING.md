@@ -108,8 +108,8 @@ composer update nowo-tech/verifactu-bundle
   configure `submission.duplicate_confirmation` (resolve it with `--resolve` after checking at the AEAT); a record the
   AEAT keeps refusing on its own (SOAP Client fault with a record code, or confirmed after a probe was answered)
   becomes `failed` and dispatches `RECORD_SUBMISSION_FAILED`; an issuer the AEAT refuses as a whole (an issuer code
-  such as 4104, or every probe refused) is paused instead and dispatches `ISSUER_SUBMISSION_PAUSED`; requests without
-  any answer dispatch `ISSUER_SUBMISSION_STALLED`. Listen to the three and alert someone. `--list` shows the records
+  such as 4104, or every probe refused) is paused instead and dispatches `ISSUER_SUBMISSION_PAUSED`; two requests in a
+  row without any answer dispatch `ISSUER_SUBMISSION_STALLED`. Listen to the three and alert someone. `--list` shows the records
   that need a person, `--fail` marks one failed, `--retry-failed` requeues. The default AEAT code lists are in
   `Submission\AeatFaultClassifier`; extend them with `submission.issuer_fault_codes` / `record_fault_codes` if the
   AEAT adds codes.

@@ -92,9 +92,10 @@ refusal is fixed; records stored as `failed` by `process(..., submitToAeat: true
 `--list` (with `--issuer`) shows the issuer's `unconfirmed`, `held`, `confirming` and `failed` records and sends
 nothing. `--resolve=<position> --as=accepted|accepted_errors|rejected [--csv=…]` (with `--issuer`) resolves an
 `unconfirmed` record after you checked it at the AEAT (query the invoice and compare the Huella), and sends nothing;
-`accepted` and `accepted_errors` need the CSV the AEAT gave. `--fail=<position>` (with `--issuer`) marks a pending,
-held or confirming record failed by hand (`RECORD_SUBMISSION_FAILED` is dispatched) when you know it is wrong, and
-sends nothing; `--retry-failed` puts it back. A paused issuer is reported with the reason: "the AEAT refuses every
+`accepted` and `accepted_errors` need the CSV the AEAT gave (at most 120 printable characters, no spaces).
+`--fail=<position>` (with `--issuer`) marks a pending, held or confirming record failed by hand
+(`RECORD_SUBMISSION_FAILED` is dispatched) when you know it is wrong, and sends nothing; `--retry-failed` puts it back.
+Both take the issuer's chain lock, so they wait for a batch being claimed. A pending record with attempts above 0 may already be registered at the AEAT: query it there before failing it. A paused issuer is reported with the reason: "the AEAT refuses every
 request of this issuer", or "record(s) N held …, waiting for another record to test the AEAT with". Records written before 1.6 (no AEAT environment) are never sent (see UPGRADING).
 
 ## Submit to AEAT sandbox
