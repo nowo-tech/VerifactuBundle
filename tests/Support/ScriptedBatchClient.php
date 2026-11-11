@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Tests\Support;
 
 use Closure;
+use Nowo\VerifactuBundle\Client\AeatResponseParser;
 use Nowo\VerifactuBundle\Client\BatchAeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Model\AeatBatchResponse;
 use Nowo\VerifactuBundle\Model\AeatRecordResponse;
@@ -62,6 +63,18 @@ final class ScriptedBatchClient implements BatchAeatSubmissionClientInterface
         }
 
         return $response;
+    }
+
+    /**
+     * What the parser makes of an AEAT SoapFault (faultcode Client or Server, Codigo[NNNN]).
+     */
+    public static function fault(int $codigo = 4102, string $faultCode = 'env:Client', int $httpStatus = 500): AeatBatchResponse
+    {
+        return (new AeatResponseParser())->parse(
+            '<env:Envelope xmlns:env="http://schemas.xmlsoap.org/soap/envelope/"><env:Body><env:Fault><faultcode>' . $faultCode . '</faultcode>'
+            . '<faultstring>Codigo[' . $codigo . '].Error de prueba.</faultstring></env:Fault></env:Body></env:Envelope>',
+            $httpStatus,
+        );
     }
 
     /**

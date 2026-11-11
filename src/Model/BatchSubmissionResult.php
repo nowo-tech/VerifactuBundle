@@ -19,6 +19,9 @@ use function count;
  * - STATE_FAILED: the batch got no per-record answer (transport error, HTTP status, SoapFault). Its records went back to
  *   pending and may be sent again (`retryable`), or, for a record the AEAT kept refusing on its own, it was marked
  *   failed (`failed`, RECORD_SUBMISSION_FAILED) and the next records flow.
+ * - STATE_PAUSED: the AEAT refuses every request of the issuer (an issuer-wide error): no record was failed, the
+ *   issuer waits until `nextSubmissionAt` (ISSUER_SUBMISSION_PAUSED). Also with `failed` filled on STATE_SENT: a held
+ *   record marked failed because the probe got an answer.
  *
  * @author Nowo.tech
  * @copyright 2026 Nowo.tech
@@ -30,6 +33,9 @@ final class BatchSubmissionResult
     public const STATE_THROTTLED = 'throttled';
     public const STATE_SENT      = 'sent';
     public const STATE_FAILED    = 'failed';
+
+    /** Circuit breaker: the AEAT refuses every request of the issuer; nothing is sent until `nextSubmissionAt`. */
+    public const STATE_PAUSED = 'paused';
 
     /**
      * @param list<RecordSubmissionOutcome> $outcomes

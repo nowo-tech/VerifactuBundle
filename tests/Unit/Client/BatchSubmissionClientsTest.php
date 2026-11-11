@@ -77,7 +77,7 @@ final class BatchSubmissionClientsTest extends TestCase
         $failed = $this->client(new FakeSoapTransport('', 'Operation timed out'))->submitBatch([$this->record('F-1')], $count);
         self::assertCount(2, $counter);
         self::assertTrue($failed->transportFailure);
-        self::assertFalse($failed->isAnsweredFailure());
+        self::assertFalse($failed->isRecordRefusal());
 
         // Nothing is built: nothing leaves, nothing is counted.
         try {

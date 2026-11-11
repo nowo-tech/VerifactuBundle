@@ -151,7 +151,8 @@ nowo_verifactu:
         flow_control_scope: issuer # issuer: one AEAT wait per NIF (one SIF installation per issuer); global: one wait for every issuer
         flow_control: null         # service id of a Submission\FlowControlInterface (null = CacheFlowControl over the pool below)
         flow_control_cache_pool: cache.app # PSR-6 pool of the default flow control; must be SHARED by every node
-        max_attempts: 5            # refusals of a record sent on its own (SoapFault, HTTP 4xx / 500) before it is marked failed
+        max_attempts: 5            # SOAP Client refusals of a record sent on its own before it is held (then failed, or the issuer paused)
+        pause_seconds: 3600        # circuit breaker: an issuer whose every request is refused waits this long
         duplicate_confirmation: null # service id of a Submission\DuplicateConfirmationInterface (null = duplicates stay unconfirmed)
         client: null               # service id of a Client\BatchAeatSubmissionClientInterface (null = the AEAT client)
 ```
@@ -171,9 +172,16 @@ message to an async transport. A custom `aeat.submission_client` must also imple
   per-node filesystem pool by default: with several nodes, define a shared pool (Redis, Memcached, PDO/Doctrine DBAL)
   and set it here, e.g. `framework.cache.pools.cache.verifactu_flow: { adapter: cache.adapter.redis }`. Clearing the
   pool forgets the wait (the next submission may go early): exclude it from routine `cache:pool:clear` runs.
-- **`max_attempts`.** When the AEAT refuses a request as a whole (a SoapFault, an HTTP 4xx / 500, an unreadable answer),
-  the next batch is halved until the record at fault goes on its own; after `max_attempts` refusals on its own it is
-  marked `failed` and `RECORD_SUBMISSION_FAILED` is dispatched. Transport errors and HTTP 502 / 503 / 504 never count.
+- **`max_attempts`.** Only a SOAP Fault with faultcode `Client` (*Servicios web* v1.0.3 §5.1: the message is malformed
+  or carries wrong data) counts against the records: the next batch is halved until the record at fault goes on its
+  own; after `max_attempts` refusals on its own it is held and the next record goes alone. If that probe is answered,
+  the held record is marked `failed` and `RECORD_SUBMISSION_FAILED` is dispatched. Never counted: `Server` faults
+  ("Reenviar mensaje"), HTML / empty / non-SOAP bodies, HTTP 401 / 403 / 404 / 405 / 407 / 408 / 429 / 500 pages /
+  502 – 504 and transport errors; the records stay pending.
+- **`pause_seconds` (circuit breaker).** If the probe is refused as well, or there is no other record to probe with,
+  the error is about the issuer (a header error such as Codigo[4104], the certificate): no record is marked failed,
+  every record of the issuer is back to pending without failures, the issuer is paused for `pause_seconds` (kept in the
+  flow control store) and `ISSUER_SUBMISSION_PAUSED` is dispatched once; the Messenger message stops.
 - **`duplicate_confirmation`.** See [duplicates](USAGE.md#batch-submission-to-the-aeat).
 
 ### XAdES signing (No-Veri*Factu)

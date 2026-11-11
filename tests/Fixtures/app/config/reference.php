@@ -169,7 +169,8 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *         batch_size?: int|Param, // Records per AEAT request; the AEAT limit is 1000 (Servicios web v1.0.3 p. 10) // Default: 1000
  *         claim_timeout?: int|Param, // Seconds after which a batch claimed by a process that died is claimed again (longer than aeat.timeout) // Default: 300
  *         default_wait?: int|Param, // Seconds to wait between submissions when the AEAT returned no TiempoEsperaEnvio (initially 60, Orden HAC/1177/2024 art. 16.2) // Default: 60
- *         max_attempts?: int|Param, // Times the AEAT may refuse a record sent on its own (SoapFault, HTTP 4xx / 500) before it is marked failed and the next records flow; the batch is first split down to that record // Default: 5
+ *         max_attempts?: int|Param, // Times the AEAT may refuse a record sent on its own (a SOAP Client fault) before it is held; it is marked failed when the next record, sent alone, gets an answer, otherwise the issuer is paused (pause_seconds) // Default: 5
+ *         pause_seconds?: int|Param, // Circuit breaker: how long an issuer is paused when the AEAT refuses every request of it (kept in the flow control store) // Default: 3600
  *         flow_control_scope?: "issuer"|"global"|Param, // issuer: one AEAT wait per issuer NIF, for issuers that are separate SIF installations (own NumeroInstalacion, AEAT FAQ v1.3 §4); global: one wait shared by every issuer of one SIF installation // Default: "issuer"
  *         flow_control?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Submission\FlowControlInterface (null = CacheFlowControl over flow_control_cache_pool) // Default: null
  *         flow_control_cache_pool?: scalar|Param|null, // PSR-6 cache pool of the default flow control; with several nodes it must be shared by all of them (Redis, database), never a per-node filesystem pool // Default: "cache.app"
@@ -801,14 +802,6 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *     nowo_verifactu?: NowoVerifactuConfig,
  *     framework?: FrameworkConfig,
  *     twig?: TwigConfig,
- *     "when@dev"?: array{
- *         imports?: ImportsConfig,
- *         parameters?: ParametersConfig,
- *         services?: ServicesConfig,
- *         nowo_verifactu?: NowoVerifactuConfig,
- *         framework?: FrameworkConfig,
- *         twig?: TwigConfig,
- *     },
  *     "when@test"?: array{
  *         imports?: ImportsConfig,
  *         parameters?: ParametersConfig,
@@ -899,7 +892,6 @@ namespace Symfony\Component\Routing\Loader\Configurator;
  *     deprecated?: array{package:string, version:string, message?:string},
  * }
  * @psalm-type RoutesConfig = array{
- *     "when@dev"?: array<string, RouteConfig|ImportConfig|AliasConfig>,
  *     "when@test"?: array<string, RouteConfig|ImportConfig|AliasConfig>,
  *     ...<string, RouteConfig|ImportConfig|AliasConfig>
  * }

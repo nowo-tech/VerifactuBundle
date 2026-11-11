@@ -6,6 +6,7 @@ namespace Nowo\VerifactuBundle\Repository;
 
 use DateTimeImmutable;
 use Nowo\VerifactuBundle\Model\RecordSubmissionOutcome;
+use Nowo\VerifactuBundle\Model\RecordSubmissionStatus;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
 
 /**
@@ -14,7 +15,8 @@ use Nowo\VerifactuBundle\Model\StoredBillingRecord;
  *
  * Every record stays in the log forever; only its submission state changes: pending → sending (claimed by one
  * submission, with a claim token and time) → accepted / accepted_errors / rejected / unconfirmed, back to pending when
- * the submission got no answer for it, or failed when it kept failing on its own (see BillingRecordBatchSubmitter).
+ * the submission got no answer for it, or held and then failed when the AEAT kept refusing it on its own while the
+ * next record got an answer (see BillingRecordBatchSubmitter).
  * A claim older than the claim timeout is stale (the process died after sending) and the records are claimed again.
  *
  * Records without an AEAT environment (rows written before 1.6) are never waiting: they could be test records, and
@@ -29,6 +31,13 @@ use Nowo\VerifactuBundle\Model\StoredBillingRecord;
  */
 interface SubmissionQueueInterface
 {
+    /**
+     * The issuer's stored records in chain order (the record log).
+     *
+     * @return iterable<StoredBillingRecord>
+     */
+    public function findByIssuer(string $issuerNif): iterable;
+
     /**
      * Whether a submission of the issuer holds a claim newer than the timeout (one submission in flight per issuer).
      */
@@ -71,22 +80,42 @@ interface SubmissionQueueInterface
     /**
      * Puts every record of the claim back to pending (the submission got no per-record answer). A non-null $failure
      * replaces the stored error text; $countFailure adds one submission failure to each record (the AEAT refused the
-     * request as a whole, see AeatBatchResponse::isAnsweredFailure()).
+     * request as a whole, see AeatBatchResponse::isRecordRefusal()).
      */
     public function releaseClaim(string $issuerNif, string $claimToken, ?string $failure = null, bool $countFailure = false): int;
 
     /**
-     * Marks every record of the claim failed (it kept failing on its own: it is not sent again until requeueFailed())
-     * and returns the hashes updated, in one transaction.
+     * Sets the records of the claim aside as `held` (one more submission failure, the failure text): a record the AEAT
+     * kept refusing on its own, while the next record goes alone to tell a bad record from an issuer-wide error.
+     */
+    public function holdClaim(string $issuerNif, string $claimToken, string $failure): int;
+
+    /**
+     * The issuer's held record, if any.
+     */
+    public function heldRecord(string $issuerNif): ?StoredBillingRecord;
+
+    /**
+     * Resolves the issuer's held record in one transaction and returns its hash: $failed marks it failed (the next
+     * record got an answer, so it was at fault); otherwise it goes back to pending and every waiting record of the
+     * issuer loses its submission failures (an issuer-wide error: no record was at fault).
      *
      * @return list<string>
      */
-    public function markFailed(string $issuerNif, string $claimToken, string $failure, DateTimeImmutable $now): array;
+    public function resolveHeld(string $issuerNif, bool $failed, DateTimeImmutable $now): array;
 
     /**
-     * Puts the issuer's failed records back to pending with no submission failures (after the cause was fixed).
+     * Puts back to pending, with no submission failures, the issuer's records the batch submitter marked failed
+     * (submission failures ≥ 1) once the cause was fixed. Records stored as failed by process(..., submitToAeat: true)
+     * (an AEAT `Incorrecto`) are left alone.
      */
     public function requeueFailed(string $issuerNif): int;
+
+    /**
+     * Resolves an `unconfirmed` record after the host checked it at the AEAT: accepted / accepted with errors (with the
+     * CSV) or rejected. False when the record is not unconfirmed.
+     */
+    public function resolveUnconfirmed(string $issuerNif, int $position, RecordSubmissionStatus $status, ?string $reference, DateTimeImmutable $now): bool;
 
     /**
      * Issuers with records waiting to be sent or in flight.

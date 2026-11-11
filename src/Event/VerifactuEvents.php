@@ -25,4 +25,10 @@ final class VerifactuEvents
      * after that state is committed.
      */
     public const RECORD_SUBMISSION_FAILED = 'nowo_verifactu.record_submission_failed';
+
+    /**
+     * Batch submission (1.7): once when an issuer is paused because the AEAT refuses every request of it, whatever the
+     * record (IssuerSubmissionPausedEvent); no record is marked failed.
+     */
+    public const ISSUER_SUBMISSION_PAUSED = 'nowo_verifactu.issuer_submission_paused';
 }

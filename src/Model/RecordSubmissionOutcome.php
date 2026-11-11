@@ -28,12 +28,6 @@ final class RecordSubmissionOutcome
      */
     public function storeStatus(): string
     {
-        return match ($this->status) {
-            RecordSubmissionStatus::Accepted           => StoredBillingRecord::STATUS_ACCEPTED,
-            RecordSubmissionStatus::AcceptedWithErrors => StoredBillingRecord::STATUS_ACCEPTED_WITH_ERRORS,
-            RecordSubmissionStatus::Rejected           => StoredBillingRecord::STATUS_REJECTED,
-            RecordSubmissionStatus::Unconfirmed        => StoredBillingRecord::STATUS_UNCONFIRMED,
-            null                                       => StoredBillingRecord::STATUS_PENDING,
-        };
+        return $this->status?->storeStatus() ?? StoredBillingRecord::STATUS_PENDING;
     }
 }

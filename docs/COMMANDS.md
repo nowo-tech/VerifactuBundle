@@ -75,6 +75,8 @@ environment. Stored records are kept. Asks for confirmation; `--force` skips it 
 
 ```bash
 php bin/console nowo:verifactu:submit-pending [--issuer=89890001K] [--retry-failed]
+php bin/console nowo:verifactu:submit-pending --issuer=89890001K --list
+php bin/console nowo:verifactu:submit-pending --issuer=89890001K --resolve=42 --as=accepted --csv=CSV_FROM_THE_AEAT
 ```
 
 Available with a record store. Sends the next batch of waiting records (up to `submission.batch_size`, at most 1000) of
@@ -82,9 +84,13 @@ the issuer, or of every issuer with waiting records, once, and prints the per-re
 errors, rejected, unconfirmed duplicates, without answer), how many records are still waiting and when the next
 submission may start (AEAT `TiempoEsperaEnvio`). A throttled issuer is reported, not waited for: run the command from a
 scheduler, or dispatch the `SubmitPendingBillingRecords` Messenger message, which reschedules itself. Exit code `1`
-when a batch got no per-record answer (its records stay pending) or a record the AEAT kept refusing on its own was
-marked `failed`. `--retry-failed` (with `--issuer`) first puts the issuer's `failed` records back to pending, once the
-cause of the refusal is fixed. Records written before 1.6 (no AEAT environment) are never sent (see UPGRADING).
+when a batch got no per-record answer (its records stay pending), a record the AEAT kept refusing on its own was
+marked `failed`, or the issuer is paused (the AEAT refuses every request of it: circuit breaker). `--retry-failed`
+(with `--issuer`) first puts back to pending the records the batch submitter marked `failed`, once the cause of the
+refusal is fixed; records stored as `failed` by `process(..., submitToAeat: true)` (an AEAT `Incorrecto`) stay failed.
+`--list` (with `--issuer`) shows the issuer's `unconfirmed`, `held` and `failed` records and sends nothing.
+`--resolve=<position> --as=accepted|accepted_errors|rejected [--csv=…]` (with `--issuer`) resolves an `unconfirmed`
+record after you checked it at the AEAT (query the invoice and compare the Huella), and sends nothing. Records written before 1.6 (no AEAT environment) are never sent (see UPGRADING).
 
 ## Submit to AEAT sandbox
 

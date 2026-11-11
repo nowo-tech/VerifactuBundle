@@ -12,13 +12,17 @@ use Nowo\VerifactuBundle\Model\AeatRecordResponse;
 use Nowo\VerifactuBundle\Model\RecordSubmissionStatus;
 use Nowo\VerifactuBundle\Model\RecordType;
 
+use function explode;
 use function in_array;
 use function is_numeric;
 use function libxml_clear_errors;
 use function libxml_use_internal_errors;
+use function preg_match;
 use function sprintf;
 use function str_contains;
 use function strlen;
+use function strrpos;
+use function substr;
 use function trim;
 
 use const LIBXML_NONET;
@@ -76,7 +80,7 @@ final class AeatResponseParser
         if ($fault instanceof DOMElement) {
             $message = $this->text($fault, 'faultstring') ?? 'AEAT SOAP fault';
 
-            return AeatBatchResponse::failed('AEAT SOAP fault: ' . $message, $httpStatus, $body, $endpoint);
+            return AeatBatchResponse::failed('AEAT SOAP fault: ' . $message, $httpStatus, $body, $endpoint, false, $this->faultCode($fault), $this->codigo($message));
         }
 
         $answer = $this->first($document, 'RespuestaRegFactuSistemaFacturacion');
@@ -110,6 +114,29 @@ final class AeatResponseParser
             $body,
             $endpoint,
         );
+    }
+
+    /**
+     * The local name of a SOAP 1.1 faultcode (`soapenv:Client`, `env:Server.Busy` → Client, Server), or null.
+     */
+    private function faultCode(DOMElement $fault): ?string
+    {
+        $code = $this->text($fault, 'faultcode');
+        if ($code === null || $code === '') {
+            return null;
+        }
+        $local = substr($code, (int) strrpos(':' . $code, ':'));
+        $local = explode('.', $local)[0];
+
+        return in_array($local, [AeatBatchResponse::FAULT_CLIENT, AeatBatchResponse::FAULT_SERVER], true) ? $local : null;
+    }
+
+    /**
+     * The AEAT error code of a faultstring (`Codigo[4102].…`), or null.
+     */
+    private function codigo(string $faultString): ?int
+    {
+        return preg_match('/Codigo\[(\d+)\]/', $faultString, $matches) === 1 ? (int) $matches[1] : null;
     }
 
     private function line(DOMElement $line): ?AeatRecordResponse

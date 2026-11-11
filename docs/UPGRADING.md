@@ -105,8 +105,10 @@ composer update nowo-tech/verifactu-bundle
 - **Flow control scope:** keep `issuer` only when every issuer is its own SIF installation (own `NumeroInstalacion`,
   AEAT FAQ v1.3 §4); several issuers under one installation number need `global`.
 - **Duplicates and refused records:** an AEAT duplicate for a record sent before is stored as `unconfirmed` unless you
-  configure `submission.duplicate_confirmation`; a record the AEAT keeps refusing on its own becomes `failed` and
-  dispatches `RECORD_SUBMISSION_FAILED` (listen to it and alert someone; requeue with `--retry-failed`).
+  configure `submission.duplicate_confirmation` (resolve it with `--resolve` after checking at the AEAT); a record the
+  AEAT keeps refusing on its own (SOAP Client fault) while the next record is answered becomes `failed` and dispatches
+  `RECORD_SUBMISSION_FAILED`; an issuer whose every request is refused is paused instead and dispatches
+  `ISSUER_SUBMISSION_PAUSED`. Listen to both and alert someone; requeue failed records with `--retry-failed`.
 - **Tests of your own:** set `VERIFACTU_FORBID_NETWORK=1` in your PHPUnit configuration and CI so the bundle's cURL
   transport can never reach the AEAT from a test.
 

@@ -317,7 +317,8 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
             ->setArgument('$defaultWait', $config['submission']['default_wait'])
             ->setArgument('$flowControlScope', $config['submission']['flow_control_scope'])
             ->setArgument('$duplicateConfirmation', $config['submission']['duplicate_confirmation'] !== null ? new Reference($config['submission']['duplicate_confirmation']) : null)
-            ->setArgument('$maxAttempts', $config['submission']['max_attempts']);
+            ->setArgument('$maxAttempts', $config['submission']['max_attempts'])
+            ->setArgument('$pauseSeconds', $config['submission']['pause_seconds']);
 
         if (interface_exists(MessageBusInterface::class)) {
             $container->setDefinition(SubmitPendingBillingRecordsHandler::class, (new Definition(SubmitPendingBillingRecordsHandler::class, [

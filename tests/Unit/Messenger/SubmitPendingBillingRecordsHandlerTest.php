@@ -39,6 +39,8 @@ final class SubmitPendingBillingRecordsHandlerTest extends TestCase
 
     private InMemoryHashChainRepository $heads;
 
+    private ?MockClock $clock = null;
+
     public function testItSendsAndSchedulesTheNextBatchAfterTheWaitTime(): void
     {
         [$handler, $store] = $this->handler(new ScriptedBatchClient(), 2);
@@ -126,7 +128,7 @@ final class SubmitPendingBillingRecordsHandlerTest extends TestCase
         $fault = static function (array $records): AeatBatchResponse {
             foreach ($records as $record) {
                 if ($record instanceof BillingRecord && $record->invoiceSeriesNumber === 'F-1') {
-                    return AeatBatchResponse::failed('AEAT SOAP fault: x', 500, '<Fault/>');
+                    return ScriptedBatchClient::fault();
                 }
             }
 
@@ -150,14 +152,40 @@ final class SubmitPendingBillingRecordsHandlerTest extends TestCase
     }
 
     /**
+     * LJD-M1: a paused issuer stops the message (like MAX_FAILED_RUNS); the next message after the pause sends again.
+     */
+    public function testAPausedIssuerStopsTheMessage(): void
+    {
+        $fault = static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(4104);
+        /** @var list<Closure> $script */
+        $script            = array_fill(0, 30, $fault);
+        [$handler, $store] = $this->handler(new ScriptedBatchClient(...$script));
+        $this->chain($store, 1);
+
+        $message = new SubmitPendingBillingRecords('89890001K');
+        $last    = null;
+        for ($i = 0; $i < 30 && $message instanceof SubmitPendingBillingRecords; ++$i) {
+            $before  = count($this->dispatched);
+            $last    = $handler($message);
+            $message = count($this->dispatched) > $before ? $this->message(count($this->dispatched) - 1) : null;
+            $this->clock?->sleep(61);
+        }
+
+        self::assertNull($message, 'The message stopped');
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $last?->state);
+        self::assertSame(['pending'], array_map(static fn ($s): string => $s->submissionStatus, iterator_to_array($store->findByIssuer('89890001K'))));
+    }
+
+    /**
      * @return array{SubmitPendingBillingRecordsHandler, InMemoryBillingRecordStore}
      */
     private function handler(ScriptedBatchClient $client, int $batchSize = 1000, ?RecordingLogger $logger = null, bool $flowControl = true): array
     {
-        $heads = new InMemoryHashChainRepository();
-        $store = new InMemoryBillingRecordStore();
-        $clock = new MockClock('2026-11-11 10:00:00');
-        $sink  = function (Envelope $envelope): void {
+        $heads       = new InMemoryHashChainRepository();
+        $store       = new InMemoryBillingRecordStore();
+        $clock       = new MockClock('2026-11-11 10:00:00');
+        $this->clock = $clock;
+        $sink        = function (Envelope $envelope): void {
             $this->dispatched[] = $envelope;
         };
         $bus = new class($sink) implements MessageBusInterface {

@@ -35,6 +35,13 @@ final class StoredBillingRecord
     public const STATUS_UNCONFIRMED = 'unconfirmed';
 
     /**
+     * Refused by the AEAT on its own `max_attempts` times and held aside while the next record goes alone (1.7, circuit
+     * breaker): the record is marked failed when that next request gets an answer, or put back to pending and the issuer
+     * paused when it is refused as well (an issuer-wide error). Never waiting.
+     */
+    public const STATUS_HELD = 'held';
+
+    /**
      * Creates a stored record.
      *
      * @param int $submissionAttempts AEAT requests that carried this record (counted when the request is transmitted)

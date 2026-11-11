@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Tests\Unit\Service;
 
 use ArrayObject;
+use Closure;
 use DateTimeImmutable;
 use LogicException;
 use Nowo\VerifactuBundle\Client\AeatResponseParser;
+use Nowo\VerifactuBundle\Event\IssuerSubmissionPausedEvent;
 use Nowo\VerifactuBundle\Event\RecordSubmissionFailedEvent;
 use Nowo\VerifactuBundle\Event\RecordSubmittedEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
 use Nowo\VerifactuBundle\Model\AeatBatchResponse;
 use Nowo\VerifactuBundle\Model\AeatEnvironment;
+use Nowo\VerifactuBundle\Model\AeatRecordResponse;
 use Nowo\VerifactuBundle\Model\BatchSubmissionResult;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordSubmissionStatus;
@@ -525,9 +528,9 @@ final class BillingRecordBatchSubmitterTest extends TestCase
     }
 
     /**
-     * LJ-M3: a SoapFault for a batch is not blamed on every record forever. The batch is halved until the record at
-     * fault goes alone; after `max_attempts` refusals on its own it is marked failed (event after the commit) and the
-     * records after it flow. It can be requeued after the fix.
+     * LJ-M3: a Client fault for a batch is not blamed on every record forever. The batch is halved until the record at
+     * fault goes alone; after `max_attempts` refusals on its own it is held, the next record goes alone and, as that
+     * probe is answered, the held record is marked failed (event after the commit). It can be requeued after the fix.
      */
     public function testASoapFaultSplitsTheBatchAndFailsOnlyTheRecordAtFault(): void
     {
@@ -538,7 +541,7 @@ final class BillingRecordBatchSubmitterTest extends TestCase
         $answer       = static function (array $records) use ($aeat, $badHash): AeatBatchResponse {
             foreach ($records as $record) {
                 if ($aeat->broken === true && $record->hash === $badHash) {
-                    return (new AeatResponseParser())->parse('<env:Envelope xmlns:env="http://schemas.xmlsoap.org/soap/envelope/"><env:Body><env:Fault><faultcode>env:Client</faultcode><faultstring>Codigo[4102].El XML no cumple el esquema.</faultstring></env:Fault></env:Body></env:Envelope>', 500);
+                    return ScriptedBatchClient::fault();
                 }
             }
 
@@ -558,18 +561,19 @@ final class BillingRecordBatchSubmitterTest extends TestCase
             $results[] = $result;
         }
 
-        self::assertSame([8, 4, 4, 2, 1, 1, 1, 2], array_map('count', $client->requests));
+        // ... 1 (F-6 alone, held), 1 (F-7 alone: the probe, answered), 1 (F-8).
+        self::assertSame([8, 4, 4, 2, 1, 1, 1, 1, 1], array_map('count', $client->requests));
         self::assertSame(['accepted', 'accepted', 'accepted', 'accepted', 'accepted', 'failed', 'accepted', 'accepted'], $this->statuses());
         $failed = iterator_to_array($this->store->findByIssuer('89890001K'))[5];
-        self::assertSame([5, 'AEAT SOAP fault: Codigo[4102].El XML no cumple el esquema.'], [$failed->submissionFailures, $failed->submissionError]);
+        self::assertSame([5, 'AEAT SOAP fault: Codigo[4102].Error de prueba.'], [$failed->submissionFailures, $failed->submissionError]);
         self::assertCount(1, $failedEvents);
         self::assertSame(['89890001K', 6, $badHash], [$failedEvents[0]->issuerNif, $failedEvents[0]->position, $failedEvents[0]->hash]);
         $marking = array_values(array_filter($results, static fn (BatchSubmissionResult $r): bool => $r->failed !== []));
         self::assertCount(1, $marking);
-        self::assertFalse($marking[0]->isRetryable());
-        self::assertSame(BatchSubmissionResult::STATE_FAILED, $marking[0]->state);
+        self::assertSame([BatchSubmissionResult::STATE_SENT, 1, 6], [$marking[0]->state, $marking[0]->count(RecordSubmissionStatus::Accepted), $marking[0]->failed[0]->position]);
         self::assertSame(0, array_sum(array_map(static fn (StoredBillingRecord $s): int => $s->submissionFailures, array_filter(iterator_to_array($this->store->findByIssuer('89890001K')), static fn (StoredBillingRecord $s): bool => $s->submissionStatus === 'accepted'))), 'An answer resets the failures');
         self::assertContains('error', array_column($logger->records, 'level'));
+        self::assertSame([6], array_map(static fn (StoredBillingRecord $s): int => $s->position, $submitter->recordsToReview('89890001K')));
 
         // Fixed: requeued and sent.
         $aeat->broken = false;
@@ -580,29 +584,178 @@ final class BillingRecordBatchSubmitterTest extends TestCase
     }
 
     /**
-     * LJ-M3: a lone record keeps being refused (nothing to split): it is still marked failed after the limit.
+     * LJD-M1: an issuer-wide Client fault (a header error such as Codigo[4104]) refuses every request whatever the
+     * record. The probe is refused as well: no record is failed, every record is back to pending without failures,
+     * the issuer is paused (one alert) and, once the cause is fixed, everything goes in one request.
      */
-    public function testALoneRecordTheAeatKeepsRefusingIsMarkedFailed(): void
+    public function testAnIssuerWideClientFaultPausesTheIssuerInsteadOfFailingRecords(): void
     {
-        $this->chain(1);
-        $fault     = static fn (array $records): AeatBatchResponse => AeatBatchResponse::failed('AEAT returned HTTP status 400.', 400, 'Bad request');
-        $client    = new ScriptedBatchClient(...array_fill(0, 20, $fault));
-        $submitter = $this->submitter($client, batchSize: 1000, flowControl: false, maxAttempts: 3);
+        $this->fill(60);
+        $aeat   = new ArrayObject(['broken' => true]);
+        $answer = static fn (array $records): AeatBatchResponse => $aeat['broken'] === true ? ScriptedBatchClient::fault(4104) : ScriptedBatchClient::allAccepted($records);
+        $paused = [];
+        $failed = [];
+        $this->dispatcher->addListener(VerifactuEvents::ISSUER_SUBMISSION_PAUSED, static function (IssuerSubmissionPausedEvent $event) use (&$paused): void {
+            $paused[] = $event;
+        });
+        $this->dispatcher->addListener(VerifactuEvents::RECORD_SUBMISSION_FAILED, static function () use (&$failed): void {
+            $failed[] = true;
+        });
+        $client    = new ScriptedBatchClient(...array_fill(0, 200, $answer));
+        $submitter = $this->submitter($client, maxAttempts: 5);
 
-        $states = [];
-        while (($result = $submitter->submitPending('89890001K'))->state !== BatchSubmissionResult::STATE_IDLE && count($states) < 20) {
-            $states[] = $result->isRetryable();
-        }
+        $states = $this->drive($submitter, 40);
 
-        self::assertCount($submitter->failureLimit(), $client->requests);
-        self::assertSame(12, $submitter->failureLimit(), '9 halvings (1000 → 1) + 3');
-        self::assertSame([...array_fill(0, 11, true), false], $states);
-        self::assertSame(['failed'], $this->statuses());
+        self::assertContains(BatchSubmissionResult::STATE_PAUSED, $states);
+        self::assertSame(array_fill(0, 60, 'pending'), $this->statuses());
+        self::assertCount(0, $failed);
+        self::assertCount(1, $paused, 'One alert per pause');
+        self::assertSame(['89890001K', 4104], [$paused[0]->issuerNif, $paused[0]->faultErrorCode]);
+        self::assertSame([0], array_values(array_unique(array_map(static fn (StoredBillingRecord $s): int => $s->submissionFailures, iterator_to_array($this->store->findByIssuer('89890001K'))))));
+        self::assertSame([], $submitter->recordsToReview('89890001K'));
+        $requests = count($client->requests);
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $submitter->submitPending('89890001K')->state, 'Nothing is sent while paused');
+        self::assertCount($requests, $client->requests);
+
+        // Fixed: after the pause, the whole queue goes in one request.
+        $aeat['broken'] = false;
+        $this->clock->sleep(3601);
+        self::assertSame(60, $submitter->submitPending('89890001K')->count(RecordSubmissionStatus::Accepted));
     }
 
     /**
-     * LJ-M3: when the claim was taken over during the request, the stale submitter marks nothing failed and sends no
-     * event; the newer claim decides.
+     * LJD-M1: errors that are not about any record (AEAT Server fault, HTML or empty bodies, HTTP 401 / 403 / 404 /
+     * 500 pages) never count: 60 records stay pending, none failed, no split.
+     */
+    public function testErrorsNotCausedByARecordNeverFailRecords(): void
+    {
+        $cases = [
+            'Server 4118'  => static fn (): AeatBatchResponse => ScriptedBatchClient::fault(4118, 'env:Server'),
+            'HTTP 403'     => static fn (): AeatBatchResponse => (new AeatResponseParser())->parse('<html><body>403 Forbidden</body></html>', 403),
+            'HTTP 401'     => static fn (): AeatBatchResponse => (new AeatResponseParser())->parse('', 401),
+            'HTTP 500 web' => static fn (): AeatBatchResponse => (new AeatResponseParser())->parse('<html><body>Servicio no disponible</body></html>', 500),
+            'HTTP 404'     => static fn (): AeatBatchResponse => (new AeatResponseParser())->parse('<html><body>Not found</body></html>', 404),
+        ];
+        $i = 0;
+        foreach ($cases as $name => $error) {
+            $issuer = self::nif(100 + $i++);
+            $this->fill(60, 1, AeatEnvironment::Sandbox, $issuer);
+            /** @var list<Closure> $script */
+            $script    = array_fill(0, 40, static fn (array $records): AeatBatchResponse => $error());
+            $client    = new ScriptedBatchClient(...$script);
+            $submitter = $this->submitter($client, maxAttempts: 1);
+
+            self::assertNotContains(BatchSubmissionResult::STATE_PAUSED, $this->drive($submitter, 40, $issuer), $name);
+            self::assertSame(array_fill(0, 40, 60), array_map('count', $client->requests), $name . ': never split');
+            self::assertSame(array_fill(0, 60, 'pending'), $this->statuses($issuer), $name);
+        }
+    }
+
+    /**
+     * Circuit breaker: a lone record refused on its own cannot be told apart from an issuer-wide error (nothing to
+     * probe with): it is never failed; the issuer is paused instead.
+     */
+    public function testALoneRecordTheAeatKeepsRefusingPausesTheIssuer(): void
+    {
+        $this->chain(1);
+        $client    = new ScriptedBatchClient(...array_fill(0, 20, static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault()));
+        $submitter = $this->submitter($client, maxAttempts: 3);
+
+        $states = $this->drive($submitter, 20);
+
+        self::assertSame(12, $submitter->failureLimit(), '9 halvings (1000 → 1) + 3');
+        self::assertSame([...array_fill(0, 11, BatchSubmissionResult::STATE_FAILED), BatchSubmissionResult::STATE_PAUSED], array_slice($states, 0, 12));
+        self::assertCount(12, array_filter($client->requests));
+        self::assertSame(['pending'], $this->statuses());
+    }
+
+    /**
+     * Circuit breaker: a probe without any answer (transport) decides nothing; the record stays held until a probe is
+     * answered.
+     */
+    public function testAProbeWithoutAnswerKeepsTheRecordHeld(): void
+    {
+        $this->chain(2);
+        $answers = [
+            static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(),
+            static fn (array $records): AeatBatchResponse => AeatBatchResponse::failed('timeout', 0, '', '', true),
+        ];
+        $submitter = $this->submitter(new ScriptedBatchClient(...$answers), batchSize: 1, flowControl: false, maxAttempts: 1);
+
+        self::assertTrue($submitter->submitPending('89890001K')->isRetryable());
+        self::assertSame(['held', 'pending'], $this->statuses());
+        self::assertTrue($submitter->submitPending('89890001K')->isRetryable());
+        self::assertSame(['held', 'pending'], $this->statuses());
+        $answered = $submitter->submitPending('89890001K');
+        self::assertSame([1, [1]], [$answered->count(RecordSubmissionStatus::Accepted), array_map(static fn (StoredBillingRecord $s): int => $s->position, $answered->failed)]);
+        self::assertSame(['failed', 'accepted'], $this->statuses());
+    }
+
+    /**
+     * Circuit breaker: when another process resolved the held record meanwhile, the probe's answer fails nothing.
+     */
+    public function testAHeldRecordResolvedMeanwhileIsNotFailedTwice(): void
+    {
+        $this->chain(2);
+        $answers = [
+            static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(),
+            function (array $records): AeatBatchResponse {
+                $this->store->resolveHeld('89890001K', false, $this->clock->now());
+
+                return ScriptedBatchClient::allAccepted($records);
+            },
+        ];
+        $submitter = $this->submitter(new ScriptedBatchClient(...$answers), batchSize: 1, flowControl: false, maxAttempts: 1);
+        $submitter->submitPending('89890001K');
+
+        self::assertSame([], $submitter->submitPending('89890001K')->failed);
+        self::assertSame(['pending', 'accepted'], $this->statuses());
+    }
+
+    /**
+     * LJD-L1: --retry-failed requeues only what the batch submitter failed; an AEAT `Incorrecto` stored as failed by
+     * process(..., submitToAeat: true) is never sent again.
+     */
+    public function testOnlyRecordsTheSubmitterFailedAreRequeued(): void
+    {
+        $this->chain(1);
+        $this->store->markSubmitted('89890001K', (string) iterator_to_array($this->store->findByIssuer('89890001K'))[0]->record->hash, false);
+        $submitter = $this->submitter(new ScriptedBatchClient(), flowControl: false);
+
+        self::assertSame(0, $submitter->requeueFailed('89890001K'));
+        self::assertSame(['failed'], $this->statuses());
+        self::assertSame(BatchSubmissionResult::STATE_IDLE, $submitter->submitPending('89890001K')->state);
+    }
+
+    /**
+     * LJD-I1: unconfirmed records are listed and resolved after the host checks them at the AEAT.
+     */
+    public function testAnUnconfirmedRecordIsListedAndResolved(): void
+    {
+        $this->chain(2);
+        $duplicate = static fn (array $records): AeatBatchResponse => new AeatBatchResponse(AeatBatchResponse::ENVIO_INCORRECT, array_values(array_map(
+            static fn (BillingRecord $record): AeatRecordResponse => ScriptedBatchClient::line($record, RecordSubmissionStatus::Rejected, 3000, 'Duplicado', 'Correcta'),
+            $records,
+        )), null, 60);
+        $submitter = $this->submitter(new ScriptedBatchClient(static fn (array $records): AeatBatchResponse => AeatBatchResponse::failed('timeout', 0, '', '', true), $duplicate), flowControl: false);
+        $submitter->submitPending('89890001K');
+        $submitter->submitPending('89890001K');
+
+        self::assertSame([1, 2], array_map(static fn (StoredBillingRecord $s): int => $s->position, $submitter->recordsToReview('89890001K')));
+        self::assertTrue($submitter->resolveUnconfirmed(' 89890001k ', 1, RecordSubmissionStatus::Accepted, 'CSV-CHECKED'));
+        self::assertTrue($submitter->resolveUnconfirmed('89890001K', 2, RecordSubmissionStatus::Rejected, 'ignored'));
+        self::assertFalse($submitter->resolveUnconfirmed('89890001K', 2, RecordSubmissionStatus::Accepted));
+        self::assertFalse($submitter->resolveUnconfirmed('89890001K', 9, RecordSubmissionStatus::Accepted));
+        $stored = iterator_to_array($this->store->findByIssuer('89890001K'));
+        self::assertSame([['accepted', 'CSV-CHECKED'], ['rejected', null]], [[$stored[0]->submissionStatus, $stored[0]->submissionReference], [$stored[1]->submissionStatus, $stored[1]->submissionReference]]);
+
+        $this->expectException(LogicException::class);
+        $submitter->resolveUnconfirmed('89890001K', 1, RecordSubmissionStatus::Unconfirmed);
+    }
+
+    /**
+     * When the claim was taken over during the request, the stale submitter holds and fails nothing; the newer claim
+     * decides.
      */
     public function testAStaleClaimMarksNothingFailed(): void
     {
@@ -616,7 +769,7 @@ final class BillingRecordBatchSubmitterTest extends TestCase
             $this->clock->sleep(301);
             $this->store->claimNext('89890001K', 1, 'taker', $this->clock->now(), 300);
 
-            return AeatBatchResponse::failed('AEAT returned HTTP status 400.', 400);
+            return ScriptedBatchClient::fault();
         });
 
         $result = $this->submitter($client, batchSize: 1, flowControl: false, maxAttempts: 1)->submitPending('89890001K');
@@ -702,6 +855,26 @@ final class BillingRecordBatchSubmitterTest extends TestCase
         self::assertSame(['F-1'], array_map(static fn (BillingRecord $r): string => $r->invoiceSeriesNumber, $client->requests[0]));
         self::assertSame(['pending', 'accepted'], $this->statuses());
         self::assertSame(BatchSubmissionResult::STATE_IDLE, $submitter->submitPending('89890001K')->state);
+    }
+
+    /**
+     * Runs the submitter like a scheduler, one call a minute (past every AEAT wait), and returns the states.
+     *
+     * @return list<string>
+     */
+    private function drive(BillingRecordBatchSubmitter $submitter, int $calls, string $issuer = TestProcessorFactory::ISSUER): array
+    {
+        $states = [];
+        for ($i = 0; $i < $calls; ++$i) {
+            $state = $submitter->submitPending($issuer)->state;
+            if ($state === BatchSubmissionResult::STATE_IDLE) {
+                break;
+            }
+            $states[] = $state;
+            $this->clock->sleep(61);
+        }
+
+        return $states;
     }
 
     private static function nif(int $i): string

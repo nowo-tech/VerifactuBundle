@@ -144,7 +144,7 @@ with its hash, previous hash, XML and submission state, in the same transaction 
 ```php
 foreach ($recordStore->findByIssuer('89890001K') as $stored) {   // BillingRecordStoreInterface, chain order
     $stored->position; $stored->record->hash; $stored->record->xml;
-    $stored->submissionStatus; // pending|sending|accepted|accepted_errors|rejected|unconfirmed|failed (batch) or accepted|failed (process())
+    $stored->submissionStatus; // pending|sending|held|accepted|accepted_errors|rejected|unconfirmed|failed (batch) or accepted|failed (process())
 }
 
 $result = $chainVerifier->verify('89890001K');                    // Service\ChainVerifier
@@ -192,18 +192,33 @@ issuer's chain lock (one batch in flight per issuer, oldest first) and sends it 
 | `Incorrecto` | `rejected` | Not registered. It stays in the chain; correct the invoice and chain a NEW record with `correction: 'S', previousRejection: 'X'` (Subsanacion S, RechazoPrevio X: *Servicios web* §9.1.3; AEAT FAQ v1.3 §17) |
 | no line for the record | `pending` | Sent again with the next batch |
 | `RegistroDuplicado`, not confirmed | `unconfirmed` | See duplicates below: never reported as accepted, not sent again |
-| refused as a whole, again and again on its own | `failed` | See refused requests below |
+| refused alone `max_attempts` times, next record being tried alone | `held` | Circuit breaker, see below |
+| refused alone while the next record was answered | `failed` | See refused requests below |
 
-**Requests without a per-record answer.** A transport error (no HTTP answer) or an AEAT that is unavailable (HTTP 502,
-503, 504) puts the whole batch back to `pending` (`BatchSubmissionResult::isRetryable()`); nothing is counted against
-its records. When the AEAT **refuses the request as a whole** (a SoapFault: an XML format error rejects the whole
-message, *Servicios web* p. 10; an HTTP 4xx / 500; an unreadable answer or one without a valid `EstadoEnvio`), the
-records go back to `pending` with one more submission failure, and the next batch is halved, again and again, until
-the record at fault goes on its own. After `submission.max_attempts` refusals on its own (in all at most
-`floor(log2(batch_size)) + max_attempts`) it is marked `failed`, `VerifactuEvents::RECORD_SUBMISSION_FAILED`
-(`Event\RecordSubmissionFailedEvent`, after the commit) is dispatched and an error is logged; the records after it keep
-flowing. Fix the cause and put it back with `nowo:verifactu:submit-pending --issuer=… --retry-failed`
-(`BillingRecordBatchSubmitter::requeueFailed()`). An answer resets the failures of a record.
+**Requests without a per-record answer.** Only a SOAP Fault whose faultcode is **`Client`** is counted against the
+records (*Servicios web* v1.0.3 §5.1: the message is malformed or carries wrong data; an XML format error rejects the
+whole message, p. 10). Everything else puts the whole batch back to `pending` with nothing counted
+(`BatchSubmissionResult::isRetryable()`): a transport error, a `Server` fault ("Reenviar mensaje"), an HTML, empty or
+non-SOAP body, HTTP 401 / 403 / 404 / 405 / 407 / 408 / 429 / 500 pages / 502 – 504, an answer without a valid
+`EstadoEnvio`. None of those is about a record, and splitting the batch would not help.
+
+After a Client refusal the records go back to `pending` with one more submission failure, and the next batch is halved
+until the record at fault goes on its own. After `submission.max_attempts` refusals on its own it is **held** and the
+next record goes alone, as a probe (circuit breaker):
+
+- the probe gets an answer: the AEAT accepts this issuer's requests, so the held record was at fault. It is marked
+  `failed`, `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`, after the commit) is
+  dispatched and an error is logged; the records after it keep flowing. Fix the cause and put it back with
+  `nowo:verifactu:submit-pending --issuer=… --retry-failed` (`BillingRecordBatchSubmitter::requeueFailed()`);
+- the probe is refused too, or there is no other record to probe with: the error is about the issuer (a header error
+  such as Codigo[4104], *Servicios web* p. 28; the certificate), not a record. **No record is marked failed**: every
+  record of the issuer is back to `pending` without failures, the issuer is paused for `submission.pause_seconds`
+  (`STATE_PAUSED`, kept in the flow control store), `VerifactuEvents::ISSUER_SUBMISSION_PAUSED`
+  (`Event\IssuerSubmissionPausedEvent`, with the AEAT code) is dispatched once and the Messenger message stops. Fix the
+  cause; the next submission after the pause sends the whole queue again.
+
+An answer resets the failures of a record. `nowo:verifactu:submit-pending --issuer=… --list`
+(`recordsToReview()`) lists the `unconfirmed`, `held` and `failed` records.
 
 **Attempts and duplicates.** `submissionAttempts` counts the requests that carried the record, counted right before the
 request is transmitted (a claim that died before sending, or a client that failed before sending, is not an attempt).
@@ -220,7 +235,9 @@ used the same invoice id (FAQ v1.3 §6). Therefore:
   at the AEAT and correct it if needed); a record never transmitted before → `rejected` (the id is used by another
   record).
 
-`IdPeticionRegistroDuplicado` and `EstadoRegistroDuplicado` are kept in `submissionError`. A batch claimed by a process
+`IdPeticionRegistroDuplicado` and `EstadoRegistroDuplicado` are kept in `submissionError`. After checking an
+`unconfirmed` record at the AEAT, resolve it with `nowo:verifactu:submit-pending --issuer=… --resolve=<position>
+--as=accepted|accepted_errors|rejected [--csv=…]` (`BillingRecordBatchSubmitter::resolveUnconfirmed()`). A batch claimed by a process
 that died is claimed again after `submission.claim_timeout`.
 
 **Flow control** (Orden HAC/1177/2024 art. 16.2 c; *Servicios web* §6.4.4.1, p. 40): the AEAT returns
@@ -339,7 +356,8 @@ php bin/console nowo:verifactu:verify-chain --issuer=89890001K
 | `BEFORE_AEAT_SUBMISSION` | `BeforeAeatSubmissionEvent` | Right before the AEAT client is called (`submitToAeat: true` only) | No |
 | `AFTER_AEAT_SUBMISSION` | `AfterAeatSubmissionEvent` | After the AEAT client returned | No |
 | `AFTER_RECORD_SUBMISSION` | `RecordSubmittedEvent` | Batch submission (1.7): once per answered record, after its answer is committed | No |
-| `RECORD_SUBMISSION_FAILED` | `RecordSubmissionFailedEvent` | Batch submission (1.7): once per record marked `failed` (the AEAT kept refusing it on its own), after that state is committed; alert someone | No |
+| `RECORD_SUBMISSION_FAILED` | `RecordSubmissionFailedEvent` | Batch submission (1.7): once per record marked `failed` (the AEAT kept refusing it on its own while the next record was answered), after that state is committed; alert someone | No |
+| `ISSUER_SUBMISSION_PAUSED` | `IssuerSubmissionPausedEvent` | Batch submission (1.7): once when an issuer is paused because the AEAT refuses every request of it (circuit breaker); no record is failed; alert someone | No |
 
 The two AEAT submission events are informational (audit log, metrics, outbox): there is **no veto**. Whether a record is
 submitted is decided by the caller (`process(..., submitToAeat: true)`), not by a listener, so a listener can never

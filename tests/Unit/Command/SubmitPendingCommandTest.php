@@ -8,6 +8,7 @@ use Closure;
 use DateTimeImmutable;
 use Nowo\VerifactuBundle\Command\SubmitPendingCommand;
 use Nowo\VerifactuBundle\Model\AeatBatchResponse;
+use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordSubmissionStatus;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
 use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
@@ -31,6 +32,8 @@ use function count;
  */
 final class SubmitPendingCommandTest extends TestCase
 {
+    private ?MockClock $clock = null;
+
     public function testEveryIssuerWithWaitingRecordsIsSentOnce(): void
     {
         $client = new ScriptedBatchClient(
@@ -56,23 +59,36 @@ final class SubmitPendingCommandTest extends TestCase
     }
 
     /**
-     * LJ-M3: a record the AEAT keeps refusing is reported as failed (exit 1) and --retry-failed puts it back.
+     * LJ-M3: a record the AEAT keeps refusing is reported as failed (exit 1), listed, and --retry-failed puts it back.
      */
-    public function testAFailedRecordIsReportedAndCanBeRequeued(): void
+    public function testAFailedRecordIsReportedListedAndCanBeRequeued(): void
     {
-        $fault = static fn (array $records): AeatBatchResponse => AeatBatchResponse::failed('AEAT SOAP fault: bad', 500, '<Fault/>');
+        $fault = static function (array $records): AeatBatchResponse {
+            foreach ($records as $record) {
+                if ($record instanceof BillingRecord && $record->invoiceSeriesNumber === 'F-1') {
+                    return ScriptedBatchClient::fault();
+                }
+            }
+
+            return ScriptedBatchClient::allAccepted($records);
+        };
         /** @var list<Closure> $script */
-        $script                   = array_fill(0, 20, $fault);
+        $script                   = array_fill(0, 30, $fault);
         [$tester, $store, $heads] = $this->tester(new ScriptedBatchClient(...$script), false);
-        $this->chain($heads, $store, ['F-1'], '89890001K');
+        $this->chain($heads, $store, ['F-1', 'F-2'], '89890001K');
 
         $outputs = [];
         do {
             self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K']));
             $outputs[] = $tester->getDisplay();
-        } while (count($outputs) < 20 && !str_contains($tester->getDisplay(), 'marked failed'));
-        self::assertStringContainsString('89890001K: the AEAT kept refusing record 1 (AEAT SOAP fault: bad); it is marked failed (--retry-failed puts it back), 0 waiting.', $tester->getDisplay());
-        self::assertStringContainsString('no AEAT answer (AEAT SOAP fault: bad); 1 records stay pending.', $outputs[0]);
+        } while (count($outputs) < 30 && !str_contains($tester->getDisplay(), 'marked failed'));
+        self::assertStringContainsString('89890001K: the AEAT kept refusing record 1 (AEAT SOAP fault: Codigo[4102].Error de prueba.) while the next record was answered; it is marked failed (--retry-failed puts it back).', $tester->getDisplay());
+        self::assertStringContainsString('89890001K: 1 sent (1 accepted', $tester->getDisplay());
+        self::assertStringContainsString('no AEAT answer (AEAT SOAP fault: Codigo[4102].Error de prueba.); 2 records stay pending.', $outputs[0]);
+
+        self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => '89890001K', '--list' => true]));
+        self::assertStringContainsString('failed', $tester->getDisplay());
+        self::assertStringContainsString('F-1', $tester->getDisplay());
 
         self::assertSame(Command::INVALID, $tester->execute(['--retry-failed' => true]));
         self::assertStringContainsString('--retry-failed needs --issuer.', $tester->getDisplay());
@@ -80,6 +96,50 @@ final class SubmitPendingCommandTest extends TestCase
         self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K', '--retry-failed' => true]));
         self::assertStringContainsString('89890001K: 1 failed records back to pending.', $tester->getDisplay());
         self::assertSame(StoredBillingRecord::STATUS_PENDING, iterator_to_array($store->findByIssuer('89890001K'))[0]->submissionStatus);
+    }
+
+    /**
+     * LJD-I1: unconfirmed records are listed and resolved after a check at the AEAT; a paused issuer is reported.
+     */
+    public function testListResolveAndPause(): void
+    {
+        $answers = [
+            static fn (array $records): AeatBatchResponse => AeatBatchResponse::failed('timeout', 0, '', '', true),
+            static fn (array $records): AeatBatchResponse => new AeatBatchResponse(AeatBatchResponse::ENVIO_INCORRECT, [ScriptedBatchClient::line($records[0], RecordSubmissionStatus::Rejected, 3000, 'Duplicado', 'Correcta')], null, 60),
+        ];
+        [$tester, $store, $heads] = $this->tester(new ScriptedBatchClient(...$answers), false);
+        $this->chain($heads, $store, ['F-1'], '89890001K');
+        $tester->execute([]);
+        $tester->execute([]);
+
+        self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => '89890001K', '--list' => true]));
+        self::assertStringContainsString('unconfirmed', $tester->getDisplay());
+        self::assertSame(Command::INVALID, $tester->execute(['--list' => true]));
+        self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--resolve' => 'x', '--as' => 'accepted']));
+        self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'unconfirmed']));
+        self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'accepted', '--csv' => ' CSV-OK ']));
+        self::assertStringContainsString('89890001K: record 1 resolved as accepted.', $tester->getDisplay());
+        self::assertSame([StoredBillingRecord::STATUS_ACCEPTED, 'CSV-OK'], [iterator_to_array($store->findByIssuer('89890001K'))[0]->submissionStatus, iterator_to_array($store->findByIssuer('89890001K'))[0]->submissionReference]);
+        self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'rejected']));
+        self::assertStringContainsString('record 1 is not unconfirmed', $tester->getDisplay());
+        self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => '89890001K', '--list' => true]));
+        self::assertStringContainsString('no unconfirmed, held or failed records', $tester->getDisplay());
+
+        // A lone record refused alone: the issuer is paused, not the record failed.
+        /** @var list<Closure> $script */
+        $script                   = array_fill(0, 20, static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(4104));
+        [$tester, $store, $heads] = $this->tester(new ScriptedBatchClient(...$script));
+        $this->chain($heads, $store, ['P-1'], '89890001K');
+        $clock = $this->clock;
+        $i     = 0;
+        do {
+            self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K']));
+            $clock?->sleep(61);
+        } while (++$i < 20 && !str_contains($tester->getDisplay(), 'paused until'));
+        self::assertStringContainsString('89890001K: paused until', $tester->getDisplay());
+        self::assertStringContainsString('the AEAT refuses every request of this issuer (AEAT SOAP fault: Codigo[4104].Error de prueba.); 1 records stay pending.', $tester->getDisplay());
+        self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K']));
+        self::assertStringContainsString('(paused earlier)', $tester->getDisplay());
     }
 
     public function testNoAnswerFailsAndAnInFlightIssuerIsReported(): void
@@ -102,9 +162,10 @@ final class SubmitPendingCommandTest extends TestCase
      */
     private function tester(ScriptedBatchClient $client, bool $flowControl = true): array
     {
-        $heads     = new InMemoryHashChainRepository();
-        $store     = new InMemoryBillingRecordStore();
-        $submitter = new BillingRecordBatchSubmitter($store, $client, $heads, new EventDispatcher(), $flowControl ? new CacheFlowControl(new ArrayAdapter()) : null, new MockClock('2026-11-11 10:00:00'));
+        $heads       = new InMemoryHashChainRepository();
+        $store       = new InMemoryBillingRecordStore();
+        $this->clock = new MockClock('2026-11-11 10:00:00');
+        $submitter   = new BillingRecordBatchSubmitter($store, $client, $heads, new EventDispatcher(), $flowControl ? new CacheFlowControl(new ArrayAdapter()) : null, $this->clock);
 
         return [new CommandTester(new SubmitPendingCommand($submitter)), $store, $heads];
     }

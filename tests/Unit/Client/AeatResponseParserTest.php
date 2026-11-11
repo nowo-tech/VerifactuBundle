@@ -99,7 +99,7 @@ final class AeatResponseParserTest extends TestCase
         foreach (['', 'Desconocido', 'correcto'] as $state) {
             $response = $parser->parse($this->response($state, '60', 'CSV-1', []));
             self::assertTrue($response->isFailure(), $state);
-            self::assertTrue($response->isAnsweredFailure(), 'Counted against the records: the answer is not a valid one');
+            self::assertFalse($response->isRecordRefusal(), 'Not a SOAP Client fault: never counted against the records (LJD-M1)');
         }
         foreach ([AeatBatchResponse::ENVIO_CORRECT, AeatBatchResponse::ENVIO_PARTIALLY_CORRECT, AeatBatchResponse::ENVIO_INCORRECT] as $state) {
             self::assertFalse($parser->parse($this->response($state, '60', 'CSV-1', []))->isFailure(), $state);
@@ -107,25 +107,36 @@ final class AeatResponseParserTest extends TestCase
     }
 
     /**
-     * LJ-M3: which failures point at the records of the request.
+     * LJD-M1 (Servicios web v1.0.3 §5.1): only a SOAP fault with faultcode Client counts against the records; a Server
+     * fault means "resend", and HTML / empty bodies and HTTP errors are never about a record.
      */
-    public function testAnsweredFailures(): void
+    public function testOnlyAClientFaultIsARecordRefusal(): void
     {
         $parser = new AeatResponseParser();
-        $fault  = '<env:Envelope xmlns:env="http://schemas.xmlsoap.org/soap/envelope/"><env:Body><env:Fault><faultcode>env:Client</faultcode>'
-            . '<faultstring>Codigo[4102].El XML no cumple el esquema.</faultstring></env:Fault></env:Body></env:Envelope>';
+        $fault  = static fn (string $code, string $text = 'Codigo[4102].El XML no cumple el esquema.'): string => '<env:Envelope xmlns:env="http://schemas.xmlsoap.org/soap/envelope/"><env:Body><env:Fault><faultcode>' . $code . '</faultcode>'
+            . '<faultstring>' . $text . '</faultstring></env:Fault></env:Body></env:Envelope>';
 
-        self::assertTrue($parser->parse($fault, 500)->isAnsweredFailure());
-        self::assertTrue($parser->parse($fault, 200)->isAnsweredFailure());
-        self::assertTrue($parser->parse('', 403)->isAnsweredFailure());
-        self::assertTrue($parser->parse('<ok/>')->isAnsweredFailure());
-        self::assertFalse($parser->parse('<html>Bad gateway', 502)->isAnsweredFailure());
-        self::assertFalse($parser->parse('', 503)->isAnsweredFailure());
-        self::assertFalse($parser->parse('', 504)->isAnsweredFailure());
-        self::assertFalse(AeatBatchResponse::failed('Operation timed out', 0, '', '', true)->isAnsweredFailure());
-        self::assertFalse(AeatBatchResponse::failed('reset', 200, '', '', true)->isAnsweredFailure(), 'A transport failure never counts');
-        self::assertFalse(AeatBatchResponse::failed('timeout')->isAnsweredFailure());
-        self::assertFalse($parser->parse($this->response('Correcto', '60', null, []))->isAnsweredFailure());
+        $client = $parser->parse($fault('env:Client'), 500);
+        self::assertTrue($client->isRecordRefusal());
+        self::assertSame([AeatBatchResponse::FAULT_CLIENT, 4102], [$client->faultCode, $client->faultErrorCode]);
+        self::assertTrue($parser->parse($fault('soapenv:Client.Validation'), 200)->isRecordRefusal());
+        self::assertTrue($parser->parse($fault('Client', 'Codigo[4104].Cabecera'), 500)->isRecordRefusal(), 'A header Client fault counts; the circuit breaker catches it');
+
+        $server = $parser->parse($fault('env:Server', 'Codigo[4118].Error técnico'), 500);
+        self::assertSame([AeatBatchResponse::FAULT_SERVER, 4118], [$server->faultCode, $server->faultErrorCode]);
+        self::assertFalse($server->isRecordRefusal());
+        self::assertFalse($parser->parse($fault('env:Other', 'sin código'), 500)->isRecordRefusal());
+        self::assertNull($parser->parse($fault('', 'sin código'), 500)->faultCode);
+        self::assertNull($parser->parse($fault('env:Client', 'sin código'), 500)->faultErrorCode);
+
+        foreach ([401, 403, 404, 405, 407, 408, 429, 500, 502, 503, 504] as $status) {
+            self::assertFalse($parser->parse('<html><body>Error ' . $status . '</body></html>', $status)->isRecordRefusal(), (string) $status);
+            self::assertFalse($parser->parse('', $status)->isRecordRefusal(), (string) $status);
+        }
+        self::assertFalse($parser->parse('<ok/>')->isRecordRefusal());
+        self::assertFalse(AeatBatchResponse::failed('Operation timed out', 0, '', '', true)->isRecordRefusal());
+        self::assertFalse(AeatBatchResponse::failed('reset', 200, '', '', true, AeatBatchResponse::FAULT_CLIENT)->isRecordRefusal(), 'A transport failure never counts');
+        self::assertFalse($parser->parse($this->response('Correcto', '60', null, []))->isRecordRefusal());
     }
 
     public function testAnUnknownStatusLineIsIgnoredAndNoWaitTimeIsNull(): void

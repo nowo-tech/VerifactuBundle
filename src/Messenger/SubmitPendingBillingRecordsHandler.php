@@ -22,9 +22,11 @@ use function min;
  *
  * - Records still waiting, or the AEAT wait time not elapsed: the message is dispatched again with a DelayStamp until
  *   the next allowed submission.
- * - The AEAT refused the batch as a whole (SoapFault, HTTP 4xx / 500): rescheduled after the wait time; the submitter
- *   splits the batch and finally marks the record at fault failed, so this always ends.
- * - No AEAT answer at all (transport error, HTTP 502 / 503 / 504): rescheduled with a growing delay (up to
+ * - The AEAT refused the batch as a whole (a SOAP Client fault): rescheduled after the wait time; the submitter splits
+ *   the batch and finally marks the record at fault failed, or pauses the issuer, so this always ends.
+ * - The issuer is paused (circuit breaker, ISSUER_SUBMISSION_PAUSED): the message stops; the next message for the
+ *   issuer or `nowo:verifactu:submit-pending` after the pause sends again.
+ * - No AEAT answer at all (transport error, Server fault, HTTP or non-SOAP error): rescheduled with a growing delay (up to
  *   MAX_RETRY_DELAY_SECONDS), at most MAX_FAILED_RUNS times in a row; then it stops and logs an error. The records stay
  *   pending: the next message for the issuer or `nowo:verifactu:submit-pending` sends them.
  * - Another process sending a batch of the issuer: retried after RETRY_IN_FLIGHT_SECONDS.
@@ -60,12 +62,13 @@ final class SubmitPendingBillingRecordsHandler
         $result     = $this->submitter->submitPending($message->issuerNif);
         $now        = $this->clock?->now() ?? new DateTimeImmutable();
         $untilNext  = max(0, ($result->nextSubmissionAt?->getTimestamp() ?? $now->getTimestamp()) - $now->getTimestamp());
-        $noAnswer   = $result->isRetryable() && $result->response?->isAnsweredFailure() !== true;
+        $noAnswer   = $result->isRetryable() && $result->response?->isRecordRefusal() !== true;
         $failedRuns = $noAnswer ? $message->failedRuns + 1 : 0;
 
         $delay = match (true) {
             $result->state === BatchSubmissionResult::STATE_IN_FLIGHT                          => self::RETRY_IN_FLIGHT_SECONDS,
             $result->state === BatchSubmissionResult::STATE_IDLE                               => null,
+            $result->state === BatchSubmissionResult::STATE_PAUSED                             => null,
             $result->state === BatchSubmissionResult::STATE_SENT && $result->remaining === 0   => null,
             $noAnswer && $failedRuns >= self::MAX_FAILED_RUNS                                  => null,
             $noAnswer                                                                          => max($untilNext, min(self::MAX_RETRY_DELAY_SECONDS, self::RETRY_DELAY_SECONDS * 2 ** ($failedRuns - 1))),

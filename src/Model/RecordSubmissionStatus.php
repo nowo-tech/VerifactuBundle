@@ -63,6 +63,19 @@ enum RecordSubmissionStatus: string
     }
 
     /**
+     * The record log status for this AEAT outcome.
+     */
+    public function storeStatus(): string
+    {
+        return match ($this) {
+            self::Accepted           => StoredBillingRecord::STATUS_ACCEPTED,
+            self::AcceptedWithErrors => StoredBillingRecord::STATUS_ACCEPTED_WITH_ERRORS,
+            self::Rejected           => StoredBillingRecord::STATUS_REJECTED,
+            self::Unconfirmed        => StoredBillingRecord::STATUS_UNCONFIRMED,
+        };
+    }
+
+    /**
      * Whether the AEAT registered the record (Correcto or AceptadoConErrores). An unconfirmed duplicate is not.
      */
     public function isRegistered(): bool

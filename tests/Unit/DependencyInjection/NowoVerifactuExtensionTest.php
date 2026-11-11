@@ -473,6 +473,7 @@ final class NowoVerifactuExtensionTest extends TestCase
         self::assertSame('cache.verifactu_flow', (string) $container->getDefinition(CacheFlowControl::class)->getArgument(0));
         self::assertSame('app.duplicate_confirmation', (string) $definition->getArgument('$duplicateConfirmation'));
         self::assertSame(3, $definition->getArgument('$maxAttempts'));
+        self::assertSame(3600, $definition->getArgument('$pauseSeconds'));
         self::assertSame('logger', (string) $container->getDefinition(SubmitPendingBillingRecordsHandler::class)->getArgument(3));
     }
 

@@ -8,6 +8,7 @@ use DateTimeImmutable;
 use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\AeatRecordResponse;
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Model\RecordSubmissionStatus;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
 use Nowo\VerifactuBundle\Submission\BatchSplit;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
@@ -181,15 +182,42 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
         return $released;
     }
 
-    public function markFailed(string $issuerNif, string $claimToken, string $failure, DateTimeImmutable $now): array
+    public function holdClaim(string $issuerNif, string $claimToken, string $failure): int
+    {
+        $key  = $this->normalizeKey($issuerNif);
+        $held = 0;
+        foreach ($this->claimed($issuerNif, $claimToken) as $current) {
+            $this->replace($key, $this->copy($current, StoredBillingRecord::STATUS_HELD, error: $failure, failures: $current->submissionFailures + 1));
+            // @igor-ignore - Request-scoped: cleared by WorkerStateResetSubscriber on every main request and on kernel.reset.
+            unset($this->claims[$key][$current->position]);
+            ++$held;
+        }
+
+        return $held;
+    }
+
+    public function heldRecord(string $issuerNif): ?StoredBillingRecord
+    {
+        foreach ($this->records[$this->normalizeKey($issuerNif)] ?? [] as $stored) {
+            if ($stored->submissionStatus === StoredBillingRecord::STATUS_HELD) {
+                return $stored;
+            }
+        }
+
+        return null;
+    }
+
+    public function resolveHeld(string $issuerNif, bool $failed, DateTimeImmutable $now): array
     {
         $key    = $this->normalizeKey($issuerNif);
         $hashes = [];
-        foreach ($this->claimed($issuerNif, $claimToken) as $current) {
-            $this->replace($key, new StoredBillingRecord($current->position, $current->record, StoredBillingRecord::STATUS_FAILED, $current->submissionReference, $current->submissionAttempts, null, $failure, $current->submissionFailures + 1));
-            // @igor-ignore - Request-scoped: cleared by WorkerStateResetSubscriber on every main request and on kernel.reset.
-            unset($this->claims[$key][$current->position]);
-            $hashes[] = strtoupper((string) $current->record->hash);
+        foreach ($this->records[$key] ?? [] as $stored) {
+            if ($stored->submissionStatus === StoredBillingRecord::STATUS_HELD) {
+                $hashes[] = strtoupper((string) $stored->record->hash);
+                $this->replace($key, $failed ? $this->copy($stored, StoredBillingRecord::STATUS_FAILED) : $this->copy($stored, StoredBillingRecord::STATUS_PENDING, failures: 0));
+            } elseif (!$failed && $stored->submissionStatus === StoredBillingRecord::STATUS_PENDING) {
+                $this->replace($key, $this->copy($stored, failures: 0));
+            }
         }
 
         return $hashes;
@@ -200,13 +228,26 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
         $key   = $this->normalizeKey($issuerNif);
         $count = 0;
         foreach ($this->records[$key] ?? [] as $stored) {
-            if ($stored->submissionStatus === StoredBillingRecord::STATUS_FAILED) {
+            // Only what the batch submitter failed; a process(..., submitToAeat: true) failure stays failed.
+            if ($stored->submissionStatus === StoredBillingRecord::STATUS_FAILED && $stored->submissionFailures > 0) {
                 $this->replace($key, $this->copy($stored, StoredBillingRecord::STATUS_PENDING, failures: 0));
                 ++$count;
             }
         }
 
         return $count;
+    }
+
+    public function resolveUnconfirmed(string $issuerNif, int $position, RecordSubmissionStatus $status, ?string $reference, DateTimeImmutable $now): bool
+    {
+        $key     = $this->normalizeKey($issuerNif);
+        $current = $this->find($key, $position);
+        if (!$current instanceof StoredBillingRecord || $current->submissionStatus !== StoredBillingRecord::STATUS_UNCONFIRMED) {
+            return false;
+        }
+        $this->replace($key, new StoredBillingRecord($position, $current->record, $status->storeStatus(), $status->isRegistered() ? $reference : null, $current->submissionAttempts, $current->submissionErrorCode, $current->submissionError, $current->submissionFailures));
+
+        return true;
     }
 
     public function issuersWithPendingRecords(): array
