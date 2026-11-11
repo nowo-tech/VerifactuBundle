@@ -148,8 +148,11 @@ nowo_verifactu:
         batch_size: 1000           # records per AEAT request (1 – 1000)
         claim_timeout: 300         # s; a batch claimed by a process that died is claimed again (> aeat.timeout)
         default_wait: 60           # s between submissions when the AEAT gave no TiempoEsperaEnvio
-        flow_control_scope: issuer # issuer: one AEAT wait per NIF; global: one wait for every issuer
-        flow_control: null         # service id of a Submission\FlowControlInterface (null = cache.app)
+        flow_control_scope: issuer # issuer: one AEAT wait per NIF (one SIF installation per issuer); global: one wait for every issuer
+        flow_control: null         # service id of a Submission\FlowControlInterface (null = CacheFlowControl over the pool below)
+        flow_control_cache_pool: cache.app # PSR-6 pool of the default flow control; must be SHARED by every node
+        max_attempts: 5            # refusals of a record sent on its own (SoapFault, HTTP 4xx / 500) before it is marked failed
+        duplicate_confirmation: null # service id of a Submission\DuplicateConfirmationInterface (null = duplicates stay unconfirmed)
         client: null               # service id of a Client\BatchAeatSubmissionClientInterface (null = the AEAT client)
 ```
 
@@ -157,6 +160,21 @@ Without a record store the submitter, `nowo:verifactu:submit-pending` and the Me
 With symfony/messenger installed, `SubmitPendingBillingRecordsHandler` handles `SubmitPendingBillingRecords`; route the
 message to an async transport. A custom `aeat.submission_client` must also implement `BatchAeatSubmissionClientInterface`
 (or set `submission.client`). See [USAGE](USAGE.md#batch-submission-to-the-aeat).
+
+- **`flow_control_scope`.** Orden HAC/1177/2024 art. 16.2 sets the wait per *sistema informático*. The AEAT FAQ for
+  developers (v1.3, §4) says a "multi-OT" SIF must meet the requirements individually for each taxpayer it manages, and
+  that in a SaaS each separate invoicing (each issuer) has its own installation number because it counts as an
+  independent "SIF virtual". So `issuer` (the default) is right when every issuer is its own SIF installation, with its
+  own `NumeroInstalacion` (`providers.software_identity` per issuer). When several issuers share ONE installation
+  number, it is literally one SIF: use `global` (one wait for all of them, serialised under one database lock).
+- **`flow_control_cache_pool`.** The wait must be seen by every process and every node that submits. `cache.app` is a
+  per-node filesystem pool by default: with several nodes, define a shared pool (Redis, Memcached, PDO/Doctrine DBAL)
+  and set it here, e.g. `framework.cache.pools.cache.verifactu_flow: { adapter: cache.adapter.redis }`. Clearing the
+  pool forgets the wait (the next submission may go early): exclude it from routine `cache:pool:clear` runs.
+- **`max_attempts`.** When the AEAT refuses a request as a whole (a SoapFault, an HTTP 4xx / 500, an unreadable answer),
+  the next batch is halved until the record at fault goes on its own; after `max_attempts` refusals on its own it is
+  marked `failed` and `RECORD_SUBMISSION_FAILED` is dispatched. Transport errors and HTTP 502 / 503 / 504 never count.
+- **`duplicate_confirmation`.** See [duplicates](USAGE.md#batch-submission-to-the-aeat).
 
 ### XAdES signing (No-Veri*Factu)
 

@@ -32,6 +32,7 @@ final class RecordSubmissionOutcome
             RecordSubmissionStatus::Accepted           => StoredBillingRecord::STATUS_ACCEPTED,
             RecordSubmissionStatus::AcceptedWithErrors => StoredBillingRecord::STATUS_ACCEPTED_WITH_ERRORS,
             RecordSubmissionStatus::Rejected           => StoredBillingRecord::STATUS_REJECTED,
+            RecordSubmissionStatus::Unconfirmed        => StoredBillingRecord::STATUS_UNCONFIRMED,
             null                                       => StoredBillingRecord::STATUS_PENDING,
         };
     }

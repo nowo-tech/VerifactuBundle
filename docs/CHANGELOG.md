@@ -43,34 +43,58 @@ store, add the new submission columns. See [UPGRADING](UPGRADING.md#unreleased).
   transaction, and its answers are committed in one transaction.
 - **Per-record answers.** `Client\AeatResponseParser` reads `RespuestaRegFactuSistemaFacturacion` (EstadoEnvio, CSV,
   TiempoEsperaEnvio, every RespuestaLinea with CodigoErrorRegistro / DescripcionErrorRegistro / RegistroDuplicado; no
-  DTD, no network). Records become `accepted`, `accepted_errors` or `rejected`; a record without a line goes back to
-  `pending`; a request without an answer (transport error, HTTP status, SoapFault) puts the batch back to `pending`.
-- **Idempotent retries.** Resends carry the same stored XML; a duplicate answer on attempt 2+ takes the state the AEAT
-  holds (Correcta / AceptadaConErrores / Anulada); stale claims (`submission.claim_timeout`) are claimed again and can no
-  longer store an answer.
-- **AEAT flow control** (Orden HAC/1177/2024 art. 16.2; *Servicios web* §6.4.4.1): the next submission waits
-  `TiempoEsperaEnvio` (default 60 s, `submission.default_wait`) unless a full batch is waiting.
-  `Submission\FlowControlInterface`, default `CacheFlowControl` over `cache.app`; scope per issuer or `global`.
+  DTD in any encoding, no network; only `Correcto` / `ParcialmenteCorrecto` / `Incorrecto` are an answer). Records
+  become `accepted`, `accepted_errors` or `rejected`; a record without a line goes back to `pending`; a request without
+  an answer (transport error, HTTP 502 / 503 / 504) puts the batch back to `pending`.
+- **Requests refused as a whole never block an issuer.** A SoapFault, an HTTP 4xx / 500 or an invalid answer adds a
+  submission failure to the records of the batch and halves the next one until the record at fault goes alone; after
+  `submission.max_attempts` (default 5) refusals on its own it is marked `failed`,
+  `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`) is dispatched after the commit, and
+  the records after it flow. `nowo:verifactu:submit-pending --retry-failed` puts failed records back.
+- **Retries and duplicates.** Resends carry the same stored XML. An attempt is counted right before the request is
+  transmitted (`BatchAeatSubmissionClientInterface::submitBatch($records, $beforeTransmit)`), never at the claim. An
+  AEAT duplicate (`RegistroDuplicado`, no Huella) becomes a registered state only when a
+  `Submission\DuplicateConfirmationInterface` (`submission.duplicate_confirmation`, e.g. an AEAT query comparing the
+  Huella) confirms it, by record type (an annulled alta and an anulación answered `Anulada` are registered); otherwise a
+  record sent before is stored as `unconfirmed` (never reported as accepted, not sent again) and a record never sent
+  before is `rejected`. Stale claims (`submission.claim_timeout`) are claimed again and can no longer store an answer.
+- **AEAT flow control** (Orden HAC/1177/2024 art. 16.2 c; *Servicios web* §6.4.4.1): the next submission waits
+  `TiempoEsperaEnvio` (default 60 s, `submission.default_wait`) unless it carries the record-design limit of 1000
+  records (a smaller `batch_size` never skips the wait). `Submission\FlowControlInterface`, default `CacheFlowControl`
+  over `submission.flow_control_cache_pool` (default `cache.app`; must be shared by every node); scope per issuer (one
+  SIF installation per issuer, AEAT FAQ v1.3 §4) or `global` (check and slot reservation under one database lock for
+  every issuer).
 - **After-commit events.** `VerifactuEvents::AFTER_RECORD_SUBMISSION` (`Event\RecordSubmittedEvent`), once per answered
   record after its answer is committed; the submitter refuses to run inside a transaction.
 - **`BillingRecordProcessor::processBatch()`**: several records of one issuer chained in order in one chain lock, all or
   nothing (the head never points at a record that was not stored).
 - **Corrections:** `BillingRecord` takes `correction` (Subsanacion), `previousRejection` (RechazoPrevio, X = Alta after
   an AEAT rejection) and `withoutPreviousRecord` (SinRegistroPrevio), written in the AEAT order and validated
-  (`validation.correction_flags.invalid`, 7 locales).
-- **Async and CLI:** `Messenger\SubmitPendingBillingRecords` + handler (reschedules itself with a `DelayStamp`; only
-  with symfony/messenger) and `nowo:verifactu:submit-pending [--issuer]`.
+  (`validation.correction_flags.invalid`, 7 locales; RechazoPrevio S or X on an alta needs Subsanacion S, AEAT
+  Validaciones v1.2.2 §3.1.3 item 2).
+- **Async and CLI:** `Messenger\SubmitPendingBillingRecords` + handler (reschedules itself with a `DelayStamp`; backs
+  off and stops after `MAX_FAILED_RUNS` runs without any AEAT answer; only with symfony/messenger) and
+  `nowo:verifactu:submit-pending [--issuer] [--retry-failed]`.
 - **Ports for DDD hosts:** `Repository\SubmissionQueueInterface` (implemented by the Doctrine and in-memory stores),
-  `Client\BatchAeatSubmissionClientInterface` (SOAP and null clients; `submission.client`), `FlowControlInterface`.
+  `Client\BatchAeatSubmissionClientInterface` (SOAP and null clients; `submission.client`), `FlowControlInterface`,
+  `DuplicateConfirmationInterface`.
+- **Records written before 1.6** (no AEAT environment) are never sent by the batch submitter: they could be sandbox
+  records while the current environment is production (stamp them explicitly, see UPGRADING).
+- **Network guard for tests:** `VERIFACTU_FORBID_NETWORK=1` (set by `phpunit.xml.dist` and CI) makes
+  `CurlSoapTransport` refuse every request; only an owner-run `nowo:verifactu:submit-sandbox --submit` may reach the
+  AEAT.
 - **Tests:** batches of 1, 3 and 1000 records and corrections validated against the official `SuministroLR.xsd`; the
   response fixture against `RespuestaSuministro.xsd`; multi-process submission tests (submitters racing each other
-  and the chaining processes, one lost answer) on MySQL, MariaDB and PostgreSQL.
+  and the chaining processes, one lost answer) on MySQL, MariaDB and PostgreSQL; the audit LJ regressions of the
+  queue (attempts at transmission, unconfirmed duplicates, split and failed batches, the global lock, records without
+  environment) on SQLite, MySQL, MariaDB and PostgreSQL.
 
 ### Changed
 
 - **Record log columns:** `verifactu_billing_record` gets `submission_attempts`, `submission_claim`,
-  `submission_claimed_at`, `submission_error_code`, `submission_error`, `submitted_at` and the index
-  `idx_verifactu_billing_record_submission`. `StoredBillingRecord` exposes the attempts and the last error.
+  `submission_claimed_at`, `submission_error_code`, `submission_error`, `submission_failures`, `submitted_at` and the
+  index `idx_verifactu_billing_record_submission`. `StoredBillingRecord` exposes the attempts, the submission failures
+  and the last error.
 - `psr/cache` is a dependency (flow control state).
 
 ## [1.6.0] - 2026-11-11

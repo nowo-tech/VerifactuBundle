@@ -8,11 +8,13 @@ use DateTimeImmutable;
 use Nowo\VerifactuBundle\Model\BatchSubmissionResult;
 use Nowo\VerifactuBundle\Service\BillingRecordBatchSubmitter;
 use Psr\Clock\ClockInterface;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 
 use function max;
+use function min;
 
 /**
  * Sends the next batch of the issuer and schedules the following one (registered only when symfony/messenger is
@@ -20,8 +22,11 @@ use function max;
  *
  * - Records still waiting, or the AEAT wait time not elapsed: the message is dispatched again with a DelayStamp until
  *   the next allowed submission.
- * - A batch without an AEAT answer (transport error, SoapFault): its records went back to pending; the message is
- *   dispatched again after the wait time (the resend is idempotent).
+ * - The AEAT refused the batch as a whole (SoapFault, HTTP 4xx / 500): rescheduled after the wait time; the submitter
+ *   splits the batch and finally marks the record at fault failed, so this always ends.
+ * - No AEAT answer at all (transport error, HTTP 502 / 503 / 504): rescheduled with a growing delay (up to
+ *   MAX_RETRY_DELAY_SECONDS), at most MAX_FAILED_RUNS times in a row; then it stops and logs an error. The records stay
+ *   pending: the next message for the issuer or `nowo:verifactu:submit-pending` sends them.
  * - Another process sending a batch of the issuer: retried after RETRY_IN_FLIGHT_SECONDS.
  * - An exception (no certificate, database down) propagates: Messenger's retry strategy and failure transport apply,
  *   and the records stay pending.
@@ -34,26 +39,47 @@ final class SubmitPendingBillingRecordsHandler
 {
     public const RETRY_IN_FLIGHT_SECONDS = 30;
 
+    /** Consecutive runs without any AEAT answer after which the message stops rescheduling itself. */
+    public const MAX_FAILED_RUNS = 8;
+
+    /** First retry delay after a run without any AEAT answer; doubled on every further one. */
+    public const RETRY_DELAY_SECONDS = 60;
+
+    public const MAX_RETRY_DELAY_SECONDS = 3600;
+
     public function __construct(
         private readonly BillingRecordBatchSubmitter $submitter,
         private readonly ?MessageBusInterface $bus = null,
         private readonly ?ClockInterface $clock = null,
+        private readonly ?LoggerInterface $logger = null,
     ) {
     }
 
     public function __invoke(SubmitPendingBillingRecords $message): BatchSubmissionResult
     {
-        $result = $this->submitter->submitPending($message->issuerNif);
-        $now    = $this->clock?->now() ?? new DateTimeImmutable();
+        $result     = $this->submitter->submitPending($message->issuerNif);
+        $now        = $this->clock?->now() ?? new DateTimeImmutable();
+        $untilNext  = max(0, ($result->nextSubmissionAt?->getTimestamp() ?? $now->getTimestamp()) - $now->getTimestamp());
+        $noAnswer   = $result->isRetryable() && $result->response?->isAnsweredFailure() !== true;
+        $failedRuns = $noAnswer ? $message->failedRuns + 1 : 0;
 
         $delay = match (true) {
-            $result->state === BatchSubmissionResult::STATE_IN_FLIGHT                        => self::RETRY_IN_FLIGHT_SECONDS,
-            $result->state === BatchSubmissionResult::STATE_IDLE                             => null,
-            $result->state === BatchSubmissionResult::STATE_SENT && $result->remaining === 0 => null,
-            default                                                                          => max(0, ($result->nextSubmissionAt?->getTimestamp() ?? $now->getTimestamp()) - $now->getTimestamp()),
+            $result->state === BatchSubmissionResult::STATE_IN_FLIGHT                          => self::RETRY_IN_FLIGHT_SECONDS,
+            $result->state === BatchSubmissionResult::STATE_IDLE                               => null,
+            $result->state === BatchSubmissionResult::STATE_SENT && $result->remaining === 0   => null,
+            $noAnswer && $failedRuns >= self::MAX_FAILED_RUNS                                  => null,
+            $noAnswer                                                                          => max($untilNext, min(self::MAX_RETRY_DELAY_SECONDS, self::RETRY_DELAY_SECONDS * 2 ** ($failedRuns - 1))),
+            $result->state === BatchSubmissionResult::STATE_FAILED && $result->remaining === 0 => null,
+            default                                                                            => $untilNext,
         };
+        if ($noAnswer && $delay === null) {
+            $this->logger?->error('The AEAT gave no answer to {runs} submissions of {issuer} in a row; the Messenger message stops rescheduling itself. The records stay pending: dispatch the message again or run nowo:verifactu:submit-pending.', [
+                'runs'   => $failedRuns,
+                'issuer' => $result->issuerNif,
+            ]);
+        }
         if ($delay !== null && $this->bus instanceof MessageBusInterface) {
-            $this->bus->dispatch(new SubmitPendingBillingRecords($result->issuerNif), [new DelayStamp($delay * 1000)]);
+            $this->bus->dispatch(new SubmitPendingBillingRecords($result->issuerNif, $failedRuns), [new DelayStamp($delay * 1000)]);
         }
 
         return $result;

@@ -66,10 +66,66 @@ final class AeatResponseParserTest extends TestCase
             500,
         )->failure);
         self::assertStringStartsWith('Unreadable AEAT response', (string) $parser->parse('<html>Bad gateway', 502)->failure);
-        self::assertStringStartsWith('The AEAT response has no EstadoEnvio', (string) $parser->parse('<ok/>')->failure);
+        self::assertStringStartsWith('The AEAT response has no valid EstadoEnvio', (string) $parser->parse('<ok/>')->failure);
         self::assertSame('AEAT returned HTTP status 500.', $parser->parse($this->response('Correcto', '60', null, []), 500)->failure);
         self::assertSame('The AEAT response is not a valid submission response.', $parser->parse('<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e "x">]><x>&e;</x>')->failure);
         self::assertTrue($parser->parse(str_repeat(' ', AeatResponseParser::MAX_RESPONSE_BYTES + 1) . '<x/>')->isFailure());
+    }
+
+    /**
+     * LJ-L6: a DTD in another encoding gets past the string check; the parsed document is refused all the same.
+     */
+    public function testADoctypeInUtf16IsRefusedAfterParsing(): void
+    {
+        $utf8 = '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/hostname">]>'
+            . '<RespuestaRegFactuSistemaFacturacion><EstadoEnvio>Correcto</EstadoEnvio><CSV>&e;</CSV></RespuestaRegFactuSistemaFacturacion>';
+        $body = "\xFF\xFE" . (string) mb_convert_encoding($utf8, 'UTF-16LE', 'UTF-8');
+        self::assertStringNotContainsString('<!DOCTYPE', $body, 'The probe must get past the string check');
+
+        $response = (new AeatResponseParser())->parse($body);
+
+        self::assertTrue($response->isFailure());
+        self::assertSame('The AEAT response is not a valid submission response.', $response->failure);
+        self::assertNull($response->csv);
+    }
+
+    /**
+     * LJ-L6: only Correcto / ParcialmenteCorrecto / Incorrecto are an answer; an empty or unknown EstadoEnvio is a failure.
+     */
+    public function testAnEmptyOrUnknownSubmissionStateIsAFailure(): void
+    {
+        $parser = new AeatResponseParser();
+
+        foreach (['', 'Desconocido', 'correcto'] as $state) {
+            $response = $parser->parse($this->response($state, '60', 'CSV-1', []));
+            self::assertTrue($response->isFailure(), $state);
+            self::assertTrue($response->isAnsweredFailure(), 'Counted against the records: the answer is not a valid one');
+        }
+        foreach ([AeatBatchResponse::ENVIO_CORRECT, AeatBatchResponse::ENVIO_PARTIALLY_CORRECT, AeatBatchResponse::ENVIO_INCORRECT] as $state) {
+            self::assertFalse($parser->parse($this->response($state, '60', 'CSV-1', []))->isFailure(), $state);
+        }
+    }
+
+    /**
+     * LJ-M3: which failures point at the records of the request.
+     */
+    public function testAnsweredFailures(): void
+    {
+        $parser = new AeatResponseParser();
+        $fault  = '<env:Envelope xmlns:env="http://schemas.xmlsoap.org/soap/envelope/"><env:Body><env:Fault><faultcode>env:Client</faultcode>'
+            . '<faultstring>Codigo[4102].El XML no cumple el esquema.</faultstring></env:Fault></env:Body></env:Envelope>';
+
+        self::assertTrue($parser->parse($fault, 500)->isAnsweredFailure());
+        self::assertTrue($parser->parse($fault, 200)->isAnsweredFailure());
+        self::assertTrue($parser->parse('', 403)->isAnsweredFailure());
+        self::assertTrue($parser->parse('<ok/>')->isAnsweredFailure());
+        self::assertFalse($parser->parse('<html>Bad gateway', 502)->isAnsweredFailure());
+        self::assertFalse($parser->parse('', 503)->isAnsweredFailure());
+        self::assertFalse($parser->parse('', 504)->isAnsweredFailure());
+        self::assertFalse(AeatBatchResponse::failed('Operation timed out', 0, '', '', true)->isAnsweredFailure());
+        self::assertFalse(AeatBatchResponse::failed('reset', 200, '', '', true)->isAnsweredFailure(), 'A transport failure never counts');
+        self::assertFalse(AeatBatchResponse::failed('timeout')->isAnsweredFailure());
+        self::assertFalse($parser->parse($this->response('Correcto', '60', null, []))->isAnsweredFailure());
     }
 
     public function testAnUnknownStatusLineIsIgnoredAndNoWaitTimeIsNull(): void

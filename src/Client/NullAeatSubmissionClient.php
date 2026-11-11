@@ -35,8 +35,12 @@ final class NullAeatSubmissionClient implements AeatSubmissionClientInterface, B
     /**
      * Does not contact the AEAT; answers Correcto for every record, with no wait time.
      */
-    public function submitBatch(array $records): AeatBatchResponse
+    public function submitBatch(array $records, ?callable $beforeTransmit = null): AeatBatchResponse
     {
+        if ($beforeTransmit !== null) {
+            $beforeTransmit();
+        }
+
         return new AeatBatchResponse(
             AeatBatchResponse::ENVIO_CORRECT,
             array_map(static fn (BillingRecord $record): AeatRecordResponse => new AeatRecordResponse(

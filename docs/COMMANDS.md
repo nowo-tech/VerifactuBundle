@@ -74,15 +74,17 @@ environment. Stored records are kept. Asks for confirmation; `--force` skips it 
 ## Submit waiting records in batches
 
 ```bash
-php bin/console nowo:verifactu:submit-pending [--issuer=89890001K]
+php bin/console nowo:verifactu:submit-pending [--issuer=89890001K] [--retry-failed]
 ```
 
 Available with a record store. Sends the next batch of waiting records (up to `submission.batch_size`, at most 1000) of
 the issuer, or of every issuer with waiting records, once, and prints the per-record outcome (accepted, accepted with
-errors, rejected, without answer), how many records are still waiting and when the next submission may start (AEAT
-`TiempoEsperaEnvio`). A throttled issuer is reported, not waited for: run the command from a scheduler, or dispatch the
-`SubmitPendingBillingRecords` Messenger message, which reschedules itself. Exit code `1` when a batch got no AEAT
-answer (its records stay pending).
+errors, rejected, unconfirmed duplicates, without answer), how many records are still waiting and when the next
+submission may start (AEAT `TiempoEsperaEnvio`). A throttled issuer is reported, not waited for: run the command from a
+scheduler, or dispatch the `SubmitPendingBillingRecords` Messenger message, which reschedules itself. Exit code `1`
+when a batch got no per-record answer (its records stay pending) or a record the AEAT kept refusing on its own was
+marked `failed`. `--retry-failed` (with `--issuer`) first puts the issuer's `failed` records back to pending, once the
+cause of the refusal is fixed. Records written before 1.6 (no AEAT environment) are never sent (see UPGRADING).
 
 ## Submit to AEAT sandbox
 
@@ -109,6 +111,12 @@ php bin/console nowo:verifactu:submit-sandbox \
 ```
 
 See [SANDBOX.md](SANDBOX.md) for certificate setup and expected output.
+
+**The only path to the AEAT outside production code.** `--submit` is the only bundle path that may send a request to
+the AEAT from a development box, and only the owner runs it, with an owner-held certificate (never committed, never in
+CI secrets, scratch directories or logs). The test suite and CI set `VERIFACTU_FORBID_NETWORK=1`, which makes the real
+cURL transport refuse every request before it is built; with that variable set, `--submit` fails with a transport
+error instead of reaching the AEAT.
 
 **Outside the sandbox** (`aeat.environment: production`) `--submit` is refused: a real registration cannot be undone. To submit anyway, pass `--allow-production`, give `--nif` and `--numserie` explicitly and confirm the interactive prompt (non-interactive runs are refused):
 

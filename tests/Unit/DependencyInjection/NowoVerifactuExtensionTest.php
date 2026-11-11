@@ -454,6 +454,26 @@ final class NowoVerifactuExtensionTest extends TestCase
         self::assertSame('cache.app', (string) $container->getDefinition(CacheFlowControl::class)->getArgument(0));
         self::assertSame([250, 300, 60, 'global'], [$definition->getArgument('$batchSize'), $definition->getArgument('$claimTimeout'), $definition->getArgument('$defaultWait'), $definition->getArgument('$flowControlScope')]);
         self::assertSame([['handles' => SubmitPendingBillingRecords::class]], $container->getDefinition(SubmitPendingBillingRecordsHandler::class)->getTag('messenger.message_handler'));
+        self::assertSame([5, null], [$definition->getArgument('$maxAttempts'), $definition->getArgument('$duplicateConfirmation')]);
+    }
+
+    /**
+     * LJ-L4 / LJ-M2 / LJ-M3: the flow control pool (shared by every node), the duplicate confirmation and the attempts.
+     */
+    public function testTheFlowControlPoolDuplicateConfirmationAndAttemptsAreConfigurable(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'memory'], 'submission' => [
+            'flow_control_cache_pool' => 'cache.verifactu_flow',
+            'duplicate_confirmation'  => 'app.duplicate_confirmation',
+            'max_attempts'            => 3,
+        ]]], $container);
+
+        $definition = $container->getDefinition(BillingRecordBatchSubmitter::class);
+        self::assertSame('cache.verifactu_flow', (string) $container->getDefinition(CacheFlowControl::class)->getArgument(0));
+        self::assertSame('app.duplicate_confirmation', (string) $definition->getArgument('$duplicateConfirmation'));
+        self::assertSame(3, $definition->getArgument('$maxAttempts'));
+        self::assertSame('logger', (string) $container->getDefinition(SubmitPendingBillingRecordsHandler::class)->getArgument(3));
     }
 
     public function testTheBatchClientAndFlowControlCanBeReplaced(): void

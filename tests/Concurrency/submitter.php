@@ -92,8 +92,11 @@ function submitPending(Psr\Container\ContainerInterface $container, ManagerRegis
         {
         }
 
-        public function submitBatch(array $records): AeatBatchResponse
+        public function submitBatch(array $records, ?callable $beforeTransmit = null): AeatBatchResponse
         {
+            if ($beforeTransmit !== null) {
+                $beforeTransmit();
+            }
             // A slow AEAT: the batch stays in flight long enough for the other submitters to try to claim records.
             usleep(random_int(5000, 30000));
             $marker = @fopen(dirname($this->shared) . '/first-request.marker', 'x');
@@ -101,7 +104,7 @@ function submitPending(Psr\Container\ContainerInterface $container, ManagerRegis
             if ($marker !== false) {
                 fclose($marker);
             }
-            $response = $failed ? AeatBatchResponse::failed('timeout') : ScriptedBatchClient::allAccepted($records, 0);
+            $response = $failed ? AeatBatchResponse::failed('timeout', 0, '', '', true) : ScriptedBatchClient::allAccepted($records, 0);
             $line     = 'B ' . $this->workerId . ' ' . ($failed ? 'none' : 'ok') . ' ' . implode(' ', array_map(static fn (BillingRecord $r): string => $r->invoiceSeriesNumber . '@' . $r->hash, $records)) . "\n";
             file_put_contents($this->shared, $line, \FILE_APPEND | \LOCK_EX);
 

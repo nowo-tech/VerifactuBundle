@@ -29,7 +29,17 @@ final class StoredBillingRecord
     public const STATUS_REJECTED = 'rejected';
 
     /**
+     * AEAT RegistroDuplicado for a record sent before, not confirmed to be this record (1.7): never reported as
+     * accepted, never sent again automatically.
+     */
+    public const STATUS_UNCONFIRMED = 'unconfirmed';
+
+    /**
      * Creates a stored record.
+     *
+     * @param int $submissionAttempts AEAT requests that carried this record (counted when the request is transmitted)
+     * @param int $submissionFailures consecutive requests that carried this record and got an AEAT answer without a
+     *                                per-record outcome (SoapFault, HTTP error, unreadable body): halves the next batch
      */
     public function __construct(
         public readonly int $position,
@@ -39,6 +49,7 @@ final class StoredBillingRecord
         public readonly int $submissionAttempts = 0,
         public readonly ?int $submissionErrorCode = null,
         public readonly ?string $submissionError = null,
+        public readonly int $submissionFailures = 0,
     ) {
     }
 }

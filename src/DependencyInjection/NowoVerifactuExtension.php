@@ -301,7 +301,7 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
 
         $flowControl = $config['submission']['flow_control'];
         if ($flowControl === null) {
-            $container->setDefinition(CacheFlowControl::class, new Definition(CacheFlowControl::class, [new Reference('cache.app')]));
+            $container->setDefinition(CacheFlowControl::class, new Definition(CacheFlowControl::class, [new Reference($config['submission']['flow_control_cache_pool'])]));
             $flowControl = CacheFlowControl::class;
         }
         $container->setAlias(FlowControlInterface::class, $flowControl);
@@ -315,13 +315,16 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
             ->setArgument('$batchSize', $config['submission']['batch_size'])
             ->setArgument('$claimTimeout', $config['submission']['claim_timeout'])
             ->setArgument('$defaultWait', $config['submission']['default_wait'])
-            ->setArgument('$flowControlScope', $config['submission']['flow_control_scope']);
+            ->setArgument('$flowControlScope', $config['submission']['flow_control_scope'])
+            ->setArgument('$duplicateConfirmation', $config['submission']['duplicate_confirmation'] !== null ? new Reference($config['submission']['duplicate_confirmation']) : null)
+            ->setArgument('$maxAttempts', $config['submission']['max_attempts']);
 
         if (interface_exists(MessageBusInterface::class)) {
             $container->setDefinition(SubmitPendingBillingRecordsHandler::class, (new Definition(SubmitPendingBillingRecordsHandler::class, [
                 new Reference(BillingRecordBatchSubmitter::class),
                 new Reference(MessageBusInterface::class, ContainerInterface::NULL_ON_INVALID_REFERENCE),
                 new Reference('clock', ContainerInterface::NULL_ON_INVALID_REFERENCE),
+                new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE),
             ]))->addTag('messenger.message_handler', ['handles' => SubmitPendingBillingRecords::class]));
         }
     }

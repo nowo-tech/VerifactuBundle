@@ -44,6 +44,7 @@ final class SubmitPendingCommand extends Command
     protected function configure(): void
     {
         $this->addOption('issuer', null, InputOption::VALUE_REQUIRED, 'Issuer NIF (default: every issuer with waiting records)');
+        $this->addOption('retry-failed', null, InputOption::VALUE_NONE, 'Put the failed records of --issuer back to pending first (after fixing what the AEAT refused)');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -53,25 +54,37 @@ final class SubmitPendingCommand extends Command
         $issuers = $issuer !== '' ? [$issuer] : $this->submitter->issuersWithPendingRecords();
         $failed  = false;
 
+        if ($input->getOption('retry-failed') === true) {
+            if ($issuer === '') {
+                $io->error('--retry-failed needs --issuer.');
+
+                return Command::INVALID;
+            }
+            $io->writeln(sprintf('%s: %d failed records back to pending.', $issuer, $this->submitter->requeueFailed($issuer)));
+        }
+
         foreach ($issuers as $nif) {
             $result = $this->submitter->submitPending($nif);
-            $failed = $failed || $result->isRetryable();
+            $failed = $failed || $result->state === BatchSubmissionResult::STATE_FAILED;
             $io->writeln(match ($result->state) {
                 BatchSubmissionResult::STATE_SENT => sprintf(
-                    '%s: %d sent (%d accepted, %d accepted with errors, %d rejected, %d without answer), %d waiting; next submission at %s.',
+                    '%s: %d sent (%d accepted, %d accepted with errors, %d rejected, %d unconfirmed duplicates, %d without answer), %d waiting; next submission at %s.',
                     $nif,
                     count($result->outcomes),
                     $result->count(RecordSubmissionStatus::Accepted),
                     $result->count(RecordSubmissionStatus::AcceptedWithErrors),
                     $result->count(RecordSubmissionStatus::Rejected),
+                    $result->count(RecordSubmissionStatus::Unconfirmed),
                     $result->count(null),
                     $result->remaining,
                     $result->nextSubmissionAt?->format(DATE_ATOM) ?? '-',
                 ),
                 BatchSubmissionResult::STATE_THROTTLED => sprintf('%s: %d waiting; the AEAT wait time ends at %s.', $nif, $result->remaining, $result->nextSubmissionAt?->format(DATE_ATOM) ?? '-'),
                 BatchSubmissionResult::STATE_IN_FLIGHT => sprintf('%s: another process is sending a batch.', $nif),
-                BatchSubmissionResult::STATE_FAILED    => sprintf('%s: no AEAT answer (%s); %d records stay pending.', $nif, $result->response->failure ?? '-', $result->remaining),
-                default                                => sprintf('%s: nothing to send.', $nif),
+                BatchSubmissionResult::STATE_FAILED    => $result->failed !== []
+                    ? sprintf('%s: the AEAT kept refusing record %d (%s); it is marked failed (--retry-failed puts it back), %d waiting.', $nif, $result->failed[0]->position, $result->response->failure ?? '-', $result->remaining)
+                    : sprintf('%s: no AEAT answer (%s); %d records stay pending.', $nif, $result->response->failure ?? '-', $result->remaining),
+                default => sprintf('%s: nothing to send.', $nif),
             });
         }
         if ($issuers === []) {

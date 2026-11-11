@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Client;
 
 use DOMDocument;
+use DOMDocumentType;
 use DOMElement;
 use Nowo\VerifactuBundle\Model\AeatBatchResponse;
 use Nowo\VerifactuBundle\Model\AeatRecordResponse;
 use Nowo\VerifactuBundle\Model\RecordSubmissionStatus;
 use Nowo\VerifactuBundle\Model\RecordType;
 
+use function in_array;
 use function is_numeric;
 use function libxml_clear_errors;
 use function libxml_use_internal_errors;
@@ -35,6 +37,13 @@ final class AeatResponseParser
     /** Responses are at most 1000 lines of a few hundred bytes; anything far larger is not an AEAT answer. */
     public const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
+    /** EstadoEnvio values (RespuestaSuministro.xsd `EstadoEnvioType`). */
+    private const SUBMISSION_STATES = [
+        AeatBatchResponse::ENVIO_CORRECT,
+        AeatBatchResponse::ENVIO_PARTIALLY_CORRECT,
+        AeatBatchResponse::ENVIO_INCORRECT,
+    ];
+
     /**
      * Parses the HTTP response of one submission.
      */
@@ -58,6 +67,10 @@ final class AeatResponseParser
         if (!$loaded) {
             return AeatBatchResponse::failed(sprintf('Unreadable AEAT response (HTTP status %d).', $httpStatus), $httpStatus, $body, $endpoint);
         }
+        if ($document->doctype instanceof DOMDocumentType) {
+            // The string check above misses other encodings (UTF-16): refuse any DTD once the document is parsed.
+            return AeatBatchResponse::failed('The AEAT response is not a valid submission response.', $httpStatus, '', $endpoint);
+        }
 
         $fault = $this->first($document, 'Fault');
         if ($fault instanceof DOMElement) {
@@ -68,8 +81,9 @@ final class AeatResponseParser
 
         $answer = $this->first($document, 'RespuestaRegFactuSistemaFacturacion');
         $status = $answer instanceof DOMElement ? $this->text($answer, 'EstadoEnvio') : null;
-        if (!$answer instanceof DOMElement || $status === null) {
-            return AeatBatchResponse::failed(sprintf('The AEAT response has no EstadoEnvio (HTTP status %d).', $httpStatus), $httpStatus, $body, $endpoint);
+        if (!$answer instanceof DOMElement || $status === null || !in_array($status, self::SUBMISSION_STATES, true)) {
+            // Only the three EstadoEnvio values of RespuestaSuministro.xsd are an answer; an empty or unknown one is not.
+            return AeatBatchResponse::failed(sprintf('The AEAT response has no valid EstadoEnvio (HTTP status %d).', $httpStatus), $httpStatus, $body, $endpoint);
         }
         if ($httpStatus < 200 || $httpStatus >= 300) {
             return AeatBatchResponse::failed(sprintf('AEAT returned HTTP status %d.', $httpStatus), $httpStatus, $body, $endpoint);

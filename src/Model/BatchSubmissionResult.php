@@ -16,8 +16,9 @@ use function count;
  * - STATE_IN_FLIGHT: another process is sending a batch of the issuer; try again later.
  * - STATE_THROTTLED: the AEAT wait time has not elapsed and fewer than a full batch is waiting (`nextSubmissionAt`).
  * - STATE_SENT: a batch got an AEAT answer; `outcomes` holds one entry per record (status null = no answer for it).
- * - STATE_FAILED: the batch got no answer (transport error, HTTP status, SoapFault): every record went back to pending
- *   and may be sent again (`retryable`).
+ * - STATE_FAILED: the batch got no per-record answer (transport error, HTTP status, SoapFault). Its records went back to
+ *   pending and may be sent again (`retryable`), or, for a record the AEAT kept refusing on its own, it was marked
+ *   failed (`failed`, RECORD_SUBMISSION_FAILED) and the next records flow.
  *
  * @author Nowo.tech
  * @copyright 2026 Nowo.tech
@@ -33,6 +34,7 @@ final class BatchSubmissionResult
     /**
      * @param list<RecordSubmissionOutcome> $outcomes
      * @param list<array{event: string, exception: Throwable}> $eventErrors
+     * @param list<StoredBillingRecord> $failed records marked failed by this call
      */
     public function __construct(
         public readonly string $issuerNif,
@@ -42,6 +44,7 @@ final class BatchSubmissionResult
         public readonly ?DateTimeImmutable $nextSubmissionAt = null,
         public readonly int $remaining = 0,
         public readonly array $eventErrors = [],
+        public readonly array $failed = [],
     ) {
     }
 
@@ -50,7 +53,7 @@ final class BatchSubmissionResult
      */
     public function isRetryable(): bool
     {
-        return $this->state === self::STATE_FAILED;
+        return $this->state === self::STATE_FAILED && $this->failed === [];
     }
 
     /**

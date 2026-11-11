@@ -19,7 +19,12 @@ use Nowo\VerifactuBundle\Model\BillingRecord;
 interface BatchAeatSubmissionClientInterface
 {
     /**
+     * Implementations call $beforeTransmit once, right before the request leaves the process (after the envelope and
+     * the certificate are ready), and never when nothing is sent: the submitter counts an attempt there. A transport
+     * failure (no HTTP answer) is returned as AeatBatchResponse::failed(..., transportFailure: true).
+     *
      * @param list<BillingRecord> $records chained, stored records, in chain order
+     * @param (callable(): void)|null $beforeTransmit
      */
-    public function submitBatch(array $records): AeatBatchResponse;
+    public function submitBatch(array $records, ?callable $beforeTransmit = null): AeatBatchResponse;
 }

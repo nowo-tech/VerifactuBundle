@@ -38,6 +38,11 @@
         <field name="submissionClaimedAt" column="submission_claimed_at" type="datetime_immutable" nullable="true"/>
         <field name="submissionErrorCode" column="submission_error_code" type="integer" nullable="true"/>
         <field name="submissionError" column="submission_error" type="text" nullable="true"/>
+        <field name="submissionFailures" column="submission_failures" type="integer">
+            <options>
+                <option name="default">0</option>
+            </options>
+        </field>
         <field name="submittedAt" column="submitted_at" type="datetime_immutable" nullable="true"/>
     </entity>
 </doctrine-mapping>

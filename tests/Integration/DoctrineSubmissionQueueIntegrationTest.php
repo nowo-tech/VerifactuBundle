@@ -22,6 +22,7 @@ use Nowo\VerifactuBundle\Service\BillingRecordBatchSubmitter;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Tests\Kernel\DoctrineTestKernel;
 use Nowo\VerifactuBundle\Tests\Support\ScriptedBatchClient;
+use Nowo\VerifactuBundle\Tests\Support\SubmissionQueueDatabaseScenarios;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 
@@ -34,6 +35,8 @@ use Symfony\Component\EventDispatcher\EventDispatcher;
  */
 final class DoctrineSubmissionQueueIntegrationTest extends KernelTestCase
 {
+    use SubmissionQueueDatabaseScenarios;
+
     protected static function getKernelClass(): string
     {
         return DoctrineTestKernel::class;
@@ -64,7 +67,8 @@ final class DoctrineSubmissionQueueIntegrationTest extends KernelTestCase
         // The second F-3 (same invoice id and operation) waits for the next submission.
         $claimed = $queue->claimNext('89890001K', 1000, 'claim-a', $now, 300);
         self::assertSame([1, 2, 3], array_map(static fn (StoredBillingRecord $s): int => $s->position, $claimed));
-        self::assertSame([1, 1, 1], array_map(static fn (StoredBillingRecord $s): int => $s->submissionAttempts, $claimed));
+        self::assertSame([0, 0, 0], array_map(static fn (StoredBillingRecord $s): int => $s->submissionAttempts, $claimed), 'A claim is not an attempt (LJ-M2)');
+        self::assertSame(3, $queue->markTransmitted('89890001K', 'claim-a'));
         self::assertTrue($queue->hasSubmissionInFlight('89890001K', $now, 300));
         self::assertSame(1, $queue->countPending('89890001K', $now, 300));
 
@@ -83,6 +87,7 @@ final class DoctrineSubmissionQueueIntegrationTest extends KernelTestCase
         $entry = $this->entityManager()->find(BillingRecordEntry::class, ['issuerNif' => '89890001K', 'position' => 1]);
         self::assertInstanceOf(BillingRecordEntry::class, $entry);
         self::assertSame(1, $entry->getSubmissionAttempts());
+        self::assertSame(0, $entry->getSubmissionFailures());
         self::assertNotNull($entry->getSubmittedAt());
 
         // A claim whose process died is taken over after the timeout; the stale claim can no longer store anything.
@@ -95,7 +100,7 @@ final class DoctrineSubmissionQueueIntegrationTest extends KernelTestCase
         $queue->claimNext('89890001K', 1000, 'claim-d', $later, 300);
         $taken = $queue->claimNext('89890001K', 1000, 'claim-e', $later->modify('+301 seconds'), 300);
         self::assertSame([3], array_map(static fn (StoredBillingRecord $s): int => $s->position, $taken));
-        self::assertSame(4, $taken[0]->submissionAttempts, 'Claims a, b, d and e');
+        self::assertSame(1, $taken[0]->submissionAttempts, 'Only claim a was transmitted; b, d and e were not');
         self::assertSame([], $queue->recordOutcomes('89890001K', 'claim-d', [new RecordSubmissionOutcome($taken[0], RecordSubmissionStatus::Accepted)], $later));
     }
 
@@ -138,6 +143,32 @@ final class DoctrineSubmissionQueueIntegrationTest extends KernelTestCase
             $result = $processor->process(new BillingRecord(RecordType::Alta, '89890001K', $number, '09-07-2026', 'F1', '21.00', '121.00', '', operationDescription: 'Queue'));
             self::assertSame([], $result['errors']);
         }
+    }
+
+    protected function ljStore(): DoctrineBillingRecordStore
+    {
+        return $this->store();
+    }
+
+    protected function ljProcessor(): BillingRecordProcessor
+    {
+        /** @var BillingRecordProcessor $processor */
+        $processor = self::getContainer()->get(BillingRecordProcessor::class);
+
+        return $processor;
+    }
+
+    protected function ljHeads(): HashChainRepositoryInterface
+    {
+        /** @var HashChainRepositoryInterface $heads */
+        $heads = self::getContainer()->get(HashChainRepositoryInterface::class);
+
+        return $heads;
+    }
+
+    protected function ljEntityManager(): EntityManagerInterface
+    {
+        return $this->entityManager();
     }
 
     private function queue(): SubmissionQueueInterface

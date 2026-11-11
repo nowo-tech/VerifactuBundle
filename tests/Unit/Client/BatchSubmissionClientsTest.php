@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Unit\Client;
 
+use ArrayObject;
 use InvalidArgumentException;
 use Nowo\VerifactuBundle\Client\AeatEndpointResolver;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
@@ -57,6 +58,36 @@ final class BatchSubmissionClientsTest extends TestCase
     {
         self::assertSame('Could not resolve host', $this->client(new FakeSoapTransport('', 'Could not resolve host'))->submitBatch([$this->record('F-1')])->failure);
         self::assertStringStartsWith('AEAT SOAP fault', (string) $this->client(new FakeSoapTransport('<Envelope><Body><Fault><faultstring>bad</faultstring></Fault></Body></Envelope>', null, 500))->submitBatch([$this->record('F-1')])->failure);
+    }
+
+    /**
+     * LJ-M2: the clients tell the submitter when the request leaves, once, so an attempt is counted there.
+     */
+    public function testTheClientsCallBeforeTransmitOnceWhenTheRequestLeaves(): void
+    {
+        $counter = new ArrayObject();
+        $count   = static function () use ($counter): void {
+            $counter->append(true);
+        };
+
+        $this->client(new FakeSoapTransport('<x/>'))->submitBatch([$this->record('F-1')], $count);
+        self::assertCount(1, $counter);
+
+        // A transport error: the request may have left, so it is counted, and the failure is marked as transport.
+        $failed = $this->client(new FakeSoapTransport('', 'Operation timed out'))->submitBatch([$this->record('F-1')], $count);
+        self::assertCount(2, $counter);
+        self::assertTrue($failed->transportFailure);
+        self::assertFalse($failed->isAnsweredFailure());
+
+        // Nothing is built: nothing leaves, nothing is counted.
+        try {
+            $this->client(new FakeSoapTransport())->submitBatch([], $count);
+        } catch (InvalidArgumentException) {
+        }
+        self::assertCount(2, $counter);
+
+        (new NullAeatSubmissionClient())->submitBatch([$this->record('F-1')], $count);
+        self::assertCount(3, $counter);
     }
 
     public function testRecordsOfTwoEnvironmentsOrNoRecordsAreRefused(): void

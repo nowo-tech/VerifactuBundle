@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Unit\Command;
 
+use Closure;
 use DateTimeImmutable;
 use Nowo\VerifactuBundle\Command\SubmitPendingCommand;
 use Nowo\VerifactuBundle\Model\AeatBatchResponse;
 use Nowo\VerifactuBundle\Model\RecordSubmissionStatus;
+use Nowo\VerifactuBundle\Model\StoredBillingRecord;
 use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use Nowo\VerifactuBundle\Service\BillingRecordBatchSubmitter;
@@ -20,6 +22,8 @@ use Symfony\Component\Clock\MockClock;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\EventDispatcher\EventDispatcher;
+
+use function count;
 
 /**
  * @author Nowo.tech
@@ -40,7 +44,7 @@ final class SubmitPendingCommandTest extends TestCase
         $this->chain($heads, $store, ['F-1'], '89890001K');
 
         self::assertSame(Command::SUCCESS, $tester->execute([]));
-        self::assertStringContainsString('12345678Z: 2 sent (1 accepted, 0 accepted with errors, 1 rejected, 0 without answer), 0 waiting; next submission at 2026-11-11T10:01:00', $tester->getDisplay());
+        self::assertStringContainsString('12345678Z: 2 sent (1 accepted, 0 accepted with errors, 1 rejected, 0 unconfirmed duplicates, 0 without answer), 0 waiting; next submission at 2026-11-11T10:01:00', $tester->getDisplay());
         self::assertStringContainsString('89890001K: 1 sent (1 accepted', $tester->getDisplay());
 
         $this->chain($heads, $store, ['F-2'], '89890001K');
@@ -49,6 +53,33 @@ final class SubmitPendingCommandTest extends TestCase
 
         self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => 'B12345674']));
         self::assertStringContainsString('B12345674: nothing to send.', $tester->getDisplay());
+    }
+
+    /**
+     * LJ-M3: a record the AEAT keeps refusing is reported as failed (exit 1) and --retry-failed puts it back.
+     */
+    public function testAFailedRecordIsReportedAndCanBeRequeued(): void
+    {
+        $fault = static fn (array $records): AeatBatchResponse => AeatBatchResponse::failed('AEAT SOAP fault: bad', 500, '<Fault/>');
+        /** @var list<Closure> $script */
+        $script                   = array_fill(0, 20, $fault);
+        [$tester, $store, $heads] = $this->tester(new ScriptedBatchClient(...$script), false);
+        $this->chain($heads, $store, ['F-1'], '89890001K');
+
+        $outputs = [];
+        do {
+            self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K']));
+            $outputs[] = $tester->getDisplay();
+        } while (count($outputs) < 20 && !str_contains($tester->getDisplay(), 'marked failed'));
+        self::assertStringContainsString('89890001K: the AEAT kept refusing record 1 (AEAT SOAP fault: bad); it is marked failed (--retry-failed puts it back), 0 waiting.', $tester->getDisplay());
+        self::assertStringContainsString('no AEAT answer (AEAT SOAP fault: bad); 1 records stay pending.', $outputs[0]);
+
+        self::assertSame(Command::INVALID, $tester->execute(['--retry-failed' => true]));
+        self::assertStringContainsString('--retry-failed needs --issuer.', $tester->getDisplay());
+
+        self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K', '--retry-failed' => true]));
+        self::assertStringContainsString('89890001K: 1 failed records back to pending.', $tester->getDisplay());
+        self::assertSame(StoredBillingRecord::STATUS_PENDING, iterator_to_array($store->findByIssuer('89890001K'))[0]->submissionStatus);
     }
 
     public function testNoAnswerFailsAndAnInFlightIssuerIsReported(): void
@@ -69,11 +100,11 @@ final class SubmitPendingCommandTest extends TestCase
     /**
      * @return array{CommandTester, InMemoryBillingRecordStore, InMemoryHashChainRepository}
      */
-    private function tester(ScriptedBatchClient $client): array
+    private function tester(ScriptedBatchClient $client, bool $flowControl = true): array
     {
         $heads     = new InMemoryHashChainRepository();
         $store     = new InMemoryBillingRecordStore();
-        $submitter = new BillingRecordBatchSubmitter($store, $client, $heads, new EventDispatcher(), new CacheFlowControl(new ArrayAdapter()), new MockClock('2026-11-11 10:00:00'));
+        $submitter = new BillingRecordBatchSubmitter($store, $client, $heads, new EventDispatcher(), $flowControl ? new CacheFlowControl(new ArrayAdapter()) : null, new MockClock('2026-11-11 10:00:00'));
 
         return [new CommandTester(new SubmitPendingCommand($submitter)), $store, $heads];
     }

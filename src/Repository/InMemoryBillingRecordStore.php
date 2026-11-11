@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Repository;
 
 use DateTimeImmutable;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\AeatRecordResponse;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
+use Nowo\VerifactuBundle\Submission\BatchSplit;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 use Symfony\Contracts\Service\ResetInterface;
 
@@ -100,13 +102,17 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
         $key     = $this->normalizeKey($issuerNif);
         $claimed = [];
         $seen    = [];
+        $max     = max(1, $limit);
         foreach ($this->waiting($issuerNif, $now, $claimTimeoutSeconds) as $stored) {
+            if ($claimed === []) {
+                $max = BatchSplit::claimLimit($limit, $stored->submissionFailures);
+            }
             $identity = AeatRecordResponse::key($stored->record->issuerNif, $stored->record->invoiceSeriesNumber, $stored->record->issueDate, $stored->record->recordType);
-            if (count($claimed) >= max(1, $limit) || isset($seen[$identity]) || ($claimed !== [] && $stored->record->environment !== $claimed[0]->record->environment)) {
+            if (count($claimed) >= $max || isset($seen[$identity]) || ($claimed !== [] && $stored->record->environment !== $claimed[0]->record->environment)) {
                 break;
             }
             $seen[$identity] = true;
-            $claimed[]       = new StoredBillingRecord($stored->position, $stored->record, StoredBillingRecord::STATUS_SENDING, $stored->submissionReference, $stored->submissionAttempts + 1, $stored->submissionErrorCode, $stored->submissionError);
+            $claimed[]       = $this->copy($stored, StoredBillingRecord::STATUS_SENDING);
         }
         foreach ($claimed as $stored) {
             $this->replace($key, $stored);
@@ -115,6 +121,17 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
         }
 
         return $claimed;
+    }
+
+    public function markTransmitted(string $issuerNif, string $claimToken): int
+    {
+        $count = 0;
+        foreach ($this->claimed($issuerNif, $claimToken) as $current) {
+            $this->replace($this->normalizeKey($issuerNif), $this->copy($current, attempts: $current->submissionAttempts + 1));
+            ++$count;
+        }
+
+        return $count;
     }
 
     public function recordOutcomes(string $issuerNif, string $claimToken, array $outcomes, DateTimeImmutable $now): array
@@ -135,6 +152,7 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
                 $current->submissionAttempts,
                 $outcome->errorCode,
                 $outcome->errorDescription,
+                0,
             ));
             // @igor-ignore - Request-scoped: cleared by WorkerStateResetSubscriber on every main request and on kernel.reset.
             unset($this->claims[$key][$position]);
@@ -144,22 +162,51 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
         return $updated;
     }
 
-    public function releaseClaim(string $issuerNif, string $claimToken, string $failure): int
+    public function releaseClaim(string $issuerNif, string $claimToken, ?string $failure = null, bool $countFailure = false): int
     {
         $key      = $this->normalizeKey($issuerNif);
         $released = 0;
-        foreach ($this->claims[$key] ?? [] as $position => [$token]) {
-            $current = $this->find($key, $position);
-            if ($token !== $claimToken || !$current instanceof StoredBillingRecord) {
-                continue;
-            }
-            $this->replace($key, new StoredBillingRecord($position, $current->record, StoredBillingRecord::STATUS_PENDING, $current->submissionReference, $current->submissionAttempts, $current->submissionErrorCode, $failure));
+        foreach ($this->claimed($issuerNif, $claimToken) as $current) {
+            $this->replace($key, $this->copy(
+                $current,
+                StoredBillingRecord::STATUS_PENDING,
+                error: $failure ?? $current->submissionError,
+                failures: $current->submissionFailures + ($countFailure ? 1 : 0),
+            ));
             // @igor-ignore - Request-scoped: cleared by WorkerStateResetSubscriber on every main request and on kernel.reset.
-            unset($this->claims[$key][$position]);
+            unset($this->claims[$key][$current->position]);
             ++$released;
         }
 
         return $released;
+    }
+
+    public function markFailed(string $issuerNif, string $claimToken, string $failure, DateTimeImmutable $now): array
+    {
+        $key    = $this->normalizeKey($issuerNif);
+        $hashes = [];
+        foreach ($this->claimed($issuerNif, $claimToken) as $current) {
+            $this->replace($key, new StoredBillingRecord($current->position, $current->record, StoredBillingRecord::STATUS_FAILED, $current->submissionReference, $current->submissionAttempts, null, $failure, $current->submissionFailures + 1));
+            // @igor-ignore - Request-scoped: cleared by WorkerStateResetSubscriber on every main request and on kernel.reset.
+            unset($this->claims[$key][$current->position]);
+            $hashes[] = strtoupper((string) $current->record->hash);
+        }
+
+        return $hashes;
+    }
+
+    public function requeueFailed(string $issuerNif): int
+    {
+        $key   = $this->normalizeKey($issuerNif);
+        $count = 0;
+        foreach ($this->records[$key] ?? [] as $stored) {
+            if ($stored->submissionStatus === StoredBillingRecord::STATUS_FAILED) {
+                $this->replace($key, $this->copy($stored, StoredBillingRecord::STATUS_PENDING, failures: 0));
+                ++$count;
+            }
+        }
+
+        return $count;
     }
 
     public function issuersWithPendingRecords(): array
@@ -167,7 +214,7 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
         $issuers = [];
         foreach ($this->records as $key => $records) {
             foreach ($records as $stored) {
-                if (in_array($stored->submissionStatus, [StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_SENDING], true)) {
+                if ($stored->record->environment instanceof AeatEnvironment && in_array($stored->submissionStatus, [StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_SENDING], true)) {
                     $issuers[] = (string) $key;
 
                     break;
@@ -185,6 +232,8 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
     }
 
     /**
+     * Waiting records with an AEAT environment (rows without one are never claimed, see SubmissionQueueInterface).
+     *
      * @return list<StoredBillingRecord>
      */
     private function waiting(string $issuerNif, DateTimeImmutable $now, int $claimTimeoutSeconds): array
@@ -193,9 +242,42 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
 
         return array_values(array_filter(
             $this->records[$key] ?? [],
-            fn (StoredBillingRecord $stored): bool => $stored->submissionStatus === StoredBillingRecord::STATUS_PENDING
-                || ($stored->submissionStatus === StoredBillingRecord::STATUS_SENDING && ($this->claims[$key][$stored->position][1] ?? $now) < $this->cutoff($now, $claimTimeoutSeconds)),
+            fn (StoredBillingRecord $stored): bool => $stored->record->environment instanceof AeatEnvironment && ($stored->submissionStatus === StoredBillingRecord::STATUS_PENDING
+                || ($stored->submissionStatus === StoredBillingRecord::STATUS_SENDING && ($this->claims[$key][$stored->position][1] ?? $now) < $this->cutoff($now, $claimTimeoutSeconds))),
         ));
+    }
+
+    /**
+     * The records currently held by the claim.
+     *
+     * @return list<StoredBillingRecord>
+     */
+    private function claimed(string $issuerNif, string $claimToken): array
+    {
+        $key     = $this->normalizeKey($issuerNif);
+        $records = [];
+        foreach ($this->claims[$key] ?? [] as $position => [$token]) {
+            $current = $this->find($key, $position);
+            if ($token === $claimToken && $current instanceof StoredBillingRecord && $current->submissionStatus === StoredBillingRecord::STATUS_SENDING) {
+                $records[] = $current;
+            }
+        }
+
+        return $records;
+    }
+
+    private function copy(StoredBillingRecord $stored, ?string $status = null, ?int $attempts = null, ?string $error = null, ?int $failures = null): StoredBillingRecord
+    {
+        return new StoredBillingRecord(
+            $stored->position,
+            $stored->record,
+            $status ?? $stored->submissionStatus,
+            $stored->submissionReference,
+            $attempts ?? $stored->submissionAttempts,
+            $stored->submissionErrorCode,
+            $error ?? $stored->submissionError,
+            $failures ?? $stored->submissionFailures,
+        );
     }
 
     private function find(string $key, int $position): ?StoredBillingRecord

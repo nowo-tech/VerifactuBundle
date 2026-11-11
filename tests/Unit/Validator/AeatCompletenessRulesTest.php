@@ -64,6 +64,11 @@ final class AeatCompletenessRulesTest extends TestCase
         yield 'Subsanacion S' => [['correction' => 'S'], []];
         yield 'alta after a rejection (S + X)' => [['correction' => 's', 'previousRejection' => 'X'], []];
         yield 'RechazoPrevio X needs Subsanacion S' => [['previousRejection' => 'X'], ['validation.correction_flags.invalid']];
+        // LJ-L5 (Validaciones v1.2.2 §3.1.3 item 2): RechazoPrevio S on an Alta needs Subsanacion S too.
+        yield 'RechazoPrevio S needs Subsanacion S' => [['previousRejection' => 'S'], ['validation.correction_flags.invalid']];
+        yield 'RechazoPrevio S with Subsanacion N' => [['correction' => 'N', 'previousRejection' => 's'], ['validation.correction_flags.invalid']];
+        yield 'RechazoPrevio S with Subsanacion S' => [['correction' => 'S', 'previousRejection' => 'S'], []];
+        yield 'RechazoPrevio N without Subsanacion' => [['previousRejection' => 'N'], []];
         yield 'unknown Subsanacion' => [['correction' => 'Y'], ['validation.correction_flags.invalid']];
         yield 'SinRegistroPrevio only on Anulacion' => [['withoutPreviousRecord' => 'S'], ['validation.correction_flags.invalid']];
         yield 'Anulacion with SinRegistroPrevio and RechazoPrevio' => [['recordType' => RecordType::Anulacion, 'withoutPreviousRecord' => 'S', 'previousRejection' => 'S'], []];

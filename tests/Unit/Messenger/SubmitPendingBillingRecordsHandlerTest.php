@@ -10,10 +10,12 @@ use Nowo\VerifactuBundle\Messenger\SubmitPendingBillingRecords;
 use Nowo\VerifactuBundle\Messenger\SubmitPendingBillingRecordsHandler;
 use Nowo\VerifactuBundle\Model\AeatBatchResponse;
 use Nowo\VerifactuBundle\Model\BatchSubmissionResult;
+use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use Nowo\VerifactuBundle\Service\BillingRecordBatchSubmitter;
 use Nowo\VerifactuBundle\Submission\CacheFlowControl;
+use Nowo\VerifactuBundle\Tests\Support\RecordingLogger;
 use Nowo\VerifactuBundle\Tests\Support\ScriptedBatchClient;
 use Nowo\VerifactuBundle\Tests\Support\TestProcessorFactory;
 use PHPUnit\Framework\TestCase;
@@ -23,6 +25,8 @@ use Symfony\Component\EventDispatcher\EventDispatcher;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
+
+use function count;
 
 /**
  * @author Nowo.tech
@@ -83,9 +87,72 @@ final class SubmitPendingBillingRecordsHandlerTest extends TestCase
     }
 
     /**
+     * LJ-M3: without any AEAT answer the message backs off and stops after MAX_FAILED_RUNS runs in a row (error logged);
+     * the records stay pending for the next message or the command.
+     */
+    public function testRunsWithoutAnyAnswerBackOffAndStop(): void
+    {
+        $timeout           = static fn (array $records): AeatBatchResponse => AeatBatchResponse::failed('timeout', 0, '', '', true);
+        $logger            = new RecordingLogger();
+        [$handler, $store] = $this->handler(new ScriptedBatchClient(...array_fill(0, 20, $timeout)), logger: $logger, flowControl: false);
+        $this->chain($store, 1);
+
+        $message = new SubmitPendingBillingRecords('89890001K');
+        $delays  = [];
+        for ($run = 1; $run <= SubmitPendingBillingRecordsHandler::MAX_FAILED_RUNS; ++$run) {
+            $before = count($this->dispatched);
+            self::assertTrue($handler($message)->isRetryable());
+            if (count($this->dispatched) === $before) {
+                break;
+            }
+            $message  = $this->message(count($this->dispatched) - 1);
+            $delays[] = $this->dispatched[count($this->dispatched) - 1]->last(DelayStamp::class)?->getDelay();
+            self::assertSame($run, $message->failedRuns);
+        }
+
+        self::assertSame([60000, 120000, 240000, 480000, 960000, 1920000, 3600000], $delays);
+        self::assertCount(SubmitPendingBillingRecordsHandler::MAX_FAILED_RUNS - 1, $this->dispatched);
+        self::assertSame('error', $logger->records[count($logger->records) - 1]['level']);
+        self::assertSame(['pending'], array_map(static fn ($s): string => $s->submissionStatus, iterator_to_array($store->findByIssuer('89890001K'))));
+    }
+
+    /**
+     * LJ-M3: an AEAT refusal of the whole batch keeps the message going (the submitter splits the batch and finally
+     * marks the record at fault failed); an answer resets the count of runs without answer.
+     */
+    public function testARefusedBatchKeepsGoingUntilTheRecordAtFaultIsFailed(): void
+    {
+        // Every request carrying F-1 is refused as a whole.
+        $fault = static function (array $records): AeatBatchResponse {
+            foreach ($records as $record) {
+                if ($record instanceof BillingRecord && $record->invoiceSeriesNumber === 'F-1') {
+                    return AeatBatchResponse::failed('AEAT SOAP fault: x', 500, '<Fault/>');
+                }
+            }
+
+            return ScriptedBatchClient::allAccepted($records);
+        };
+        /** @var list<Closure> $script */
+        $script            = array_fill(0, 40, $fault);
+        [$handler, $store] = $this->handler(new ScriptedBatchClient(...$script), flowControl: false);
+        $this->chain($store, 2);
+
+        $message = new SubmitPendingBillingRecords('89890001K', 5);
+        for ($i = 0; $i < 40 && $message instanceof SubmitPendingBillingRecords; ++$i) {
+            $before = count($this->dispatched);
+            $handler($message);
+            $message = count($this->dispatched) > $before ? $this->message(count($this->dispatched) - 1) : null;
+            self::assertTrue($message === null || $message->failedRuns === 0);
+        }
+
+        self::assertNull($message, 'The message stopped by itself');
+        self::assertSame(['failed', 'accepted'], array_map(static fn ($s): string => $s->submissionStatus, iterator_to_array($store->findByIssuer('89890001K'))));
+    }
+
+    /**
      * @return array{SubmitPendingBillingRecordsHandler, InMemoryBillingRecordStore}
      */
-    private function handler(ScriptedBatchClient $client, int $batchSize = 1000): array
+    private function handler(ScriptedBatchClient $client, int $batchSize = 1000, ?RecordingLogger $logger = null, bool $flowControl = true): array
     {
         $heads = new InMemoryHashChainRepository();
         $store = new InMemoryBillingRecordStore();
@@ -107,10 +174,10 @@ final class SubmitPendingBillingRecordsHandlerTest extends TestCase
                 return $envelope;
             }
         };
-        $submitter   = new BillingRecordBatchSubmitter($store, $client, $heads, new EventDispatcher(), new CacheFlowControl(new ArrayAdapter()), $clock, null, $batchSize);
+        $submitter   = new BillingRecordBatchSubmitter($store, $client, $heads, new EventDispatcher(), $flowControl ? new CacheFlowControl(new ArrayAdapter()) : null, $clock, null, $batchSize);
         $this->heads = $heads;
 
-        return [new SubmitPendingBillingRecordsHandler($submitter, $bus, $clock), $store];
+        return [new SubmitPendingBillingRecordsHandler($submitter, $bus, $clock, $logger), $store];
     }
 
     private function chain(InMemoryBillingRecordStore $store, int $count): void

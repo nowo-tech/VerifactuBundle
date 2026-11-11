@@ -107,6 +107,13 @@ class BillingRecordEntry
     /** @phpstan-ignore property.unusedType (written by DoctrineBillingRecordStore through DBAL) */
     private ?string $submissionError = null;
 
+    /**
+     * Consecutive AEAT answers without a per-record outcome (SoapFault, HTTP error) for requests carrying this record
+     * (1.7): each one halves the next batch; reset by an answer.
+     */
+    #[ORM\Column(name: 'submission_failures', type: Types::INTEGER, options: ['default' => 0])]
+    private int $submissionFailures = 0;
+
     /** When the AEAT answered for this record (1.7). */
     #[ORM\Column(name: 'submitted_at', type: Types::DATETIME_IMMUTABLE, nullable: true)]
     /** @phpstan-ignore property.unusedType (written by DoctrineBillingRecordStore through DBAL) */
@@ -310,6 +317,14 @@ class BillingRecordEntry
     public function getSubmissionError(): ?string
     {
         return $this->submissionError;
+    }
+
+    /**
+     * Returns the consecutive AEAT answers without a per-record outcome for requests carrying this record.
+     */
+    public function getSubmissionFailures(): int
+    {
+        return $this->submissionFailures;
     }
 
     /**

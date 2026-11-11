@@ -110,7 +110,7 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface, B
      * A transport error, a non-2xx status, a SoapFault or an unreadable body gives a failed response: no record of
      * the request was registered, so the same records may be sent again.
      */
-    public function submitBatch(array $records): AeatBatchResponse
+    public function submitBatch(array $records, ?callable $beforeTransmit = null): AeatBatchResponse
     {
         if ($records === []) {
             throw new InvalidArgumentException('An AEAT submission needs at least one record.');
@@ -125,9 +125,13 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface, B
         $certificate = $this->certificateFor($records[0]->issuerNif);
         $payload     = $this->envelopeBuilder->buildBatchEnvelope($records, $this->issuerProvider?->getIssuer()->toArray() ?? $this->issuerConfig);
         $endpoint    = $this->endpointResolver->resolve($this->mode, $environment, $this->certificateType);
-        $response    = $this->transmit($certificate, $endpoint, $payload);
+        if ($beforeTransmit !== null) {
+            // The request is built and about to leave: from here on it counts as an attempt (it may reach the AEAT).
+            $beforeTransmit();
+        }
+        $response = $this->transmit($certificate, $endpoint, $payload);
         if (($response['error'] ?? null) !== null) {
-            return AeatBatchResponse::failed((string) $response['error'], $response['status_code'], $response['body'], $endpoint);
+            return AeatBatchResponse::failed((string) $response['error'], $response['status_code'], $response['body'], $endpoint, true);
         }
 
         return $this->responseParser->parse($response['body'], $response['status_code'], $endpoint);

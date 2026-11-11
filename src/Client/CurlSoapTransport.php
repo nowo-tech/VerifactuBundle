@@ -10,8 +10,10 @@ use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
 use function constant;
 use function defined;
+use function getenv;
 use function in_array;
 use function is_string;
+use function trim;
 
 use const CURLINFO_HTTP_CODE;
 use const CURLOPT_CONNECTTIMEOUT;
@@ -36,6 +38,11 @@ use const PATHINFO_EXTENSION;
 /**
  * cURL-based SOAP transport with mutual TLS for AEAT endpoints.
  *
+ * Network guard: when the environment variable VERIFACTU_FORBID_NETWORK is set to anything but "" or "0" (the bundle's
+ * PHPUnit configuration and CI set it), every request is refused before cURL is touched. Only an owner-run
+ * `nowo:verifactu:submit-sandbox --submit`, outside the test suite and with an owner-held certificate, may reach the
+ * AEAT. Read on every call (worker mode).
+ *
  * @author Nowo.tech
  * @copyright 2026 Nowo.tech
  */
@@ -46,6 +53,20 @@ final class CurlSoapTransport implements CertificateAwareSoapTransportInterface
 
     /** Largest AEAT response accepted (bytes, when the server announces Content-Length). */
     public const MAX_RESPONSE_BYTES = 10_485_760;
+
+    /** Environment variable that makes this transport refuse every request (tests, CI). */
+    public const FORBID_NETWORK_ENV = 'VERIFACTU_FORBID_NETWORK';
+
+    /**
+     * Whether VERIFACTU_FORBID_NETWORK forbids any request.
+     */
+    public static function isNetworkForbidden(): bool
+    {
+        // The process environment only: it is set for the whole process (PHPUnit, CI), never per request.
+        $value = getenv(self::FORBID_NETWORK_ENV);
+
+        return is_string($value) && trim($value) !== '' && trim($value) !== '0';
+    }
 
     /**
      * Posts the SOAP payload over mutual TLS with the client certificate and the configured timeout.
@@ -123,6 +144,10 @@ final class CurlSoapTransport implements CertificateAwareSoapTransportInterface
      */
     private function post(string $endpoint, string $soapAction, string $payload, #[SensitiveParameter] array $certificateOptions, int $timeout): array
     {
+        if (self::isNetworkForbidden()) {
+            return ['status_code' => 0, 'body' => '', 'error' => 'Network access is forbidden (VERIFACTU_FORBID_NETWORK is set): no request leaves this process.'];
+        }
+
         $handle = curl_init($endpoint);
         // @codeCoverageIgnoreStart
         if ($handle === false) {

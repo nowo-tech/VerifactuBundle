@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Model;
 
+use function trim;
+
 /**
  * The AEAT outcome of one billing record (EstadoRegistro, RespuestaSuministro.xsd `EstadoRegistroType`), as stored in
  * the record log. AEAT Servicios web v1.0.3 p. 11: Correcto (aceptado), AceptadoConErrores (aceptado con errores; it is
@@ -19,6 +21,12 @@ enum RecordSubmissionStatus: string
     case Rejected           = 'rejected';
 
     /**
+     * The AEAT answered "duplicate" (RegistroDuplicado) for a record sent before, and nothing confirmed that the record
+     * the AEAT holds is this one (same Huella). Never reported as registered; see BillingRecordBatchSubmitter.
+     */
+    case Unconfirmed = 'unconfirmed';
+
+    /**
      * Maps an AEAT EstadoRegistro (Correcto / AceptadoConErrores / Incorrecto); null for anything else.
      */
     public static function fromAeat(string $estadoRegistro): ?self
@@ -32,24 +40,33 @@ enum RecordSubmissionStatus: string
     }
 
     /**
-     * Maps the EstadoRegistroDuplicado of a duplicate (Correcta / AceptadaConErrores / Anulada): the record the AEAT
-     * already holds. Correcta and AceptadaConErrores mean an earlier send of the same record was registered (a retry
-     * after a lost response), so the record counts as accepted; Anulada is a rejection.
+     * Maps the EstadoRegistroDuplicado of a duplicate (Correcta / AceptadaConErrores / Anulada), i.e. the state of the
+     * record the AEAT already holds, for a record CONFIRMED to be that very record (same Huella): null when the state
+     * says nothing about it.
+     *
+     * - Alta: Correcta → accepted, AceptadaConErrores → accepted with errors, Anulada → accepted (it was registered and
+     *   annulled later; the duplicate state is kept with the record).
+     * - Anulacion: Anulada → accepted (the anulación is registered); anything else → null.
      */
-    public static function fromDuplicate(string $estadoRegistroDuplicado): self
+    public static function fromDuplicate(string $estadoRegistroDuplicado, RecordType $operation = RecordType::Alta): ?self
     {
-        return match (trim($estadoRegistroDuplicado)) {
-            'Correcta'           => self::Accepted,
-            'AceptadaConErrores' => self::AcceptedWithErrors,
-            default              => self::Rejected,
+        $state = trim($estadoRegistroDuplicado);
+        if ($operation === RecordType::Anulacion) {
+            return $state === 'Anulada' ? self::Accepted : null;
+        }
+
+        return match ($state) {
+            'Correcta', 'Anulada' => self::Accepted,
+            'AceptadaConErrores'  => self::AcceptedWithErrors,
+            default               => null,
         };
     }
 
     /**
-     * Whether the AEAT registered the record (Correcto or AceptadoConErrores).
+     * Whether the AEAT registered the record (Correcto or AceptadoConErrores). An unconfirmed duplicate is not.
      */
     public function isRegistered(): bool
     {
-        return $this !== self::Rejected;
+        return $this === self::Accepted || $this === self::AcceptedWithErrors;
     }
 }

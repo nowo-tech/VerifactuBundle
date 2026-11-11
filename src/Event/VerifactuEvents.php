@@ -19,4 +19,10 @@ final class VerifactuEvents
 
     /** One per record of a batch submission, after its AEAT answer is committed in the record log (1.7). */
     public const AFTER_RECORD_SUBMISSION = 'nowo_verifactu.after_record_submission';
+
+    /**
+     * Batch submission (1.7): once per record marked `failed` after it kept failing on its own (RecordSubmissionFailedEvent),
+     * after that state is committed.
+     */
+    public const RECORD_SUBMISSION_FAILED = 'nowo_verifactu.record_submission_failed';
 }
