@@ -7,6 +7,7 @@ namespace Nowo\VerifactuBundle\Certificate;
 use RuntimeException;
 use SensitiveParameter;
 
+use function count;
 use function strlen;
 
 /**
@@ -18,10 +19,13 @@ use function strlen;
  * - the key file created exclusively inside it (fopen "x": O_CREAT | O_EXCL) and set to 0600 before the secret is
  *   written; the process umask is never changed (it is process-wide and would leak into other worker requests);
  * - every return value checked;
- * - removed when the call returns or throws (finally), when the instance is destroyed, and by a shutdown function
- *   of that file only after exit(), a fatal error or a max_execution_time timeout (not after SIGKILL).
+ * - removed when the call returns or throws (finally), when the instance is destroyed, and after exit(), a fatal
+ *   error or a max_execution_time timeout (not after SIGKILL) by one shutdown function per process that removes the
+ *   files still pending.
  *
- * No static state: every call has its own instance. A certificate given by path is passed through untouched.
+ * The only static state is that registry of pending files: an entry is added when a file is created and removed as
+ * soon as the file is deleted, so it holds the files of the calls in flight (normally none) and never grows across
+ * worker requests. A certificate given by path is passed through untouched.
  *
  * @internal
  *
@@ -30,20 +34,33 @@ use function strlen;
  */
 final class TemporaryCertificateFile
 {
+    /**
+     * Directories of the files not deleted yet (the calls in flight), for the shutdown cleanup after a fatal error.
+     * Bounded: each entry is removed when its file is deleted (finally / __destruct).
+     *
+     * @var array<string, true>
+     */
+    // @phpstan-ignore frankenphp.worker.noMutableStaticProperty (registry of in-flight files only; emptied as each file is deleted)
+    private static array $pending = [];
+
+    // @phpstan-ignore frankenphp.worker.noMutableStaticProperty (set once per process so a single shutdown handler exists)
+    private static bool $shutdownRegistered = false;
+
     private function __construct(
         private readonly string $directory,
         public readonly string $path,
     ) {
-        // Only for a fatal error / exit() while the file exists: the closure captures the directory, never the
-        // instance nor the certificate, and removing an already removed directory is a no-op. The blob transport
-        // is the primary path, so this fallback (and its registration) is rare.
-        // @igor-ignore - One handler per temporary file (rare fallback), capturing only its directory path.
-        // @phpstan-ignore frankenphp.worker.noRegisterShutdownFunction (cleanup of one file after a fatal error; the request cleanup is finally / __destruct)
-        register_shutdown_function(static function () use ($directory): void {
-            // @codeCoverageIgnoreStart
-            self::removeDirectory($directory);
-            // @codeCoverageIgnoreEnd
-        });
+        // @igor-ignore - Registry of in-flight files only: the entry is removed when the file is deleted.
+        // @phpstan-ignore frankenphp.worker.noMutableStaticProperty (in-flight registry, emptied as each file is deleted)
+        self::$pending[$directory] = true;
+        if (!self::$shutdownRegistered) {
+            // @igor-ignore - Set once per process: a single shutdown handler, never one per file or per request.
+            // @phpstan-ignore frankenphp.worker.noMutableStaticProperty (set once per process)
+            self::$shutdownRegistered = true;
+            // @igor-ignore - One handler per process; it only deletes files a fatal error / exit() left pending.
+            // @phpstan-ignore frankenphp.worker.noRegisterShutdownFunction (one handler per process for files left by a fatal error; request cleanup is finally / __destruct)
+            register_shutdown_function(self::removePending(...));
+        }
     }
 
     /**
@@ -80,11 +97,33 @@ final class TemporaryCertificateFile
     }
 
     /**
-     * Removes the file and its directory (idempotent).
+     * Removes the file and its directory, and drops it from the pending registry (idempotent).
      */
     public function remove(): void
     {
         self::removeDirectory($this->directory);
+        // @igor-ignore - Registry of in-flight files only: the entry of a deleted file.
+        unset(self::$pending[$this->directory]);
+    }
+
+    /**
+     * Number of files not deleted yet (the calls in flight); 0 between calls.
+     */
+    public static function pendingCount(): int
+    {
+        return count(self::$pending);
+    }
+
+    /**
+     * Deletes every file still pending (the shutdown handler; also safe to call any time).
+     */
+    public static function removePending(): void
+    {
+        foreach (array_keys(self::$pending) as $directory) {
+            self::removeDirectory($directory);
+            // @igor-ignore - Registry of in-flight files only: the entry of a deleted file.
+            unset(self::$pending[$directory]);
+        }
     }
 
     private static function create(#[SensitiveParameter] Certificate $certificate): self

@@ -55,6 +55,7 @@ final class AeatBusinessRulesValidator
         private readonly SpanishTaxIdValidator $taxIdValidator,
         private readonly TranslatorInterface $translator,
         private readonly bool $strict = false,
+        private readonly ?string $defaultRegimeKey = null,
     ) {
     }
 
@@ -232,8 +233,10 @@ final class AeatBusinessRulesValidator
             $keys[] = 'validation.tax_breakdown.regime_key.invalid';
         }
 
-        // §15.5: under the general regime (ClaveRegimen 01) of IVA, E2 / E3 (exports) are not allowed.
-        if ($regimeKey === '01' && in_array($taxType, ['', '01'], true) && in_array($exemption, ['E2', 'E3'], true)) {
+        // §15.5: under the general regime (ClaveRegimen 01) of IVA or IGIC, E2 / E3 (exports) are not allowed. The
+        // effective key counts: the explicit one, or xml.default_regime_key where the generator applies it.
+        $effectiveKey = $regimeKey ?? (in_array($taxType, ['', '01', '02', '03'], true) && $this->defaultRegimeKey !== null ? trim($this->defaultRegimeKey) : null);
+        if ($effectiveKey === '01' && in_array($taxType, ['', '01', '03'], true) && in_array($exemption, ['E2', 'E3'], true)) {
             $keys[] = 'validation.tax_breakdown.exemption_regime.invalid';
         }
 

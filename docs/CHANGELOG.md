@@ -75,14 +75,16 @@ Complete AEAT records (V4) and the rest of the runtime providers (V5) for Symfon
   the 1.5 behaviour. The certificate provider receives the NIF upper-cased and trimmed.
 - **AEAT validations v1.2.2:** a foreign recipient with country ES takes IDType 03 or 07, and IDType 07 only with ES
   (§3.1.3 item 13); ClaveRegimen only on IVA, IPSI (keys 01, 08, 11, 18, 19, 20) and IGIC lines, and the default
-  regime key is only applied to them (§15.6); exemptions E2 / E3 are refused under the general regime (§15.5).
+  regime key is only applied to them (§15.6); exemptions E2 / E3 are refused under the general regime of IVA or IGIC,
+  also when 01 comes from `xml.default_regime_key` (§15.5).
 - **An unknown environment is refused** (`InvalidAeatEnvironmentException`), never routed to a default; the
   environment provider returns `Model\AeatEnvironment`. The production / in-memory chain check also names
   `providers.aeat_environment` when that is what triggered it.
 - **Temporary certificate file (worker-safe).** The fallback for runtimes without `CURLOPT_SSLCERT_BLOB` no longer
   changes the process umask nor keeps static state: a fresh 0700 directory, the file created exclusively and set to
-  0600 before the secret is written, removed in `finally`, on destruction and, after a fatal error, by a shutdown
-  function of that file only.
+  0600 before the secret is written, removed in `finally`, on destruction and, after a fatal error, by one shutdown
+  function per process over a registry of the files in flight (emptied as each file is deleted, so memory stays flat
+  in worker mode).
 
 - **Docs:** `ChainTransactionLostException` and UPGRADING say not to run any further statement of the lost unit of work
   on the connection (audit KW-D2-I1).

@@ -60,6 +60,7 @@ final class AeatCompletenessRulesTest extends TestCase
         yield 'IPSI only with its keys' => [['taxBreakdown' => [new TaxBreakdown('02', '10', '1', '0.10', '02')]], ['validation.tax_breakdown.regime_key.invalid']];
         yield 'IPSI with key 08 is fine' => [['taxBreakdown' => [new TaxBreakdown('02', '10', '1', '0.10', '08')]], []];
         yield 'E2 not under the general regime' => [['taxBreakdown' => [new TaxBreakdown('01', '', '1', '', '01', null, 'E2')]], ['validation.tax_breakdown.exemption_regime.invalid']];
+        yield 'E3 not under the general regime of IGIC' => [['taxBreakdown' => [new TaxBreakdown('03', '', '1', '', '01', null, 'E3')]], ['validation.tax_breakdown.exemption_regime.invalid']];
         yield 'E2 under the export regime is fine' => [['taxBreakdown' => [new TaxBreakdown('', '', '1', '', '02', null, 'E2')]], []];
         yield 'qualification and exemption together' => [['taxBreakdown' => [new TaxBreakdown('01', '', '1', '', null, 'N1', 'E1')]], ['validation.tax_breakdown.qualification.invalid']];
         yield 'unknown qualification' => [['taxBreakdown' => [new TaxBreakdown('01', '21', '1', '0.21', null, 'S9')]], ['validation.tax_breakdown.qualification.invalid']];
@@ -92,6 +93,18 @@ final class AeatCompletenessRulesTest extends TestCase
         self::assertSame(['validation.rectification_type.missing', 'validation.recipients.missing'], $strict->validate($this->record(['invoiceType' => 'R1'])));
         self::assertSame(['validation.rectification_type.missing'], $strict->validate($this->record(['invoiceType' => 'R5'])));
         self::assertSame([], $this->validator()->validate($this->record(['invoiceType' => 'R1'])), 'Not strict: the 1.5 behaviour');
+    }
+
+    public function testTheDefaultRegimeKeyCountsForTheExportExemptions(): void
+    {
+        $exportLine       = ['taxBreakdown' => [new TaxBreakdown('', '', '1', '', null, null, 'E2')]];
+        $generalByDefault = new AeatBusinessRulesValidator(new SpanishTaxIdValidator(), new IdentityTranslator(), false, '01');
+
+        self::assertSame(['validation.tax_breakdown.exemption_regime.invalid'], $generalByDefault->validate($this->record($exportLine)));
+        self::assertSame([], $this->validator()->validate($this->record($exportLine)), 'No default key: nothing to check');
+        self::assertSame([], (new AeatBusinessRulesValidator(new SpanishTaxIdValidator(), new IdentityTranslator(), false, '02'))->validate($this->record($exportLine)));
+        // Impuesto 05 gets no default key (§15.6), so the rule does not apply.
+        self::assertSame([], $generalByDefault->validate($this->record(['taxBreakdown' => [new TaxBreakdown('05', '', '1', '', null, null, 'E2')]])));
     }
 
     public function testAnulacionIgnoresAltaFields(): void

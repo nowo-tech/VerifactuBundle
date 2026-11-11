@@ -65,6 +65,7 @@ services:
     Nowo\VerifactuBundle\Validator\AeatBusinessRulesValidator:
         arguments:
             $strict: '%nowo_verifactu.validation.strict%'
+            $defaultRegimeKey: '%nowo_verifactu.xml.default_regime_key%'
 
     Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator:
         arguments:

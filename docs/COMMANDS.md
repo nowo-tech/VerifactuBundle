@@ -56,7 +56,9 @@ that already had a chain, the first stored record continues from the old head: t
 
 One AEAT environment is checked at a time: by default the environment of the current chain head (`--environment` picks
 another). Records of the environment used before a reset are skipped; a record of another environment inside the chain
-is reported. Rows written before 1.6 count as the configured `aeat.environment`.
+is reported. Rows written before 1.6 count as the configured `aeat.environment`. A reset closes the chain of the older
+environment: after a sandbox → production reset, `verify-chain --environment sandbox` reports the later production
+records (and the head) as problems. That is expected; verify the current environment instead.
 
 ## Reset a chain
 

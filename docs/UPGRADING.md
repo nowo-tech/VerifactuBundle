@@ -66,7 +66,8 @@ composer update nowo-tech/verifactu-bundle
   (`ChainEnvironmentMismatchException`). Before your first production record after testing in the sandbox with the
   same issuer, run `php bin/console nowo:verifactu:reset-chain --issuer=<NIF>` (add `--force` in non-interactive
   runs); the next record starts a new chain. `verify-chain` checks the environment of the current head unless you pass
-  `--environment`.
+  `--environment`; after the reset, `--environment sandbox` reports the later production records, as that chain is
+  closed.
 - **Issuer enforcement (security).** With `providers.issuer` set, a record whose `issuerNif` differs from the provider's
   NIF is now refused (`validation.issuer_nif.provider_mismatch`) and never chained, signed nor submitted. Why: the
   certificate is selected by the record's NIF, so a caller-supplied NIF could otherwise make the bundle sign and submit
@@ -87,7 +88,12 @@ composer update nowo-tech/verifactu-bundle
   `Model\AeatEnvironment`; map stored values with `AeatEnvironment::fromValue()`, which throws
   `InvalidAeatEnvironmentException` for anything but `sandbox` / `production` (never a silent fallback).
 - **Stricter AEAT rules** (validations v1.2.2): IDType 07 only with country ES (and ES only with 03 or 07),
-  ClaveRegimen only on IVA / IPSI / IGIC lines (IPSI: 01, 08, 11, 18, 19, 20), no E2 / E3 under ClaveRegimen 01.
+  ClaveRegimen only on IVA / IPSI / IGIC lines (IPSI: 01, 08, 11, 18, 19, 20), no E2 / E3 under ClaveRegimen 01 on
+  IVA or IGIC lines, including lines that get 01 from `xml.default_regime_key`.
+- **Custom SOAP transports.** A transport that only implements `SoapTransportInterface` (a decorator, a retrying or
+  logging transport) receives certificates given by contents as a temporary file on every submission. Implement
+  `CertificateAwareSoapTransportInterface` (delegating to `CurlSoapTransport::sendWithCertificate()`) to keep the key
+  in memory.
 
 - **Same XML for the same input.** The new `BillingRecord` / `InvoiceDraft` / `TaxBreakdown` arguments are optional and
   trailing; a record built as in 1.5 produces the same RegistroAlta.
