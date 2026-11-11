@@ -7,8 +7,17 @@ namespace Nowo\VerifactuBundle\DependencyInjection;
 use Nowo\VerifactuBundle\Submission\AeatFaultClassifier;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 
+use function array_intersect;
+use function array_map;
+use function array_merge;
+use function array_unique;
+use function array_values;
+use function implode;
 use function is_string;
+use function sort;
+use function sprintf;
 
 /**
  * Veri*Factu bundle configuration tree.
@@ -162,12 +171,12 @@ final class Configuration implements ConfigurationInterface
                         ->end()
                         ->arrayNode('issuer_fault_codes')
                             ->info('AEAT Codigo values of a SOAP Client fault that are about the issuer (header, certificate, authorisation): the issuer is paused at once and no record is failed')
-                            ->integerPrototype()->end()
+                            ->integerPrototype()->min(1000)->max(9999)->end()
                             ->defaultValue(AeatFaultClassifier::DEFAULT_ISSUER_CODES)
                         ->end()
                         ->arrayNode('record_fault_codes')
                             ->info('AEAT Codigo values of a SOAP Client fault that are about the content of a record: the record at fault is failed without probing; any other code is probed')
-                            ->integerPrototype()->end()
+                            ->integerPrototype()->min(1000)->max(9999)->end()
                             ->defaultValue(AeatFaultClassifier::DEFAULT_RECORD_CODES)
                         ->end()
                         ->integerNode('pause_seconds')
@@ -197,6 +206,14 @@ final class Configuration implements ConfigurationInterface
                             ->info('Service id implementing Nowo\\VerifactuBundle\\Client\\BatchAeatSubmissionClientInterface (null = the AEAT submission client)')
                             ->defaultNull()
                         ->end()
+                    ->end()
+                    ->validate()
+                        // LJD3-I1: a code in both lists would be classified as ISSUER (the issuer list wins), and an issuer
+                        // code moved to the record list fails every record on a header error: both are refused.
+                        ->ifTrue(static fn (array $submission): bool => self::faultCodeConflicts($submission) !== [])
+                        ->then(static function (array $submission): never {
+                            throw new InvalidConfigurationException(sprintf('nowo_verifactu.submission.record_fault_codes must not contain a code listed in issuer_fault_codes or a default issuer code (an error about the issuer would fail every record): %s.', implode(', ', self::faultCodeConflicts($submission))));
+                        })
                     ->end()
                 ->end()
                 ->arrayNode('doctrine')
@@ -251,5 +268,22 @@ final class Configuration implements ConfigurationInterface
             ->end();
 
         return $treeBuilder;
+    }
+
+    /**
+     * Record codes that are issuer codes too (configured or default).
+     *
+     * @param array<mixed> $submission the processed `submission` node
+     *
+     * @return list<int>
+     */
+    private static function faultCodeConflicts(array $submission): array
+    {
+        $record    = array_map('intval', (array) ($submission['record_fault_codes'] ?? []));
+        $issuer    = array_merge(array_map('intval', (array) ($submission['issuer_fault_codes'] ?? [])), AeatFaultClassifier::DEFAULT_ISSUER_CODES);
+        $conflicts = array_values(array_unique(array_intersect($record, $issuer)));
+        sort($conflicts);
+
+        return $conflicts;
     }
 }

@@ -21,10 +21,12 @@ use function array_key_first;
 use function array_map;
 use function count;
 use function ctype_digit;
+use function ctype_graph;
 use function implode;
 use function in_array;
 use function is_string;
 use function sprintf;
+use function strlen;
 use function strtoupper;
 use function trim;
 
@@ -44,6 +46,9 @@ use const DATE_ATOM;
 )]
 final class SubmitPendingCommand extends Command
 {
+    /** Length of the stored AEAT reference (submission_reference VARCHAR(120)). */
+    public const MAX_CSV_LENGTH = 120;
+
     public function __construct(
         private readonly BillingRecordBatchSubmitter $submitter,
     ) {
@@ -176,6 +181,12 @@ final class SubmitPendingCommand extends Command
         $csv = is_string($csv) ? trim($csv) : '';
         if ($status->isRegistered() && $csv === '') {
             $io->error('--resolve --as=' . $status->value . ' needs --csv: the CSV the AEAT gave for the record.');
+
+            return Command::INVALID;
+        }
+        if ($csv !== '' && (strlen($csv) > self::MAX_CSV_LENGTH || !ctype_graph($csv))) {
+            // LJD3-I2: the CSV column is VARCHAR(120); a longer value would be a database error or a silent truncation.
+            $io->error(sprintf('--csv must be at most %d printable characters without spaces (the AEAT CSV).', self::MAX_CSV_LENGTH));
 
             return Command::INVALID;
         }

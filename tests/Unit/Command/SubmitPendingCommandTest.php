@@ -25,6 +25,7 @@ use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 
 use function count;
+use function str_repeat;
 
 /**
  * @author Nowo.tech
@@ -119,6 +120,10 @@ final class SubmitPendingCommandTest extends TestCase
         self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'accepted']));
         self::assertStringContainsString('--resolve --as=accepted needs --csv', $tester->getDisplay());
         self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'accepted_errors', '--csv' => ' ']));
+        // LJD3-I2: the CSV fits the stored column (VARCHAR(120)) and has no spaces.
+        self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'accepted', '--csv' => str_repeat('A', 121)]));
+        self::assertStringContainsString('--csv must be at most 120 printable characters', $tester->getDisplay());
+        self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'accepted', '--csv' => 'CSV OK']));
         self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'accepted', '--csv' => ' CSV-OK ']));
         self::assertStringContainsString('89890001K: record 1 resolved as accepted.', $tester->getDisplay());
         self::assertSame([StoredBillingRecord::STATUS_ACCEPTED, 'CSV-OK'], [iterator_to_array($store->findByIssuer('89890001K'))[0]->submissionStatus, iterator_to_array($store->findByIssuer('89890001K'))[0]->submissionReference]);

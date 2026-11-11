@@ -153,7 +153,7 @@ final class SubmitPendingBillingRecordsHandlerTest extends TestCase
 
     /**
      * LJD2-L4: a paused issuer is dispatched again once, at the end of the pause; when the AEAT answers again the queue
-     * is sent.
+     * is sent. The woken message keeps the wake-up even when it runs before the end of the pause.
      */
     public function testAPausedIssuerIsRescheduledAtTheEndOfThePause(): void
     {
@@ -180,6 +180,33 @@ final class SubmitPendingBillingRecordsHandlerTest extends TestCase
         self::assertSame(BatchSubmissionResult::STATE_SENT, $handler($this->message(2))->state);
         self::assertCount(3, $this->dispatched);
         self::assertSame(['accepted', 'accepted'], array_map(static fn ($s): string => $s->submissionStatus, iterator_to_array($store->findByIssuer('89890001K'))));
+    }
+
+    /**
+     * LJD3-L2: the messages dispatched while the issuer is paused (one per invoice) are dropped: one message per issuer
+     * stays alive for the pause, the one that paused it; at the end of the pause it is the only one that runs.
+     */
+    public function testOnlyOneMessagePerIssuerStaysAliveDuringAPause(): void
+    {
+        $fault             = static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(4104);
+        [$handler, $store] = $this->handler(new ScriptedBatchClient($fault, $fault));
+        $this->chain($store, 2);
+
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler(new SubmitPendingBillingRecords('89890001K'))->state);
+        for ($invoice = 1; $invoice <= 50; ++$invoice) {
+            $this->clock?->sleep(60);
+            self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler(new SubmitPendingBillingRecords('89890001K'))->state);
+        }
+
+        self::assertCount(1, $this->dispatched, 'One message alive for the pause');
+        self::assertTrue($this->message(0)->wakeUp);
+
+        // The woken message, still refused: paused again, and it is again the only message alive.
+        $this->clock?->sleep(600);
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler($this->message(0))->state);
+        self::assertCount(2, $this->dispatched);
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler(new SubmitPendingBillingRecords('89890001K'))->state);
+        self::assertCount(2, $this->dispatched);
     }
 
     /**

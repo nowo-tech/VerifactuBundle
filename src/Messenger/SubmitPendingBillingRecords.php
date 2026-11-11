@@ -18,10 +18,13 @@ final class SubmitPendingBillingRecords
 {
     /**
      * @param int $failedRuns consecutive runs without any AEAT answer (set by the handler when it reschedules itself)
+     * @param bool $wakeUp the message the handler dispatched again for the end of a pause (the one message per issuer
+     *                     kept alive during a pause)
      */
     public function __construct(
         public readonly string $issuerNif,
         public readonly int $failedRuns = 0,
+        public readonly bool $wakeUp = false,
     ) {
     }
 }

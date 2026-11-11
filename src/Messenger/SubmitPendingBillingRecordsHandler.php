@@ -24,8 +24,10 @@ use function min;
  *   the next allowed submission.
  * - The AEAT refused the batch as a whole (a SOAP Client fault): rescheduled after the wait time; the submitter splits
  *   the batch and finally marks the record at fault failed, or pauses the issuer, so this always ends.
- * - The issuer is paused (circuit breaker, ISSUER_SUBMISSION_PAUSED): the message is dispatched again once, at the end
- *   of the pause (at least RETRY_DELAY_SECONDS later); one alert per pause.
+ * - The issuer is paused (circuit breaker, ISSUER_SUBMISSION_PAUSED): one message per issuer is dispatched again, once,
+ *   at the end of the pause (at least RETRY_DELAY_SECONDS later); every other message that finds the issuer paused is
+ *   dropped (BillingRecordBatchSubmitter::scheduleWakeUp(), a `wake|<NIF>` key in the flow control store), so a pause
+ *   keeps one message alive, not one per invoice. One alert per pause.
  * - No AEAT answer at all (transport error, Server fault, HTTP or non-SOAP error): rescheduled with a growing delay (up to
  *   MAX_RETRY_DELAY_SECONDS), at most MAX_FAILED_RUNS times in a row; then it stops and logs an error. The records stay
  *   pending: the next message for the issuer or `nowo:verifactu:submit-pending` sends them.
@@ -68,7 +70,7 @@ final class SubmitPendingBillingRecordsHandler
         $delay = match (true) {
             $result->state === BatchSubmissionResult::STATE_IN_FLIGHT                          => self::RETRY_IN_FLIGHT_SECONDS,
             $result->state === BatchSubmissionResult::STATE_IDLE                               => null,
-            $result->state === BatchSubmissionResult::STATE_PAUSED                             => max(self::RETRY_DELAY_SECONDS, $untilNext),
+            $result->state === BatchSubmissionResult::STATE_PAUSED                             => $this->wakeUpDelay($message, $result, $untilNext),
             $result->state === BatchSubmissionResult::STATE_SENT && $result->remaining === 0   => null,
             $noAnswer && $failedRuns >= self::MAX_FAILED_RUNS                                  => null,
             $noAnswer                                                                          => max($untilNext, min(self::MAX_RETRY_DELAY_SECONDS, self::RETRY_DELAY_SECONDS * 2 ** ($failedRuns - 1))),
@@ -82,9 +84,24 @@ final class SubmitPendingBillingRecordsHandler
             ]);
         }
         if ($delay !== null && $this->bus instanceof MessageBusInterface) {
-            $this->bus->dispatch(new SubmitPendingBillingRecords($result->issuerNif, $failedRuns), [new DelayStamp($delay * 1000)]);
+            $wakeUp = $result->state === BatchSubmissionResult::STATE_PAUSED;
+            $this->bus->dispatch(new SubmitPendingBillingRecords($result->issuerNif, $failedRuns, $wakeUp), [new DelayStamp($delay * 1000)]);
         }
 
         return $result;
+    }
+
+    /**
+     * The delay of the wake-up at the end of the pause, or null when another message already holds it (LJD3-L2). The
+     * message woken at the end of a pause always keeps the wake-up (it may run a little before the pause ends).
+     */
+    private function wakeUpDelay(SubmitPendingBillingRecords $message, BatchSubmissionResult $result, int $untilNext): ?int
+    {
+        $scheduled = $this->submitter->scheduleWakeUp($result->issuerNif, $result->nextSubmissionAt ?? new DateTimeImmutable());
+        if (!$scheduled && !$message->wakeUp) {
+            return null;
+        }
+
+        return max(self::RETRY_DELAY_SECONDS, $untilNext);
     }
 }

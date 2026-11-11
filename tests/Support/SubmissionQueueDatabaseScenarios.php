@@ -302,13 +302,14 @@ trait SubmissionQueueDatabaseScenarios
     public function testTheCircuitBreakerOnTheDatabase(): void
     {
         $cases = [
-            '2 in a row, unknown' => [[7, 8], 4199],
-            '3 in a row, unknown' => [[7, 8, 9], 4199],
-            '3 in a row, record'  => [[7, 8, 9], 4102],
+            '2 in a row, unknown'                => [[7, 8], 4199, 0],
+            '3 in a row, unknown'                => [[7, 8, 9], 4199, 0],
+            '3 in a row, record'                 => [[7, 8, 9], 4102, 0],
+            '3 in a row and the newest, unknown' => [[7, 8, 9, 20], 4199, 1],
         ];
         $numbers = array_map(static fn (int $i): string => 'C-' . $i, range(1, 20));
         $n       = 0;
-        foreach ($cases as $name => [$bad, $code]) {
+        foreach ($cases as $name => [$bad, $code, $pauses]) {
             $number = 40000000 + $n++;
             $issuer = $number . 'TRWAGMYFPDXBNJZSQVHLCKE'[$number % 23];
             $this->ljChain($numbers, $issuer);
@@ -324,13 +325,13 @@ trait SubmissionQueueDatabaseScenarios
             });
             $clock     = new MockClock('2026-11-11 10:00:00');
             $submitter = new BillingRecordBatchSubmitter($this->ljStore(), new ScriptedBatchClient(...$script), $this->ljHeads(), $events, new CacheFlowControl(new ArrayAdapter()), $clock, null, 1000, 300, 60, 'issuer', null, 2);
-            for ($i = 0; $i < 100 && $submitter->submitPending($issuer)->state !== BatchSubmissionResult::STATE_IDLE; ++$i) {
+            for ($i = 0; $i < 200 && $submitter->submitPending($issuer)->state !== BatchSubmissionResult::STATE_IDLE; ++$i) {
                 $clock->sleep(61);
             }
 
             $statuses = array_map(static fn (StoredBillingRecord $s): string => $s->submissionStatus, [...$this->ljStore()->findByIssuer($issuer)]);
             self::assertSame(array_map(static fn (int $i): string => in_array($i, $bad, true) ? 'failed' : 'accepted', range(1, 20)), $statuses, $name);
-            self::assertCount(0, $paused, $name);
+            self::assertCount($pauses, $paused, $name);
         }
 
         // Issuer-wide, unknown code.
@@ -351,9 +352,9 @@ trait SubmissionQueueDatabaseScenarios
             $submitter->submitPending($issuer);
             $clock->sleep(61);
         }
-        self::assertSame([[1, 2, 3]], array_map(static fn (IssuerSubmissionPausedEvent $e): array => $e->heldPositions, $pauses));
+        self::assertSame([[1, 2, 3, 20]], array_map(static fn (IssuerSubmissionPausedEvent $e): array => $e->heldPositions, $pauses));
         $statuses = array_map(static fn (StoredBillingRecord $s): string => $s->submissionStatus, [...$this->ljStore()->findByIssuer($issuer)]);
-        self::assertSame(['held', 'held', 'held', ...array_fill(0, 17, 'pending')], $statuses);
+        self::assertSame(['held', 'held', 'held', ...array_fill(0, 16, 'pending'), 'held'], $statuses);
 
         $aeat['broken'] = false;
         $clock->sleep(3600);

@@ -98,6 +98,12 @@ final class BillingRecordBatchSubmitter
     /** Flow control key prefix of the last ISSUER_SUBMISSION_STALLED alert of an issuer (one per pause_seconds). */
     public const STALLED_KEY_PREFIX = 'stalled|';
 
+    /** Flow control key prefix of the Messenger wake-up pending for a paused issuer (one per pause, LJD3-L2). */
+    public const WAKE_KEY_PREFIX = 'wake|';
+
+    /** Flow control key prefix set by a request without any answer (the next one alerts ISSUER_SUBMISSION_STALLED). */
+    public const NO_ANSWER_KEY_PREFIX = 'noanswer|';
+
     /** Suspects held before the last probe goes to the newest waiting record. */
     public const MAX_SUSPECTS = 3;
 
@@ -238,6 +244,7 @@ final class BillingRecordBatchSubmitter
             return $this->failed($issuerNif, $token, $mode, $claimed, $response, $batchSize, $now, $next);
         }
 
+        $this->clearNoAnswer($issuerNif, $now);
         $outcomes = array_map(fn (StoredBillingRecord $stored): RecordSubmissionOutcome => $this->outcome($stored, $response), $claimed);
         $updated  = $this->queue->recordOutcomes($issuerNif, $token, $outcomes, $now);
         if (in_array($mode, [self::MODE_PROBE, self::MODE_PROBE_NEWEST], true)) {
@@ -281,7 +288,9 @@ final class BillingRecordBatchSubmitter
      */
     public function requeueFailed(string $issuerNif): int
     {
-        return $this->queue->requeueFailed(strtoupper(trim($issuerNif)));
+        $issuerNif = strtoupper(trim($issuerNif));
+
+        return $this->underIssuerLock($issuerNif, fn (): int => $this->queue->requeueFailed($issuerNif));
     }
 
     /**
@@ -316,11 +325,15 @@ final class BillingRecordBatchSubmitter
      * Marks one pending, held or confirming record of the issuer failed by hand (an operator who knows the record is
      * wrong, e.g. a run of bad records the AEAT keeps refusing) and dispatches RECORD_SUBMISSION_FAILED after the
      * commit. Returns false when the record is in no such state. `--retry-failed` puts it back.
+     *
+     * Runs under the issuer's chain lock, like a claim (LJD3-L3): a record is never failed between the read and the
+     * update of a claim, so it is never sent while stored failed.
      */
     public function failRecord(string $issuerNif, int $position, string $reason = 'Marked failed by hand.'): bool
     {
         $issuerNif = strtoupper(trim($issuerNif));
-        $stored    = $this->queue->failRecord($issuerNif, $position, $reason, $this->now());
+        $now       = $this->now();
+        $stored    = $this->underIssuerLock($issuerNif, fn (): ?StoredBillingRecord => $this->queue->failRecord($issuerNif, $position, $reason, $now));
         if (!$stored instanceof StoredBillingRecord) {
             return false;
         }
@@ -328,6 +341,33 @@ final class BillingRecordBatchSubmitter
         $this->dispatch(new RecordSubmissionFailedEvent($issuerNif, $position, strtoupper((string) $stored->record->hash), $reason, $stored, null), VerifactuEvents::RECORD_SUBMISSION_FAILED, $eventErrors);
 
         return true;
+    }
+
+    /**
+     * Whether a Messenger message that found the issuer paused until $until should be dispatched again at the end of
+     * the pause (LJD3-L2): true for the first one, which registers the wake-up in the flow control store, false while
+     * a wake-up at or after $until is already pending (the other messages are dropped: one message per issuer stays
+     * alive during a pause). A submitter without a flow control store never pauses, so it always answers true.
+     */
+    public function scheduleWakeUp(string $issuerNif, DateTimeImmutable $until): bool
+    {
+        $flowControl = $this->flowControl;
+        if (!$flowControl instanceof FlowControlInterface) {
+            return true;
+        }
+        $issuerNif = strtoupper(trim($issuerNif));
+        $key       = self::WAKE_KEY_PREFIX . $issuerNif;
+
+        return $this->underIssuerLock($issuerNif, function () use ($flowControl, $key, $until): bool {
+            $pending = $flowControl->nextSubmissionAt($key);
+            if ($pending instanceof DateTimeImmutable && $pending >= $until) {
+                return false;
+            }
+            $now = $this->now();
+            $flowControl->registerSubmission($key, $now, max(1, $until->getTimestamp() - $now->getTimestamp()));
+
+            return true;
+        });
     }
 
     /**
@@ -374,12 +414,31 @@ final class BillingRecordBatchSubmitter
     }
 
     /**
+     * Runs $operation under the issuer's chain lock when the repository is lockable (the lock the claims take).
+     *
+     * @template T
+     *
+     * @param callable(): T $operation
+     *
+     * @return T
+     */
+    private function underIssuerLock(string $issuerNif, callable $operation): mixed
+    {
+        if (!$this->hashChainRepository instanceof LockableHashChainRepositoryInterface) {
+            return $operation();
+        }
+
+        return $this->hashChainRepository->withChainLock($issuerNif, static fn (): mixed => $operation());
+    }
+
+    /**
      * What to send next (called under the issuer lock): a normal batch, or one record alone for the circuit breaker.
      *
      * - a confirming suspect (a probe was answered): that suspect alone, once more;
      * - held suspects and nothing else waiting: the first suspect alone again (it cannot be probed);
      * - fewer than MAX_SUSPECTS held: the next waiting record alone (a probe, in chain order);
-     * - MAX_SUSPECTS held: the NEWEST waiting record alone (the last probe, away from a run of bad records);
+     * - MAX_SUSPECTS held: the NEWEST waiting record alone (the last probe, away from a run of bad records); a refused
+     *   newest probe is held too, so the next one goes to the record before it (LJD3-L1);
      * - no suspect: the next batch.
      *
      * @param list<StoredBillingRecord> $suspects
@@ -433,12 +492,16 @@ final class BillingRecordBatchSubmitter
      *   (`held`) and other records go alone as probes: the next one, the one after, then the newest waiting one. An
      *   answered probe turns the suspects into `confirming`: each is sent alone once more and marked failed only if it
      *   is refused again (a short issuer-wide error never fails a healthy record). When MAX_SUSPECTS suspects and the
-     *   newest record are all refused, the error is issuer-wide: the issuer is paused (reason issuer_refused) and the
-     *   suspects stay held, listed by `--list`. A suspect with nothing else waiting is paused too (reason
-     *   awaiting_probe) and sent alone again after the pause.
+     *   newest record are all refused, the error is issuer-wide (or the newest record is bad too): the issuer is paused
+     *   (reason issuer_refused), the suspects stay held, listed by `--list`, and the refused newest record is held too,
+     *   so the next probe, after the pause, goes to the record before it. A bad record at the tail of the queue thus
+     *   delays the healthy records by one pause and never blocks them; while an issuer-wide error lasts, one more record
+     *   is held per pause (each confirmed alone once the AEAT answers again). A suspect with nothing else waiting is
+     *   paused too (reason awaiting_probe) and sent alone again after the pause.
      *
-     * Anything else (transport, Server fault, HTTP or non-SOAP error) counts nothing; when it repeats,
-     * ISSUER_SUBMISSION_STALLED is dispatched at most once per `pause_seconds`.
+     * Anything else (transport, Server fault, HTTP or non-SOAP error) counts nothing; when the issuer's previous request
+     * got no answer either (no answer in between), ISSUER_SUBMISSION_STALLED is dispatched, at most once per
+     * `pause_seconds`.
      *
      * @param list<StoredBillingRecord> $claimed
      */
@@ -449,14 +512,15 @@ final class BillingRecordBatchSubmitter
             $this->putBack($issuerNif, $token, $mode, $failure);
             $this->logger?->warning('The AEAT submission of {count} Veri*Factu records got no answer; they stay pending.', ['count' => count($claimed)]);
             $eventErrors = [];
-            if ($claimed[0]->submissionError !== null && $this->alertDue(self::STALLED_KEY_PREFIX . $issuerNif, $now)) {
-                // The previous request of these records got no answer either: the submission is stalled.
+            if ($this->noAnswerBefore($issuerNif, $now) && $this->alertDue(self::STALLED_KEY_PREFIX . $issuerNif, $now)) {
+                // The previous request of the issuer got no answer either: the submission is stalled.
                 $this->dispatch(new IssuerSubmissionStalledEvent($issuerNif, $failure, $response->httpStatus, $response), VerifactuEvents::ISSUER_SUBMISSION_STALLED, $eventErrors);
             }
 
             return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_FAILED, [], $response, $next, $this->queue->countPending($issuerNif, $now, $this->claimTimeout), $eventErrors);
         }
 
+        $this->clearNoAnswer($issuerNif, $now);
         $class = $this->faultClassifier->classify($response);
         if ($class === AeatFaultClassifier::ISSUER) {
             $this->putBack($issuerNif, $token, $mode, $failure);
@@ -482,8 +546,10 @@ final class BillingRecordBatchSubmitter
             return $this->pause($issuerNif, IssuerSubmissionPausedEvent::REASON_AWAITING_PROBE, $failure, $response, $now);
         }
         if ($mode === self::MODE_PROBE_NEWEST) {
-            // MAX_SUSPECTS records and the newest one all refused: issuer-wide. The probe is not a suspect.
-            $this->queue->releaseClaim($issuerNif, $token, $failure);
+            // MAX_SUSPECTS records and the newest one all refused: issuer-wide, or the newest record is bad too. The probe
+            // is held (a suspect, confirmed alone before it can fail), so after the pause the probe goes to the record
+            // before it: a bad record at the tail delays the queue by one pause, never blocks it (LJD3-L1).
+            $this->queue->parkClaim($issuerNif, $token, StoredBillingRecord::STATUS_HELD, $failure, true);
 
             return $this->pause($issuerNif, IssuerSubmissionPausedEvent::REASON_ISSUER_REFUSED, $failure, $response, $now);
         }
@@ -572,6 +638,31 @@ final class BillingRecordBatchSubmitter
         $this->flowControl?->registerSubmission($key, $now, max(1, $this->pauseSeconds));
 
         return true;
+    }
+
+    /**
+     * Whether the issuer's previous request got no answer either (LJD3-I4), marking this one: a request without any
+     * answer sets a marker in the flow control store for `pause_seconds`, an answered request clears it.
+     */
+    private function noAnswerBefore(string $issuerNif, DateTimeImmutable $now): bool
+    {
+        $key    = self::NO_ANSWER_KEY_PREFIX . $issuerNif;
+        $marker = $this->flowControl?->nextSubmissionAt($key);
+        $this->flowControl?->registerSubmission($key, $now, max(1, $this->pauseSeconds));
+
+        return $marker instanceof DateTimeImmutable && $marker > $now;
+    }
+
+    /**
+     * Clears the no-answer marker of the issuer (the AEAT answered), writing only when it is set.
+     */
+    private function clearNoAnswer(string $issuerNif, DateTimeImmutable $now): void
+    {
+        $key    = self::NO_ANSWER_KEY_PREFIX . $issuerNif;
+        $marker = $this->flowControl?->nextSubmissionAt($key);
+        if ($marker instanceof DateTimeImmutable && $marker > $now) {
+            $this->flowControl?->registerSubmission($key, $now, 0);
+        }
     }
 
     /**

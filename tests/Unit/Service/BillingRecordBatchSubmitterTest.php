@@ -44,6 +44,8 @@ use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Clock\MockClock;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 
+use function array_intersect;
+use function array_merge;
 use function array_slice;
 use function count;
 use function in_array;
@@ -392,6 +394,40 @@ final class BillingRecordBatchSubmitterTest extends TestCase
         self::assertSame(['lock:89890001K', 'unlock:89890001K'], $lockable->calls);
     }
 
+    /**
+     * LJD3-L3: --fail and --retry-failed take the issuer chain lock, like a claim, so they never interleave with one;
+     * so does the Messenger wake-up check.
+     */
+    public function testManualChangesAndTheWakeUpRunInsideTheIssuerChainLock(): void
+    {
+        $this->chain(1);
+        $lockable  = new RecordingLockableHashChainRepository();
+        $submitter = new BillingRecordBatchSubmitter($this->store, new ScriptedBatchClient(), $lockable, $this->dispatcher, new CacheFlowControl(new ArrayAdapter()), $this->clock);
+
+        self::assertTrue($submitter->failRecord(' 89890001k ', 1));
+        self::assertSame(1, $submitter->requeueFailed('89890001k'));
+        self::assertTrue($submitter->scheduleWakeUp('89890001k', $this->clock->now()->modify('+1 hour')));
+
+        self::assertSame(array_merge(...array_fill(0, 3, ['lock:89890001K', 'unlock:89890001K'])), $lockable->calls);
+    }
+
+    /**
+     * LJD3-L2: one Messenger wake-up per issuer and pause; a later pause gets its own. Without a flow control store
+     * (which never pauses) every caller may reschedule.
+     */
+    public function testOneWakeUpPerIssuerAndPause(): void
+    {
+        $submitter = $this->submitter(new ScriptedBatchClient());
+        $until     = $this->clock->now()->modify('+1 hour');
+
+        self::assertTrue($submitter->scheduleWakeUp('89890001K', $until));
+        self::assertFalse($submitter->scheduleWakeUp(' 89890001k ', $until));
+        self::assertFalse($submitter->scheduleWakeUp('89890001K', $until->modify('-1 minute')));
+        self::assertTrue($submitter->scheduleWakeUp(self::nif(7), $until), 'Another issuer');
+        self::assertTrue($submitter->scheduleWakeUp('89890001K', $until->modify('+1 hour')), 'A later pause');
+        self::assertTrue($this->submitter(new ScriptedBatchClient(), flowControl: false)->scheduleWakeUp('89890001K', $until));
+    }
+
     public function testAQueueThatClaimsNothingIsIdle(): void
     {
         $queue = $this->createMock(SubmissionQueueInterface::class);
@@ -638,6 +674,42 @@ final class BillingRecordBatchSubmitterTest extends TestCase
     }
 
     /**
+     * LJD3-L1: three consecutive bad records AND a bad newest record (unknown code). The refused newest probe is held
+     * too, so after one pause the probe goes to the record before it, is answered, and every suspect is confirmed alone
+     * and failed: the healthy records are delayed by one pause, never blocked until a new invoice or --fail.
+     *
+     * @param list<int> $bad
+     */
+    #[DataProvider('badNewestRecords')]
+    public function testABadNewestRecordDelaysTheQueueByOnePausePerBadTailRecord(array $bad, int $pauses): void
+    {
+        $this->fill(20);
+        $badNumbers = array_map(static fn (int $i): string => 'Q-' . $i, $bad);
+        $client     = new ScriptedBatchClient(...$this->script(static fn (array $records): bool => array_intersect($badNumbers, array_map(static fn (BillingRecord $r): string => $r->invoiceSeriesNumber, $records)) !== [], 4199, 400));
+        $paused     = [];
+        $this->dispatcher->addListener(VerifactuEvents::ISSUER_SUBMISSION_PAUSED, static function (IssuerSubmissionPausedEvent $event) use (&$paused): void {
+            $paused[] = $event;
+        });
+        $submitter = $this->submitter($client, maxAttempts: 2);
+
+        $this->drive($submitter, 60 * ($pauses + 2));
+
+        $expected = array_map(static fn (int $i): string => in_array($i, $bad, true) ? 'failed' : 'accepted', range(1, 20));
+        self::assertSame($expected, $this->statuses());
+        self::assertCount($pauses, $paused);
+        self::assertSame([7, 8, 9, 20], $paused[0]->heldPositions, 'The refused newest probe is held with the suspects');
+    }
+
+    /**
+     * @return iterable<string, array{list<int>, int}>
+     */
+    public static function badNewestRecords(): iterable
+    {
+        yield '3 in a row and the newest' => [[7, 8, 9, 20], 1];
+        yield '3 in a row and the 2 newest' => [[7, 8, 9, 19, 20], 2];
+    }
+
+    /**
      * LJD-M1 / LJD2: an issuer-level code (Codigo[4104], a header error) pauses the issuer at once: nothing counted,
      * nothing held or failed, one alert per pause; when the cause is fixed the whole queue goes in one request.
      */
@@ -694,18 +766,21 @@ final class BillingRecordBatchSubmitterTest extends TestCase
         $this->drive($submitter, 40);
 
         self::assertCount(1, $paused);
-        self::assertSame([IssuerSubmissionPausedEvent::REASON_ISSUER_REFUSED, [1, 2, 3], 4199], [$paused[0]->reason, $paused[0]->heldPositions, $paused[0]->faultErrorCode]);
-        self::assertSame(['held', 'held', 'held', ...array_fill(0, 57, 'pending')], $this->statuses());
-        self::assertSame([1, 2, 3], array_map(static fn (StoredBillingRecord $s): int => $s->position, $submitter->recordsToReview('89890001K')));
+        self::assertSame([IssuerSubmissionPausedEvent::REASON_ISSUER_REFUSED, [1, 2, 3, 60], 4199], [$paused[0]->reason, $paused[0]->heldPositions, $paused[0]->faultErrorCode]);
+        self::assertSame(['held', 'held', 'held', ...array_fill(0, 56, 'pending'), 'held'], $this->statuses());
+        self::assertSame([1, 2, 3, 60], array_map(static fn (StoredBillingRecord $s): int => $s->position, $submitter->recordsToReview('89890001K')));
         self::assertGreaterThanOrEqual(14, iterator_to_array($this->store->findByIssuer('89890001K'))[0]->submissionFailures, 'Kept');
         self::assertSame('Q-60', $client->requests[count($client->requests) - 1][0]->invoiceSeriesNumber, 'The last probe is the newest record');
 
-        // Still broken after the pause: one probe (the newest), paused again.
+        // Still broken after the pause: one probe (the newest waiting record, the one before the held newest), paused
+        // again; one more record is held per pause.
         $this->clock->sleep(3600);
         $requests = count($client->requests);
         self::assertSame(BatchSubmissionResult::STATE_PAUSED, $submitter->submitPending('89890001K')->state);
         self::assertCount($requests + 1, $client->requests);
+        self::assertSame('Q-59', $client->requests[$requests][0]->invoiceSeriesNumber);
         self::assertCount(2, $paused);
+        self::assertSame([1, 2, 3, 59, 60], $paused[1]->heldPositions);
 
         // Fixed: the newest probe is answered, every suspect is confirmed alone and accepted, the rest flows.
         $aeat['broken'] = false;
@@ -749,6 +824,28 @@ final class BillingRecordBatchSubmitterTest extends TestCase
             self::assertCount(1, $stalled, $name . ': one stalled alert per pause_seconds');
             self::assertSame($error()->httpStatus, $stalled[0]->httpStatus);
         }
+    }
+
+    /**
+     * LJD3-I4: the stalled alert needs two requests in a row without any answer: an error stored by an earlier AEAT
+     * refusal does not count, and an answer in between starts again.
+     */
+    public function testTheStalledAlertNeedsTwoRequestsInARowWithoutAnswer(): void
+    {
+        $this->fill(3);
+        $timeout = static fn (array $records): AeatBatchResponse => AeatBatchResponse::failed('timeout', 0, '', '', true);
+        $refused = static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(4199);
+        $client  = new ScriptedBatchClient($refused, $timeout, $refused, $timeout, $timeout);
+        $stalled = [];
+        $this->dispatcher->addListener(VerifactuEvents::ISSUER_SUBMISSION_STALLED, static function () use (&$stalled, $client): void {
+            $stalled[] = count($client->requests);
+        });
+        $submitter = $this->submitter($client);
+
+        $states = $this->drive($submitter, 5);
+
+        self::assertSame(array_fill(0, 5, BatchSubmissionResult::STATE_FAILED), $states);
+        self::assertSame([5], $stalled, 'Only the second request in a row without answer alerts, not the first after a refusal');
     }
 
     /**
