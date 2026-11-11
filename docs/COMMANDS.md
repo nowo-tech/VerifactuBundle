@@ -77,6 +77,7 @@ environment. Stored records are kept. Asks for confirmation; `--force` skips it 
 php bin/console nowo:verifactu:submit-pending [--issuer=89890001K] [--retry-failed]
 php bin/console nowo:verifactu:submit-pending --issuer=89890001K --list
 php bin/console nowo:verifactu:submit-pending --issuer=89890001K --resolve=42 --as=accepted --csv=CSV_FROM_THE_AEAT
+php bin/console nowo:verifactu:submit-pending --issuer=89890001K --fail=42
 ```
 
 Available with a record store. Sends the next batch of waiting records (up to `submission.batch_size`, at most 1000) of
@@ -88,9 +89,13 @@ when a batch got no per-record answer (its records stay pending), a record the A
 marked `failed`, or the issuer is paused (the AEAT refuses every request of it: circuit breaker). `--retry-failed`
 (with `--issuer`) first puts back to pending the records the batch submitter marked `failed`, once the cause of the
 refusal is fixed; records stored as `failed` by `process(..., submitToAeat: true)` (an AEAT `Incorrecto`) stay failed.
-`--list` (with `--issuer`) shows the issuer's `unconfirmed`, `held` and `failed` records and sends nothing.
-`--resolve=<position> --as=accepted|accepted_errors|rejected [--csv=…]` (with `--issuer`) resolves an `unconfirmed`
-record after you checked it at the AEAT (query the invoice and compare the Huella), and sends nothing. Records written before 1.6 (no AEAT environment) are never sent (see UPGRADING).
+`--list` (with `--issuer`) shows the issuer's `unconfirmed`, `held`, `confirming` and `failed` records and sends
+nothing. `--resolve=<position> --as=accepted|accepted_errors|rejected [--csv=…]` (with `--issuer`) resolves an
+`unconfirmed` record after you checked it at the AEAT (query the invoice and compare the Huella), and sends nothing;
+`accepted` and `accepted_errors` need the CSV the AEAT gave. `--fail=<position>` (with `--issuer`) marks a pending,
+held or confirming record failed by hand (`RECORD_SUBMISSION_FAILED` is dispatched) when you know it is wrong, and
+sends nothing; `--retry-failed` puts it back. A paused issuer is reported with the reason: "the AEAT refuses every
+request of this issuer", or "record(s) N held …, waiting for another record to test the AEAT with". Records written before 1.6 (no AEAT environment) are never sent (see UPGRADING).
 
 ## Submit to AEAT sandbox
 

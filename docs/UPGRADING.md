@@ -106,9 +106,13 @@ composer update nowo-tech/verifactu-bundle
   AEAT FAQ v1.3 §4); several issuers under one installation number need `global`.
 - **Duplicates and refused records:** an AEAT duplicate for a record sent before is stored as `unconfirmed` unless you
   configure `submission.duplicate_confirmation` (resolve it with `--resolve` after checking at the AEAT); a record the
-  AEAT keeps refusing on its own (SOAP Client fault) while the next record is answered becomes `failed` and dispatches
-  `RECORD_SUBMISSION_FAILED`; an issuer whose every request is refused is paused instead and dispatches
-  `ISSUER_SUBMISSION_PAUSED`. Listen to both and alert someone; requeue failed records with `--retry-failed`.
+  AEAT keeps refusing on its own (SOAP Client fault with a record code, or confirmed after a probe was answered)
+  becomes `failed` and dispatches `RECORD_SUBMISSION_FAILED`; an issuer the AEAT refuses as a whole (an issuer code
+  such as 4104, or every probe refused) is paused instead and dispatches `ISSUER_SUBMISSION_PAUSED`; requests without
+  any answer dispatch `ISSUER_SUBMISSION_STALLED`. Listen to the three and alert someone. `--list` shows the records
+  that need a person, `--fail` marks one failed, `--retry-failed` requeues. The default AEAT code lists are in
+  `Submission\AeatFaultClassifier`; extend them with `submission.issuer_fault_codes` / `record_fault_codes` if the
+  AEAT adds codes.
 - **Tests of your own:** set `VERIFACTU_FORBID_NETWORK=1` in your PHPUnit configuration and CI so the bundle's cURL
   transport can never reach the AEAT from a test.
 

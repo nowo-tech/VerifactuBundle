@@ -30,6 +30,7 @@ use Nowo\VerifactuBundle\Service\BillingRecordBatchSubmitter;
 use Nowo\VerifactuBundle\Service\ChainVerifier;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
+use Nowo\VerifactuBundle\Submission\AeatFaultClassifier;
 use Nowo\VerifactuBundle\Submission\CacheFlowControl;
 use Nowo\VerifactuBundle\Submission\FlowControlInterface;
 use Symfony\Component\Config\Definition\Processor;
@@ -318,7 +319,11 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
             ->setArgument('$flowControlScope', $config['submission']['flow_control_scope'])
             ->setArgument('$duplicateConfirmation', $config['submission']['duplicate_confirmation'] !== null ? new Reference($config['submission']['duplicate_confirmation']) : null)
             ->setArgument('$maxAttempts', $config['submission']['max_attempts'])
-            ->setArgument('$pauseSeconds', $config['submission']['pause_seconds']);
+            ->setArgument('$pauseSeconds', $config['submission']['pause_seconds'])
+            ->setArgument('$faultClassifier', new Definition(AeatFaultClassifier::class, [
+                array_values(array_map('intval', $config['submission']['issuer_fault_codes'])),
+                array_values(array_map('intval', $config['submission']['record_fault_codes'])),
+            ]));
 
         if (interface_exists(MessageBusInterface::class)) {
             $container->setDefinition(SubmitPendingBillingRecordsHandler::class, (new Definition(SubmitPendingBillingRecordsHandler::class, [

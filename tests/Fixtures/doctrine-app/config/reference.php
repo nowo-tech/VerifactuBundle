@@ -1005,6 +1005,8 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *         claim_timeout?: int|Param, // Seconds after which a batch claimed by a process that died is claimed again (longer than aeat.timeout) // Default: 300
  *         default_wait?: int|Param, // Seconds to wait between submissions when the AEAT returned no TiempoEsperaEnvio (initially 60, Orden HAC/1177/2024 art. 16.2) // Default: 60
  *         max_attempts?: int|Param, // Times the AEAT may refuse a record sent on its own (a SOAP Client fault) before it is held; it is marked failed when the next record, sent alone, gets an answer, otherwise the issuer is paused (pause_seconds) // Default: 5
+ *         issuer_fault_codes?: list<int|Param>,
+ *         record_fault_codes?: list<int|Param>,
  *         pause_seconds?: int|Param, // Circuit breaker: how long an issuer is paused when the AEAT refuses every request of it (kept in the flow control store) // Default: 3600
  *         flow_control_scope?: "issuer"|"global"|Param, // issuer: one AEAT wait per issuer NIF, for issuers that are separate SIF installations (own NumeroInstalacion, AEAT FAQ v1.3 §4); global: one wait shared by every issuer of one SIF installation // Default: "issuer"
  *         flow_control?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Submission\FlowControlInterface (null = CacheFlowControl over flow_control_cache_pool) // Default: null

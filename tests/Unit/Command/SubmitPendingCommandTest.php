@@ -82,8 +82,7 @@ final class SubmitPendingCommandTest extends TestCase
             self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K']));
             $outputs[] = $tester->getDisplay();
         } while (count($outputs) < 30 && !str_contains($tester->getDisplay(), 'marked failed'));
-        self::assertStringContainsString('89890001K: the AEAT kept refusing record 1 (AEAT SOAP fault: Codigo[4102].Error de prueba.) while the next record was answered; it is marked failed (--retry-failed puts it back).', $tester->getDisplay());
-        self::assertStringContainsString('89890001K: 1 sent (1 accepted', $tester->getDisplay());
+        self::assertStringContainsString('89890001K: the AEAT refused record 1 on its own (AEAT SOAP fault: Codigo[4102].Error de prueba.); it is marked failed (--retry-failed puts it back).', $tester->getDisplay());
         self::assertStringContainsString('no AEAT answer (AEAT SOAP fault: Codigo[4102].Error de prueba.); 2 records stay pending.', $outputs[0]);
 
         self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => '89890001K', '--list' => true]));
@@ -117,6 +116,9 @@ final class SubmitPendingCommandTest extends TestCase
         self::assertSame(Command::INVALID, $tester->execute(['--list' => true]));
         self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--resolve' => 'x', '--as' => 'accepted']));
         self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'unconfirmed']));
+        self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'accepted']));
+        self::assertStringContainsString('--resolve --as=accepted needs --csv', $tester->getDisplay());
+        self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'accepted_errors', '--csv' => ' ']));
         self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => '89890001K', '--resolve' => '1', '--as' => 'accepted', '--csv' => ' CSV-OK ']));
         self::assertStringContainsString('89890001K: record 1 resolved as accepted.', $tester->getDisplay());
         self::assertSame([StoredBillingRecord::STATUS_ACCEPTED, 'CSV-OK'], [iterator_to_array($store->findByIssuer('89890001K'))[0]->submissionStatus, iterator_to_array($store->findByIssuer('89890001K'))[0]->submissionReference]);
@@ -125,21 +127,37 @@ final class SubmitPendingCommandTest extends TestCase
         self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => '89890001K', '--list' => true]));
         self::assertStringContainsString('no unconfirmed, held or failed records', $tester->getDisplay());
 
-        // A lone record refused alone: the issuer is paused, not the record failed.
+        // An issuer-level code: the issuer is paused at once and says so.
         /** @var list<Closure> $script */
         $script                   = array_fill(0, 20, static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(4104));
         [$tester, $store, $heads] = $this->tester(new ScriptedBatchClient(...$script));
         $this->chain($heads, $store, ['P-1'], '89890001K');
-        $clock = $this->clock;
-        $i     = 0;
-        do {
-            self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K']));
-            $clock?->sleep(61);
-        } while (++$i < 20 && !str_contains($tester->getDisplay(), 'paused until'));
-        self::assertStringContainsString('89890001K: paused until', $tester->getDisplay());
-        self::assertStringContainsString('the AEAT refuses every request of this issuer (AEAT SOAP fault: Codigo[4104].Error de prueba.); 1 records stay pending.', $tester->getDisplay());
         self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K']));
-        self::assertStringContainsString('(paused earlier)', $tester->getDisplay());
+        self::assertStringContainsString('89890001K: the AEAT refuses every request of this issuer (AEAT SOAP fault: Codigo[4104].Error de prueba.); paused until', $tester->getDisplay());
+        self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K']));
+        self::assertStringContainsString('89890001K: paused until', $tester->getDisplay());
+
+        // A lone suspect (unknown code): held, waiting for a probe, not "every request refused".
+        /** @var list<Closure> $script */
+        $script                   = array_fill(0, 20, static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(4199));
+        [$tester, $store, $heads] = $this->tester(new ScriptedBatchClient(...$script));
+        $this->chain($heads, $store, ['L-1'], '89890001K');
+        $i = 0;
+        do {
+            $tester->execute(['--issuer' => '89890001K']);
+            $this->clock?->sleep(61);
+        } while (++$i < 20 && !str_contains($tester->getDisplay(), 'paused until'));
+        self::assertStringContainsString('89890001K: record(s) 1 held (AEAT SOAP fault: Codigo[4199].Error de prueba.), waiting for another record to test the AEAT with', $tester->getDisplay());
+        self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => '89890001K', '--list' => true]));
+        self::assertStringContainsString('held', $tester->getDisplay());
+
+        // The operator marks it failed by hand.
+        self::assertSame(Command::INVALID, $tester->execute(['--fail' => '1']));
+        self::assertSame(Command::INVALID, $tester->execute(['--issuer' => '89890001K', '--fail' => 'x']));
+        self::assertSame(Command::SUCCESS, $tester->execute(['--issuer' => '89890001K', '--fail' => '1']));
+        self::assertStringContainsString('89890001K: record 1 marked failed (--retry-failed puts it back).', $tester->getDisplay());
+        self::assertSame(Command::FAILURE, $tester->execute(['--issuer' => '89890001K', '--fail' => '1']));
+        self::assertStringContainsString('record 1 is not pending, held or confirming', $tester->getDisplay());
     }
 
     public function testNoAnswerFailsAndAnInFlightIssuerIsReported(): void

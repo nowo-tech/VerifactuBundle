@@ -47,17 +47,22 @@ store, add the new submission columns. See [UPGRADING](UPGRADING.md#unreleased).
   become `accepted`, `accepted_errors` or `rejected`; a record without a line goes back to `pending`; a request without
   an answer (transport error, HTTP 502 / 503 / 504) puts the batch back to `pending`.
 - **Requests refused as a whole never block an issuer, and never fail healthy records.** Only a SOAP Fault with
-  faultcode `Client` counts against the records (*Servicios web* v1.0.3 §5.1); `Server` faults, HTML / empty bodies,
-  HTTP 401 / 403 / 404 / 405 / 407 / 408 / 429 / 500 pages / 502 – 504 and transport errors leave them pending. A Client
-  refusal halves the next batch until the record at fault goes alone; after `submission.max_attempts` (default 5)
-  refusals on its own it is held and the next record goes alone: if that probe is answered, the held record is marked
-  `failed` and `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`) is dispatched after
-  the commit; if the probe is refused too, or there is nothing to probe with, the error is issuer-wide (circuit
-  breaker): no record is failed, every record is back to pending, the issuer is paused for `submission.pause_seconds`
-  and `VerifactuEvents::ISSUER_SUBMISSION_PAUSED` (`Event\IssuerSubmissionPausedEvent`) is dispatched once.
-  `nowo:verifactu:submit-pending --retry-failed` puts back only the records the submitter failed; `--list` and
-  `--resolve` (`BillingRecordBatchSubmitter::recordsToReview()` / `resolveUnconfirmed()`) list and resolve the
-  records that need a person.
+  faultcode `Client` counts (*Servicios web* v1.0.3 §5.1); `Server` faults, HTML / empty bodies, HTTP 401 / 403 / 404 /
+  405 / 407 / 408 / 429 / 500 pages / 502 – 504 and transport errors leave the records pending and, when repeated,
+  dispatch `VerifactuEvents::ISSUER_SUBMISSION_STALLED` (at most once per `submission.pause_seconds`). The fault's
+  `Codigo` decides (`Submission\AeatFaultClassifier`, AEAT list of message-level errors, configurable with
+  `submission.issuer_fault_codes` / `record_fault_codes`): an issuer code (header, certificate, authorisation, e.g.
+  4104) pauses the issuer at once; a record code (e.g. 4102) halves the batch until the record at fault goes alone and
+  marks it `failed` after `submission.max_attempts` refusals; any other code holds that record as a suspect (`held`)
+  and sends other records alone as probes (the next ones, then the newest): an answered probe turns the suspects
+  `confirming` and each is sent alone once more (failed only if refused again); the suspects and the newest record all
+  refused pause the issuer, keeping the suspects. Runs of consecutive bad records are failed one by one, never block
+  the queue. `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`) and
+  `VerifactuEvents::ISSUER_SUBMISSION_PAUSED` (`Event\IssuerSubmissionPausedEvent`, reason `issuer_refused` or
+  `awaiting_probe`, held positions, AEAT code) are dispatched after the commit; the Messenger message is dispatched
+  again at the end of a pause. `nowo:verifactu:submit-pending --list` / `--fail=<position>` / `--retry-failed` /
+  `--resolve` (`recordsToReview()`, `failRecord()`, `requeueFailed()`, `resolveUnconfirmed()`) let an operator see and
+  act on every record that needs a person; `--retry-failed` puts back only what the submitter (or `--fail`) failed.
 - **Retries and duplicates.** Resends carry the same stored XML. An attempt is counted right before the request is
   transmitted (`BatchAeatSubmissionClientInterface::submitBatch($records, $beforeTransmit)`), never at the claim. An
   AEAT duplicate (`RegistroDuplicado`, no Huella) becomes a registered state only when a

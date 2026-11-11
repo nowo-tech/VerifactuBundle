@@ -36,12 +36,14 @@ use Nowo\VerifactuBundle\Service\BillingRecordBatchSubmitter;
 use Nowo\VerifactuBundle\Service\ChainVerifier;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
+use Nowo\VerifactuBundle\Submission\AeatFaultClassifier;
 use Nowo\VerifactuBundle\Submission\CacheFlowControl;
 use Nowo\VerifactuBundle\Submission\FlowControlInterface;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Extension\Extension;
 
 /**
@@ -474,6 +476,9 @@ final class NowoVerifactuExtensionTest extends TestCase
         self::assertSame('app.duplicate_confirmation', (string) $definition->getArgument('$duplicateConfirmation'));
         self::assertSame(3, $definition->getArgument('$maxAttempts'));
         self::assertSame(3600, $definition->getArgument('$pauseSeconds'));
+        $classifier = $definition->getArgument('$faultClassifier');
+        self::assertInstanceOf(Definition::class, $classifier);
+        self::assertSame([AeatFaultClassifier::DEFAULT_ISSUER_CODES, AeatFaultClassifier::DEFAULT_RECORD_CODES], $classifier->getArguments());
         self::assertSame('logger', (string) $container->getDefinition(SubmitPendingBillingRecordsHandler::class)->getArgument(3));
     }
 

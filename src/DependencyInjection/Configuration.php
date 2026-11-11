@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\DependencyInjection;
 
+use Nowo\VerifactuBundle\Submission\AeatFaultClassifier;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
 
@@ -158,6 +159,16 @@ final class Configuration implements ConfigurationInterface
                             ->info('Times the AEAT may refuse a record sent on its own (a SOAP Client fault) before it is held; it is marked failed when the next record, sent alone, gets an answer, otherwise the issuer is paused (pause_seconds)')
                             ->min(1)
                             ->defaultValue(5)
+                        ->end()
+                        ->arrayNode('issuer_fault_codes')
+                            ->info('AEAT Codigo values of a SOAP Client fault that are about the issuer (header, certificate, authorisation): the issuer is paused at once and no record is failed')
+                            ->integerPrototype()->end()
+                            ->defaultValue(AeatFaultClassifier::DEFAULT_ISSUER_CODES)
+                        ->end()
+                        ->arrayNode('record_fault_codes')
+                            ->info('AEAT Codigo values of a SOAP Client fault that are about the content of a record: the record at fault is failed without probing; any other code is probed')
+                            ->integerPrototype()->end()
+                            ->defaultValue(AeatFaultClassifier::DEFAULT_RECORD_CODES)
                         ->end()
                         ->integerNode('pause_seconds')
                             ->info('Circuit breaker: how long an issuer is paused when the AEAT refuses every request of it (kept in the flow control store)')

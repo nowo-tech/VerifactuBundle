@@ -19,9 +19,9 @@ use function count;
  * - STATE_FAILED: the batch got no per-record answer (transport error, HTTP status, SoapFault). Its records went back to
  *   pending and may be sent again (`retryable`), or, for a record the AEAT kept refusing on its own, it was marked
  *   failed (`failed`, RECORD_SUBMISSION_FAILED) and the next records flow.
- * - STATE_PAUSED: the AEAT refuses every request of the issuer (an issuer-wide error): no record was failed, the
- *   issuer waits until `nextSubmissionAt` (ISSUER_SUBMISSION_PAUSED). Also with `failed` filled on STATE_SENT: a held
- *   record marked failed because the probe got an answer.
+ * - STATE_PAUSED: the circuit breaker paused the issuer until `nextSubmissionAt` (ISSUER_SUBMISSION_PAUSED,
+ *   `pauseReason` when this call paused it): the AEAT refuses every request of it, or suspect records wait for another
+ *   record to probe with. No record was failed.
  *
  * @author Nowo.tech
  * @copyright 2026 Nowo.tech
@@ -41,6 +41,7 @@ final class BatchSubmissionResult
      * @param list<RecordSubmissionOutcome> $outcomes
      * @param list<array{event: string, exception: Throwable}> $eventErrors
      * @param list<StoredBillingRecord> $failed records marked failed by this call
+     * @param string|null $pauseReason why this call paused the issuer (IssuerSubmissionPausedEvent::REASON_*)
      */
     public function __construct(
         public readonly string $issuerNif,
@@ -51,6 +52,7 @@ final class BatchSubmissionResult
         public readonly int $remaining = 0,
         public readonly array $eventErrors = [],
         public readonly array $failed = [],
+        public readonly ?string $pauseReason = null,
     ) {
     }
 

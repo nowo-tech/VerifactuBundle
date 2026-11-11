@@ -31,4 +31,10 @@ final class VerifactuEvents
      * record (IssuerSubmissionPausedEvent); no record is marked failed.
      */
     public const ISSUER_SUBMISSION_PAUSED = 'nowo_verifactu.issuer_submission_paused';
+
+    /**
+     * Batch submission (1.7): the AEAT gave no answer to two submissions of an issuer in a row (transport, certificate,
+     * HTTP or Server errors; IssuerSubmissionStalledEvent); at most once per `pause_seconds` while it lasts.
+     */
+    public const ISSUER_SUBMISSION_STALLED = 'nowo_verifactu.issuer_submission_stalled';
 }

@@ -9,6 +9,7 @@ use LogicException;
 use Nowo\VerifactuBundle\Client\BatchAeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\SoapEnvelopeBuilder;
 use Nowo\VerifactuBundle\Event\IssuerSubmissionPausedEvent;
+use Nowo\VerifactuBundle\Event\IssuerSubmissionStalledEvent;
 use Nowo\VerifactuBundle\Event\RecordSubmissionFailedEvent;
 use Nowo\VerifactuBundle\Event\RecordSubmittedEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
@@ -22,6 +23,7 @@ use Nowo\VerifactuBundle\Model\StoredBillingRecord;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\LockableHashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\SubmissionQueueInterface;
+use Nowo\VerifactuBundle\Submission\AeatFaultClassifier;
 use Nowo\VerifactuBundle\Submission\BatchSplit;
 use Nowo\VerifactuBundle\Submission\DuplicateConfirmationInterface;
 use Nowo\VerifactuBundle\Submission\FlowControlInterface;
@@ -31,9 +33,12 @@ use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 use Throwable;
 
+use function array_filter;
 use function array_map;
+use function array_values;
 use function bin2hex;
 use function count;
+use function implode;
 use function in_array;
 use function max;
 use function min;
@@ -90,13 +95,27 @@ final class BillingRecordBatchSubmitter
     /** Flow control key prefix of an issuer paused by the circuit breaker. */
     public const PAUSE_KEY_PREFIX = 'pause|';
 
+    /** Flow control key prefix of the last ISSUER_SUBMISSION_STALLED alert of an issuer (one per pause_seconds). */
+    public const STALLED_KEY_PREFIX = 'stalled|';
+
+    /** Suspects held before the last probe goes to the newest waiting record. */
+    public const MAX_SUSPECTS = 3;
+
+    private const MODE_BATCH        = 'batch';
+    private const MODE_PROBE        = 'probe';
+    private const MODE_PROBE_NEWEST = 'probe_newest';
+    private const MODE_CONFIRM      = 'confirm';
+    private const MODE_LONE         = 'lone';
+
     /**
      * @param int $batchSize records per request, 1 – 1000 (AEAT Servicios web v1.0.3 p. 10)
      * @param int $claimTimeout seconds after which a claim is stale and its records are claimed again
      * @param int $defaultWait seconds to wait when the AEAT gave no TiempoEsperaEnvio (initially 60, art. 16.2)
      * @param string $flowControlScope issuer (one wait per issuer NIF) or global (one wait for every issuer)
      * @param int $maxAttempts refusals of a record sent on its own before it is held (then failed or the issuer paused)
-     * @param int $pauseSeconds how long an issuer stays paused after an issuer-wide refusal (circuit breaker)
+     * @param int $pauseSeconds how long an issuer stays paused after an issuer-wide refusal (circuit breaker); the pause
+     *                          and the alert de-duplication live in the flow control store: a submitter built without one
+     *                          never pauses
      */
     public function __construct(
         private readonly SubmissionQueueInterface $queue,
@@ -113,6 +132,7 @@ final class BillingRecordBatchSubmitter
         private readonly ?DuplicateConfirmationInterface $duplicateConfirmation = null,
         private readonly int $maxAttempts = 5,
         private readonly int $pauseSeconds = 3600,
+        private readonly AeatFaultClassifier $faultClassifier = new AeatFaultClassifier(),
     ) {
     }
 
@@ -141,28 +161,25 @@ final class BillingRecordBatchSubmitter
             if ($this->queue->hasSubmissionInFlight($issuerNif, $now, $this->claimTimeout)) {
                 return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_IN_FLIGHT);
             }
-            $waiting = $this->queue->countPending($issuerNif, $now, $this->claimTimeout);
-            if ($waiting === 0) {
+            $waiting  = $this->queue->countPending($issuerNif, $now, $this->claimTimeout);
+            $suspects = $this->queue->suspects($issuerNif);
+            if ($waiting === 0 && $suspects === []) {
                 return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_IDLE);
             }
             $pausedUntil = $this->flowControl?->nextSubmissionAt(self::PAUSE_KEY_PREFIX . $issuerNif);
             if ($pausedUntil instanceof DateTimeImmutable && $pausedUntil > $now) {
                 return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_PAUSED, nextSubmissionAt: $pausedUntil, remaining: $waiting);
             }
-            // A held record (refused alone max_attempts times): the next record goes alone, as a probe.
-            $held = $this->queue->heldRecord($issuerNif);
-            if ($held instanceof StoredBillingRecord) {
-                $batchSize = 1;
-            }
             $next     = $this->flowControl?->nextSubmissionAt($flowKey);
             $mustWait = $next instanceof DateTimeImmutable && $next > $now;
-            // Art. 16.2 c: only a submission carrying the record-design limit (1000 records) may skip the wait.
-            if ($mustWait && ($batchSize < SoapEnvelopeBuilder::MAX_RECORDS_PER_SUBMISSION || $waiting < SoapEnvelopeBuilder::MAX_RECORDS_PER_SUBMISSION)) {
+            // Art. 16.2 c: only a submission carrying the record-design limit (1000 records) may skip the wait; a
+            // single-record request of the circuit breaker always waits.
+            if ($mustWait && ($suspects !== [] || $batchSize < SoapEnvelopeBuilder::MAX_RECORDS_PER_SUBMISSION || $waiting < SoapEnvelopeBuilder::MAX_RECORDS_PER_SUBMISSION)) {
                 return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_THROTTLED, nextSubmissionAt: $next, remaining: $waiting);
             }
 
-            $claimed = $this->queue->claimNext($issuerNif, $batchSize, $token, $now, $this->claimTimeout);
-            if ($mustWait && $claimed !== [] && count($claimed) < SoapEnvelopeBuilder::MAX_RECORDS_PER_SUBMISSION) {
+            [$mode, $claimed] = $this->claimFor($issuerNif, $suspects, $waiting, $batchSize, $token, $now);
+            if ($mode === self::MODE_BATCH && $mustWait && $claimed !== [] && count($claimed) < SoapEnvelopeBuilder::MAX_RECORDS_PER_SUBMISSION) {
                 // The claim stopped short of 1000 records (an environment change, a second record of one invoice, a
                 // split batch): it is not a full submission, so it waits like any other.
                 $this->queue->releaseClaim($issuerNif, $token);
@@ -174,13 +191,13 @@ final class BillingRecordBatchSubmitter
                 $this->flowControl?->registerSubmission($flowKey, $now, $this->defaultWait);
             }
 
-            return ['claimed' => $claimed, 'held' => $held];
+            return ['claimed' => $claimed, 'mode' => $mode];
         };
         $outcome = $this->underLocks($issuerNif, $global, $claim);
         if ($outcome instanceof BatchSubmissionResult) {
             return $outcome;
         }
-        ['claimed' => $claimed, 'held' => $held] = $outcome;
+        ['claimed' => $claimed, 'mode' => $mode] = $outcome;
         if ($claimed === []) {
             return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_IDLE);
         }
@@ -194,8 +211,8 @@ final class BillingRecordBatchSubmitter
         try {
             $response = $this->client->submitBatch(array_map(static fn (StoredBillingRecord $stored): BillingRecord => $stored->record, $claimed), $beforeTransmit);
         } catch (Throwable $exception) {
-            // No request left the process, or its answer is unknown: the records go back to pending, untouched.
-            $this->queue->releaseClaim($issuerNif, $token, $exception::class);
+            // No request left the process, or its answer is unknown: the records go back as they were, untouched.
+            $this->putBack($issuerNif, $token, $mode, $exception::class);
 
             throw $exception;
         }
@@ -218,11 +235,15 @@ final class BillingRecordBatchSubmitter
         $this->flowControl?->registerSubmission($flowKey, $now, $wait);
 
         if ($response->isFailure()) {
-            return $this->failed($issuerNif, $token, $claimed, $held, $response, $batchSize, $now, $next);
+            return $this->failed($issuerNif, $token, $mode, $claimed, $response, $batchSize, $now, $next);
         }
 
         $outcomes = array_map(fn (StoredBillingRecord $stored): RecordSubmissionOutcome => $this->outcome($stored, $response), $claimed);
         $updated  = $this->queue->recordOutcomes($issuerNif, $token, $outcomes, $now);
+        if (in_array($mode, [self::MODE_PROBE, self::MODE_PROBE_NEWEST], true)) {
+            // A probe was answered: the AEAT accepts this issuer's requests. Each suspect is sent alone once more.
+            $this->queue->confirmSuspects($issuerNif);
+        }
 
         // After the commit of the answers: one event per record whose answer was stored by this submission.
         $eventErrors = [];
@@ -233,9 +254,6 @@ final class BillingRecordBatchSubmitter
             $this->dispatch(new RecordSubmittedEvent($outcome, $response), VerifactuEvents::AFTER_RECORD_SUBMISSION, $eventErrors);
         }
 
-        // The probe got an answer: the AEAT accepts this issuer's requests, so the held record was at fault.
-        $failed = $held instanceof StoredBillingRecord ? $this->failHeld($issuerNif, $held, $response, $now, $eventErrors) : [];
-
         return new BatchSubmissionResult(
             $issuerNif,
             BatchSubmissionResult::STATE_SENT,
@@ -244,7 +262,6 @@ final class BillingRecordBatchSubmitter
             $next,
             $this->queue->countPending($issuerNif, $now, $this->claimTimeout),
             $eventErrors,
-            $failed,
         );
     }
 
@@ -268,7 +285,18 @@ final class BillingRecordBatchSubmitter
     }
 
     /**
-     * The issuer's records that need a person: unconfirmed duplicates, a held record and failed records, in chain order.
+     * The issuer's suspects (held, confirming), in chain order.
+     *
+     * @return list<StoredBillingRecord>
+     */
+    public function suspects(string $issuerNif): array
+    {
+        return $this->queue->suspects(strtoupper(trim($issuerNif)));
+    }
+
+    /**
+     * The issuer's records that need a person: unconfirmed duplicates, suspects (held, confirming) and failed records, in
+     * chain order.
      *
      * @return list<StoredBillingRecord>
      */
@@ -276,12 +304,30 @@ final class BillingRecordBatchSubmitter
     {
         $review = [];
         foreach ($this->queue->findByIssuer(strtoupper(trim($issuerNif))) as $stored) {
-            if (in_array($stored->submissionStatus, [StoredBillingRecord::STATUS_UNCONFIRMED, StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_FAILED], true)) {
+            if (in_array($stored->submissionStatus, [StoredBillingRecord::STATUS_UNCONFIRMED, StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_CONFIRMING, StoredBillingRecord::STATUS_FAILED], true)) {
                 $review[] = $stored;
             }
         }
 
         return $review;
+    }
+
+    /**
+     * Marks one pending, held or confirming record of the issuer failed by hand (an operator who knows the record is
+     * wrong, e.g. a run of bad records the AEAT keeps refusing) and dispatches RECORD_SUBMISSION_FAILED after the
+     * commit. Returns false when the record is in no such state. `--retry-failed` puts it back.
+     */
+    public function failRecord(string $issuerNif, int $position, string $reason = 'Marked failed by hand.'): bool
+    {
+        $issuerNif = strtoupper(trim($issuerNif));
+        $stored    = $this->queue->failRecord($issuerNif, $position, $reason, $this->now());
+        if (!$stored instanceof StoredBillingRecord) {
+            return false;
+        }
+        $eventErrors = [];
+        $this->dispatch(new RecordSubmissionFailedEvent($issuerNif, $position, strtoupper((string) $stored->record->hash), $reason, $stored, null), VerifactuEvents::RECORD_SUBMISSION_FAILED, $eventErrors);
+
+        return true;
     }
 
     /**
@@ -308,9 +354,9 @@ final class BillingRecordBatchSubmitter
     }
 
     /**
-     * @param callable(): (array{claimed: list<StoredBillingRecord>, held: ?StoredBillingRecord}|BatchSubmissionResult) $claim
+     * @param callable(): (array{claimed: list<StoredBillingRecord>, mode: string}|BatchSubmissionResult) $claim
      *
-     * @return array{claimed: list<StoredBillingRecord>, held: ?StoredBillingRecord}|BatchSubmissionResult
+     * @return array{claimed: list<StoredBillingRecord>, mode: string}|BatchSubmissionResult
      */
     private function underLocks(string $issuerNif, bool $global, callable $claim): BatchSubmissionResult|array
     {
@@ -328,49 +374,132 @@ final class BillingRecordBatchSubmitter
     }
 
     /**
+     * What to send next (called under the issuer lock): a normal batch, or one record alone for the circuit breaker.
+     *
+     * - a confirming suspect (a probe was answered): that suspect alone, once more;
+     * - held suspects and nothing else waiting: the first suspect alone again (it cannot be probed);
+     * - fewer than MAX_SUSPECTS held: the next waiting record alone (a probe, in chain order);
+     * - MAX_SUSPECTS held: the NEWEST waiting record alone (the last probe, away from a run of bad records);
+     * - no suspect: the next batch.
+     *
+     * @param list<StoredBillingRecord> $suspects
+     *
+     * @return array{string, list<StoredBillingRecord>}
+     */
+    private function claimFor(string $issuerNif, array $suspects, int $waiting, int $batchSize, string $token, DateTimeImmutable $now): array
+    {
+        if ($suspects === []) {
+            return [self::MODE_BATCH, $this->queue->claimNext($issuerNif, $batchSize, $token, $now, $this->claimTimeout)];
+        }
+        $confirming        = array_values(array_filter($suspects, static fn (StoredBillingRecord $s): bool => $s->submissionStatus === StoredBillingRecord::STATUS_CONFIRMING));
+        $held              = array_values(array_filter($suspects, static fn (StoredBillingRecord $s): bool => $s->submissionStatus === StoredBillingRecord::STATUS_HELD));
+        [$mode, $position] = match (true) {
+            $confirming !== []                 => [self::MODE_CONFIRM, $confirming[0]->position],
+            $waiting === 0                     => [self::MODE_LONE, $held[0]->position],
+            count($held) >= self::MAX_SUSPECTS => [self::MODE_PROBE_NEWEST, $this->queue->newestWaitingPosition($issuerNif, $now, $this->claimTimeout)],
+            default                            => [self::MODE_PROBE, null],
+        };
+        if ($mode === self::MODE_PROBE) {
+            return [$mode, $this->queue->claimNext($issuerNif, 1, $token, $now, $this->claimTimeout)];
+        }
+        $record = $position === null ? null : $this->queue->claimRecord($issuerNif, $position, $token, $now, $this->claimTimeout);
+
+        return [$mode, $record instanceof StoredBillingRecord ? [$record] : []];
+    }
+
+    /**
+     * Ends a claim without an answer, leaving every record as it was before the claim.
+     */
+    private function putBack(string $issuerNif, string $token, string $mode, ?string $failure): void
+    {
+        match ($mode) {
+            self::MODE_CONFIRM => $this->queue->parkClaim($issuerNif, $token, StoredBillingRecord::STATUS_CONFIRMING, $failure),
+            self::MODE_LONE    => $this->queue->parkClaim($issuerNif, $token, StoredBillingRecord::STATUS_HELD, $failure),
+            default            => $this->queue->releaseClaim($issuerNif, $token, $failure),
+        };
+    }
+
+    /**
      * A request without a per-record answer.
      *
-     * Circuit breaker: a refusal counts against the records only for a SOAP `Client` fault (AeatBatchResponse::
-     * isRecordRefusal()). The batch is halved until the record at fault goes alone; after enough refusals on its own it is
-     * held, and the next record goes alone. If that probe gets an answer, the held record is marked failed; if the probe
-     * is refused as well, the error is issuer-wide (a header or certificate problem no split can fix): nothing is marked
-     * failed, every record of the issuer is back to pending without failures, the issuer is paused for `pause_seconds`
-     * and ISSUER_SUBMISSION_PAUSED is dispatched once.
+     * Only a SOAP `Client` fault is about what the message carries (AeatBatchResponse::isRecordRefusal()); its Codigo
+     * decides who it is about (AeatFaultClassifier):
+     *
+     * - ISSUER (a header, certificate or authorisation error): nothing is counted, the issuer is paused at once
+     *   (ISSUER_SUBMISSION_PAUSED, reason issuer_refused);
+     * - RECORD (schema, format): counted, the batch is split; a record refused on its own `max_attempts` times, or a
+     *   probe or a suspect refused that way, is marked failed (RECORD_SUBMISSION_FAILED);
+     * - UNKNOWN: counted, the batch is split; a record refused on its own `max_attempts` times becomes a suspect
+     *   (`held`) and other records go alone as probes: the next one, the one after, then the newest waiting one. An
+     *   answered probe turns the suspects into `confirming`: each is sent alone once more and marked failed only if it
+     *   is refused again (a short issuer-wide error never fails a healthy record). When MAX_SUSPECTS suspects and the
+     *   newest record are all refused, the error is issuer-wide: the issuer is paused (reason issuer_refused) and the
+     *   suspects stay held, listed by `--list`. A suspect with nothing else waiting is paused too (reason
+     *   awaiting_probe) and sent alone again after the pause.
+     *
+     * Anything else (transport, Server fault, HTTP or non-SOAP error) counts nothing; when it repeats,
+     * ISSUER_SUBMISSION_STALLED is dispatched at most once per `pause_seconds`.
      *
      * @param list<StoredBillingRecord> $claimed
      */
-    private function failed(string $issuerNif, string $token, array $claimed, ?StoredBillingRecord $held, AeatBatchResponse $response, int $batchSize, DateTimeImmutable $now, DateTimeImmutable $next): BatchSubmissionResult
+    private function failed(string $issuerNif, string $token, string $mode, array $claimed, AeatBatchResponse $response, int $batchSize, DateTimeImmutable $now, DateTimeImmutable $next): BatchSubmissionResult
     {
         $failure = (string) $response->failure;
         if (!$response->isRecordRefusal()) {
-            // Transport failure, Server fault, HTTP / non-SOAP error: nothing points at the records; they stay pending.
-            $this->queue->releaseClaim($issuerNif, $token, $failure);
+            $this->putBack($issuerNif, $token, $mode, $failure);
             $this->logger?->warning('The AEAT submission of {count} Veri*Factu records got no answer; they stay pending.', ['count' => count($claimed)]);
+            $eventErrors = [];
+            if ($claimed[0]->submissionError !== null && $this->alertDue(self::STALLED_KEY_PREFIX . $issuerNif, $now)) {
+                // The previous request of these records got no answer either: the submission is stalled.
+                $this->dispatch(new IssuerSubmissionStalledEvent($issuerNif, $failure, $response->httpStatus, $response), VerifactuEvents::ISSUER_SUBMISSION_STALLED, $eventErrors);
+            }
 
-            return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_FAILED, [], $response, $next, $this->queue->countPending($issuerNif, $now, $this->claimTimeout));
+            return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_FAILED, [], $response, $next, $this->queue->countPending($issuerNif, $now, $this->claimTimeout), $eventErrors);
         }
 
-        if ($held instanceof StoredBillingRecord) {
-            // The probe was refused too: issuer-wide.
+        $class = $this->faultClassifier->classify($response);
+        if ($class === AeatFaultClassifier::ISSUER) {
+            $this->putBack($issuerNif, $token, $mode, $failure);
+
+            return $this->pause($issuerNif, IssuerSubmissionPausedEvent::REASON_ISSUER_REFUSED, $failure, $response, $now);
+        }
+
+        $solo    = count($claimed) === 1;
+        $atLimit = $solo && $claimed[0]->submissionFailures + 1 >= $this->failureLimit($batchSize);
+        $failNow = match ($mode) {
+            self::MODE_CONFIRM                        => true,
+            self::MODE_PROBE, self::MODE_PROBE_NEWEST => $class === AeatFaultClassifier::RECORD,
+            self::MODE_LONE                           => false,
+            default                                   => $atLimit && $class === AeatFaultClassifier::RECORD,
+        };
+        if ($failNow) {
+            return $this->failClaimed($issuerNif, $token, $claimed, $failure, $response, $now, $next);
+        }
+
+        if ($mode === self::MODE_LONE) {
+            $this->queue->parkClaim($issuerNif, $token, StoredBillingRecord::STATUS_HELD, $failure);
+
+            return $this->pause($issuerNif, IssuerSubmissionPausedEvent::REASON_AWAITING_PROBE, $failure, $response, $now);
+        }
+        if ($mode === self::MODE_PROBE_NEWEST) {
+            // MAX_SUSPECTS records and the newest one all refused: issuer-wide. The probe is not a suspect.
             $this->queue->releaseClaim($issuerNif, $token, $failure);
 
-            return $this->pause($issuerNif, $failure, $response, $now);
+            return $this->pause($issuerNif, IssuerSubmissionPausedEvent::REASON_ISSUER_REFUSED, $failure, $response, $now);
         }
-
-        if (count($claimed) === 1 && $claimed[0]->submissionFailures + 1 >= $this->failureLimit($batchSize)) {
-            if ($this->queue->holdClaim($issuerNif, $token, $failure) === 0) {
+        if ($mode === self::MODE_PROBE || $atLimit) {
+            if ($this->queue->parkClaim($issuerNif, $token, StoredBillingRecord::STATUS_HELD, $failure, true) === 0) {
                 // The claim was taken over meanwhile: the newer submission decides.
                 return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_FAILED, [], $response, $next, $this->queue->countPending($issuerNif, $now, $this->claimTimeout));
             }
-            if ($this->queue->countPending($issuerNif, $now, $this->claimTimeout) === 0) {
-                // Nothing to probe with: never fail a record on its own word.
-                return $this->pause($issuerNif, $failure, $response, $now);
-            }
-            $this->logger?->warning('The AEAT refused Veri*Factu record {position} of {issuer} on its own {attempts} times; it is held while the next record goes alone.', [
+            $this->logger?->warning('The AEAT refused Veri*Factu record {position} of {issuer} on its own ({failure}); it is held while other records go alone as probes.', [
                 'issuer'   => $issuerNif,
                 'position' => $claimed[0]->position,
-                'attempts' => $claimed[0]->submissionFailures + 1,
+                'failure'  => $failure,
             ]);
+            if ($this->queue->countPending($issuerNif, $now, $this->claimTimeout) === 0) {
+                return $this->pause($issuerNif, IssuerSubmissionPausedEvent::REASON_AWAITING_PROBE, $failure, $response, $now);
+            }
 
             return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_FAILED, [], $response, $next, $this->queue->countPending($issuerNif, $now, $this->claimTimeout));
         }
@@ -382,46 +511,67 @@ final class BillingRecordBatchSubmitter
     }
 
     /**
-     * Marks the held record failed (committed) and dispatches its event.
+     * Marks the claimed records failed (committed) and dispatches one event per record.
      *
-     * @param list<array{event: string, exception: Throwable}> $eventErrors
-     *
-     * @return list<StoredBillingRecord>
+     * @param list<StoredBillingRecord> $claimed
      */
-    private function failHeld(string $issuerNif, StoredBillingRecord $held, AeatBatchResponse $response, DateTimeImmutable $now, array &$eventErrors): array
+    private function failClaimed(string $issuerNif, string $token, array $claimed, string $failure, AeatBatchResponse $response, DateTimeImmutable $now, DateTimeImmutable $next): BatchSubmissionResult
     {
-        $hashes = $this->queue->resolveHeld($issuerNif, true, $now);
-        $hash   = strtoupper((string) $held->record->hash);
-        if (!in_array($hash, $hashes, true)) {
-            return [];
+        $hashes      = $this->queue->failClaim($issuerNif, $token, $failure, $now);
+        $eventErrors = [];
+        $failed      = [];
+        foreach ($claimed as $stored) {
+            $hash = strtoupper((string) $stored->record->hash);
+            if (!in_array($hash, $hashes, true)) {
+                continue;
+            }
+            $failed[] = $stored;
+            $this->logger?->error('The AEAT refused Veri*Factu record {position} of {issuer} ({failure}); it is marked failed and is not sent again until it is requeued.', [
+                'issuer'   => $issuerNif,
+                'position' => $stored->position,
+                'failure'  => $failure,
+            ]);
+            $this->dispatch(new RecordSubmissionFailedEvent($issuerNif, $stored->position, $hash, $failure, $stored, $response), VerifactuEvents::RECORD_SUBMISSION_FAILED, $eventErrors);
         }
-        $failure = (string) $held->submissionError;
-        $this->logger?->error('The AEAT refused Veri*Factu record {position} of {issuer} while the next record was answered; it is marked failed and is not sent again until it is requeued.', [
-            'issuer'   => $issuerNif,
-            'position' => $held->position,
-        ]);
-        $this->dispatch(new RecordSubmissionFailedEvent($issuerNif, $held->position, $hash, $failure, $held, $response), VerifactuEvents::RECORD_SUBMISSION_FAILED, $eventErrors);
 
-        return [$held];
+        return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_FAILED, [], $response, $next, $this->queue->countPending($issuerNif, $now, $this->claimTimeout), $eventErrors, $failed);
     }
 
     /**
-     * Issuer-wide refusal: no record is failed, the issuer is paused and one alert is dispatched (after the commit).
+     * Pauses the issuer (nothing is failed or reset; the suspects stay listed) and dispatches one alert after the
+     * stored changes are committed.
      */
-    private function pause(string $issuerNif, string $failure, AeatBatchResponse $response, DateTimeImmutable $now): BatchSubmissionResult
+    private function pause(string $issuerNif, string $reason, string $failure, AeatBatchResponse $response, DateTimeImmutable $now): BatchSubmissionResult
     {
-        $this->queue->resolveHeld($issuerNif, false, $now);
-        $until = $now->modify(sprintf('+%d seconds', max(1, $this->pauseSeconds)));
+        $until    = $now->modify(sprintf('+%d seconds', max(1, $this->pauseSeconds)));
+        $suspects = array_map(static fn (StoredBillingRecord $s): int => $s->position, $this->queue->suspects($issuerNif));
         $this->flowControl?->registerSubmission(self::PAUSE_KEY_PREFIX . $issuerNif, $now, max(1, $this->pauseSeconds));
-        $this->logger?->error('The AEAT refuses every request of {issuer} ({failure}); no record is marked failed and the issuer is paused until {until}.', [
-            'issuer'  => $issuerNif,
-            'failure' => $failure,
-            'until'   => $until->format(DATE_ATOM),
-        ]);
+        $this->logger?->error($reason === IssuerSubmissionPausedEvent::REASON_ISSUER_REFUSED
+            ? 'The AEAT refuses every request of {issuer} ({failure}); no record is marked failed and the issuer is paused until {until}. Held records: {held}.'
+            : 'Veri*Factu record(s) {held} of {issuer} are held ({failure}) and no other record is waiting to test the AEAT with; paused until {until}.', [
+                'issuer'  => $issuerNif,
+                'failure' => $failure,
+                'until'   => $until->format(DATE_ATOM),
+                'held'    => implode(', ', $suspects),
+            ]);
         $eventErrors = [];
-        $this->dispatch(new IssuerSubmissionPausedEvent($issuerNif, $failure, $response->faultErrorCode, $until, $response), VerifactuEvents::ISSUER_SUBMISSION_PAUSED, $eventErrors);
+        $this->dispatch(new IssuerSubmissionPausedEvent($issuerNif, $failure, $response->faultErrorCode, $until, $response, $reason, $suspects), VerifactuEvents::ISSUER_SUBMISSION_PAUSED, $eventErrors);
 
-        return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_PAUSED, [], $response, $until, $this->queue->countPending($issuerNif, $now, $this->claimTimeout), $eventErrors);
+        return new BatchSubmissionResult($issuerNif, BatchSubmissionResult::STATE_PAUSED, [], $response, $until, $this->queue->countPending($issuerNif, $now, $this->claimTimeout), $eventErrors, [], $reason);
+    }
+
+    /**
+     * Whether an alert under $key is due (at most one per `pause_seconds`), registering it when it is.
+     */
+    private function alertDue(string $key, DateTimeImmutable $now): bool
+    {
+        $due = $this->flowControl?->nextSubmissionAt($key);
+        if ($due instanceof DateTimeImmutable && $due > $now) {
+            return false;
+        }
+        $this->flowControl?->registerSubmission($key, $now, max(1, $this->pauseSeconds));
+
+        return true;
     }
 
     /**

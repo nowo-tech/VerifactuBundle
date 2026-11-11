@@ -192,8 +192,9 @@ issuer's chain lock (one batch in flight per issuer, oldest first) and sends it 
 | `Incorrecto` | `rejected` | Not registered. It stays in the chain; correct the invoice and chain a NEW record with `correction: 'S', previousRejection: 'X'` (Subsanacion S, RechazoPrevio X: *Servicios web* §9.1.3; AEAT FAQ v1.3 §17) |
 | no line for the record | `pending` | Sent again with the next batch |
 | `RegistroDuplicado`, not confirmed | `unconfirmed` | See duplicates below: never reported as accepted, not sent again |
-| refused alone `max_attempts` times, next record being tried alone | `held` | Circuit breaker, see below |
-| refused alone while the next record was answered | `failed` | See refused requests below |
+| refused alone with an unknown code; other records are being tried as probes | `held` | Circuit breaker, see below |
+| a probe was answered; sent alone once more | `confirming` | Circuit breaker, see below |
+| refused alone with a record code, or refused again while confirming | `failed` | See refused requests below |
 
 **Requests without a per-record answer.** Only a SOAP Fault whose faultcode is **`Client`** is counted against the
 records (*Servicios web* v1.0.3 §5.1: the message is malformed or carries wrong data; an XML format error rejects the
@@ -202,23 +203,37 @@ whole message, p. 10). Everything else puts the whole batch back to `pending` wi
 non-SOAP body, HTTP 401 / 403 / 404 / 405 / 407 / 408 / 429 / 500 pages / 502 – 504, an answer without a valid
 `EstadoEnvio`. None of those is about a record, and splitting the batch would not help.
 
-After a Client refusal the records go back to `pending` with one more submission failure, and the next batch is halved
-until the record at fault goes on its own. After `submission.max_attempts` refusals on its own it is **held** and the
-next record goes alone, as a probe (circuit breaker):
+After a Client refusal, its `Codigo[NNNN]` decides (`Submission\AeatFaultClassifier`, configurable with
+`submission.issuer_fault_codes` / `record_fault_codes`; see CONFIGURATION):
 
-- the probe gets an answer: the AEAT accepts this issuer's requests, so the held record was at fault. It is marked
-  `failed`, `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`, after the commit) is
-  dispatched and an error is logged; the records after it keep flowing. Fix the cause and put it back with
-  `nowo:verifactu:submit-pending --issuer=… --retry-failed` (`BillingRecordBatchSubmitter::requeueFailed()`);
-- the probe is refused too, or there is no other record to probe with: the error is about the issuer (a header error
-  such as Codigo[4104], *Servicios web* p. 28; the certificate), not a record. **No record is marked failed**: every
-  record of the issuer is back to `pending` without failures, the issuer is paused for `submission.pause_seconds`
-  (`STATE_PAUSED`, kept in the flow control store), `VerifactuEvents::ISSUER_SUBMISSION_PAUSED`
-  (`Event\IssuerSubmissionPausedEvent`, with the AEAT code) is dispatched once and the Messenger message stops. Fix the
-  cause; the next submission after the pause sends the whole queue again.
+- **an issuer code** (header, NIF, representative, certificate, authorisation, service; e.g. Codigo[4104], *Servicios
+  web* p. 28): no split can fix it. Nothing is counted or failed; the issuer is paused for `submission.pause_seconds`
+  (`STATE_PAUSED`) and `VerifactuEvents::ISSUER_SUBMISSION_PAUSED` (`Event\IssuerSubmissionPausedEvent`, reason
+  `issuer_refused`, the code) is dispatched once per pause;
+- **a record code** (e.g. Codigo[4102], the XML of a record does not follow the schema): the records go back to
+  `pending` with one more submission failure and the next batch is halved until the record at fault goes on its own.
+  After `submission.max_attempts` refusals on its own it is marked `failed`,
+  `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`, after the commit) is dispatched
+  and an error is logged; the records after it keep flowing. A run of bad records is failed one by one, never blocked;
+- **any other code**: halved the same way, but a record refused on its own `max_attempts` times becomes a **suspect**
+  (`held`) and other records go alone as **probes**: the next waiting record, the one after it, and, once
+  `BillingRecordBatchSubmitter::MAX_SUSPECTS` (3) suspects are held, the **newest** waiting record (away from a run of
+  bad records; probes are the only requests that may leave chain order). A refused probe becomes a suspect too.
+  - A probe is answered: the AEAT accepts this issuer's requests. Every suspect turns `confirming` and is sent alone
+    once more: refused again, it is marked `failed`; answered, it takes its answer (an issuer-wide error that went
+    away never fails a healthy record).
+  - The suspects and the newest record are all refused: the error is issuer-wide. Nothing is failed; the suspects
+    stay `held` (failures kept, listed); the issuer is paused (reason `issuer_refused`, `heldPositions`). After the
+    pause the newest record goes alone again.
+  - A suspect and nothing else waiting: it cannot be told apart from an issuer error. It is never failed on its own
+    word: the issuer is paused (reason `awaiting_probe`, `heldPositions`), the suspect is sent alone again after the
+    pause, and the next invoice is the probe.
 
-An answer resets the failures of a record. `nowo:verifactu:submit-pending --issuer=… --list`
-(`recordsToReview()`) lists the `unconfirmed`, `held` and `failed` records.
+An answer resets the failures of a record. The operator always sees and can act:
+`nowo:verifactu:submit-pending --issuer=… --list` (`recordsToReview()`) lists the `unconfirmed`, `held`,
+`confirming` and `failed` records; `--fail=<position>` (`failRecord()`) marks a pending, held or confirming record
+failed by hand (RECORD_SUBMISSION_FAILED, `response` null); `--retry-failed` (`requeueFailed()`) puts back what the
+submitter (or `--fail`) failed. The Messenger message is dispatched again once at the end of each pause.
 
 **Attempts and duplicates.** `submissionAttempts` counts the requests that carried the record, counted right before the
 request is transmitted (a claim that died before sending, or a client that failed before sending, is not an attempt).
@@ -357,7 +372,8 @@ php bin/console nowo:verifactu:verify-chain --issuer=89890001K
 | `AFTER_AEAT_SUBMISSION` | `AfterAeatSubmissionEvent` | After the AEAT client returned | No |
 | `AFTER_RECORD_SUBMISSION` | `RecordSubmittedEvent` | Batch submission (1.7): once per answered record, after its answer is committed | No |
 | `RECORD_SUBMISSION_FAILED` | `RecordSubmissionFailedEvent` | Batch submission (1.7): once per record marked `failed` (the AEAT kept refusing it on its own while the next record was answered), after that state is committed; alert someone | No |
-| `ISSUER_SUBMISSION_PAUSED` | `IssuerSubmissionPausedEvent` | Batch submission (1.7): once when an issuer is paused because the AEAT refuses every request of it (circuit breaker); no record is failed; alert someone | No |
+| `ISSUER_SUBMISSION_PAUSED` | `IssuerSubmissionPausedEvent` | Batch submission (1.7): once per pause of an issuer (circuit breaker): `reason` `issuer_refused` (the AEAT refuses every request of it) or `awaiting_probe` (suspect records, nothing else to test with); `heldPositions`, the AEAT code; no record is failed; alert someone | No |
+| `ISSUER_SUBMISSION_STALLED` | `IssuerSubmissionStalledEvent` | Batch submission (1.7): two requests of an issuer in a row without any AEAT answer (certificate, endpoint, outage); at most once per `pause_seconds`; alert someone | No |
 
 The two AEAT submission events are informational (audit log, metrics, outbox): there is **no veto**. Whether a record is
 submitted is decided by the caller (`process(..., submitToAeat: true)`), not by a listener, so a listener can never

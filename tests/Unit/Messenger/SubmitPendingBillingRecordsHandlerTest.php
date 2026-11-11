@@ -152,28 +152,34 @@ final class SubmitPendingBillingRecordsHandlerTest extends TestCase
     }
 
     /**
-     * LJD-M1: a paused issuer stops the message (like MAX_FAILED_RUNS); the next message after the pause sends again.
+     * LJD2-L4: a paused issuer is dispatched again once, at the end of the pause; when the AEAT answers again the queue
+     * is sent.
      */
-    public function testAPausedIssuerStopsTheMessage(): void
+    public function testAPausedIssuerIsRescheduledAtTheEndOfThePause(): void
     {
-        $fault = static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(4104);
-        /** @var list<Closure> $script */
-        $script            = array_fill(0, 30, $fault);
-        [$handler, $store] = $this->handler(new ScriptedBatchClient(...$script));
-        $this->chain($store, 1);
+        $fault             = static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(4104);
+        [$handler, $store] = $this->handler(new ScriptedBatchClient($fault, $fault));
+        $this->chain($store, 2);
 
-        $message = new SubmitPendingBillingRecords('89890001K');
-        $last    = null;
-        for ($i = 0; $i < 30 && $message instanceof SubmitPendingBillingRecords; ++$i) {
-            $before  = count($this->dispatched);
-            $last    = $handler($message);
-            $message = count($this->dispatched) > $before ? $this->message(count($this->dispatched) - 1) : null;
-            $this->clock?->sleep(61);
-        }
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler(new SubmitPendingBillingRecords('89890001K'))->state);
+        self::assertCount(1, $this->dispatched);
+        self::assertSame(3600000, $this->dispatched[0]->last(DelayStamp::class)?->getDelay(), 'Once, at the end of the pause');
 
-        self::assertNull($message, 'The message stopped');
-        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $last?->state);
-        self::assertSame(['pending'], array_map(static fn ($s): string => $s->submissionStatus, iterator_to_array($store->findByIssuer('89890001K'))));
+        // Delivered early (another message): still paused, rescheduled at the end of the same pause.
+        $this->clock?->sleep(600);
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler($this->message(0))->state);
+        self::assertSame([3600000, 3000000], array_map(static fn (Envelope $e): ?int => $e->last(DelayStamp::class)?->getDelay(), $this->dispatched));
+
+        // At the end of the pause, still refused: paused again, one more message.
+        $this->clock?->sleep(3000);
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler($this->message(1))->state);
+        self::assertCount(3, $this->dispatched);
+
+        // Fixed: sent, and the message stops.
+        $this->clock?->sleep(3600);
+        self::assertSame(BatchSubmissionResult::STATE_SENT, $handler($this->message(2))->state);
+        self::assertCount(3, $this->dispatched);
+        self::assertSame(['accepted', 'accepted'], array_map(static fn ($s): string => $s->submissionStatus, iterator_to_array($store->findByIssuer('89890001K'))));
     }
 
     /**

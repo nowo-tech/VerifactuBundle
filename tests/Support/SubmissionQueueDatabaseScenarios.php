@@ -11,6 +11,7 @@ use Doctrine\ORM\EntityManagerInterface;
 use Nowo\VerifactuBundle\Client\AeatResponseParser;
 use Nowo\VerifactuBundle\Doctrine\DbalRowWriter;
 use Nowo\VerifactuBundle\Entity\BillingRecordEntry;
+use Nowo\VerifactuBundle\Event\IssuerSubmissionPausedEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
 use Nowo\VerifactuBundle\Model\AeatBatchResponse;
 use Nowo\VerifactuBundle\Model\BatchSubmissionResult;
@@ -118,33 +119,37 @@ trait SubmissionQueueDatabaseScenarios
 
         $alone = $store->claimNext('89890001K', 2, 'c4', $now, 300);
         self::assertSame([3], array_map(static fn (StoredBillingRecord $s): int => $s->position, $alone), '2 halved once');
-        self::assertSame(0, $store->holdClaim('89890001K', 'nobody', 'x'));
-        self::assertNull($store->heldRecord('89890001K'));
-        self::assertSame(1, $store->holdClaim('89890001K', 'c4', 'AEAT SOAP fault: y'));
-        $held = $store->heldRecord('89890001k');
-        self::assertInstanceOf(StoredBillingRecord::class, $held);
-        self::assertSame([3, 'AEAT SOAP fault: y'], [$held->position, $held->submissionError]);
-        self::assertSame(['accepted', 'accepted', 'held', 'pending'], $this->ljColumn('submissionStatus'));
-        self::assertSame(1, $store->countPending('89890001K', $now, 300), 'A held record is not waiting');
-        self::assertFalse($store->hasSubmissionInFlight('89890001K', $now, 300));
+        self::assertSame(0, $store->parkClaim('89890001K', 'nobody', StoredBillingRecord::STATUS_HELD));
+        self::assertSame(1, $store->parkClaim('89890001K', 'c4', StoredBillingRecord::STATUS_HELD, 'AEAT SOAP fault: y', true));
+        $suspects = $store->suspects('89890001k');
+        self::assertSame([[3, 'held', 'AEAT SOAP fault: y', 2]], array_map(static fn (StoredBillingRecord $s): array => [$s->position, $s->submissionStatus, $s->submissionError, $s->submissionFailures], $suspects));
+        self::assertSame(1, $store->countPending('89890001K', $now, 300), 'A suspect is not waiting');
+        self::assertSame(['89890001K'], $store->issuersWithPendingRecords(), 'but its issuer is listed');
+        self::assertSame(4, $store->newestWaitingPosition('89890001K', $now, 300));
 
-        // The probe was answered: the held record was at fault.
-        self::assertSame([strtoupper((string) $alone[0]->record->hash)], $store->resolveHeld('89890001K', true, $now));
+        // A probe was answered: the suspect is confirmed alone, refused again: failed.
+        self::assertSame(1, $store->confirmSuspects('89890001K'));
+        self::assertSame(['accepted', 'accepted', 'confirming', 'pending'], $this->ljColumn('submissionStatus'));
+        $confirm = $store->claimRecord('89890001K', 3, 'c5', $now, 300);
+        self::assertSame([3, 'sending'], [$confirm?->position, $confirm?->submissionStatus]);
+        self::assertNull($store->claimRecord('89890001K', 3, 'c6', $now, 300), 'Claimed once');
+        self::assertNull($store->claimRecord('89890001K', 1, 'c6', $now, 300), 'An answered record is not claimable');
+        self::assertSame([], $store->failClaim('89890001K', 'nobody', 'x', $now));
+        self::assertSame([strtoupper((string) $alone[0]->record->hash)], $store->failClaim('89890001K', 'c5', 'AEAT SOAP fault: z', $now));
         self::assertSame(['accepted', 'accepted', 'failed', 'pending'], $this->ljColumn('submissionStatus'));
-        self::assertSame([0, 0, 2, 1], $this->ljColumn('submissionFailures'));
-        self::assertSame([], $store->resolveHeld('89890001K', true, $now));
+        self::assertSame([0, 0, 3, 1], $this->ljColumn('submissionFailures'));
 
         self::assertSame(1, $store->requeueFailed('89890001K'));
         self::assertSame(['accepted', 'accepted', 'pending', 'pending'], $this->ljColumn('submissionStatus'));
         self::assertSame([0, 0, 0, 1], $this->ljColumn('submissionFailures'));
         self::assertSame(0, $store->requeueFailed('89890001K'));
 
-        // The probe was refused too (issuer-wide): back to pending, and no waiting record keeps a failure.
-        $store->claimNext('89890001K', 1, 'c5', $now, 300);
-        $store->holdClaim('89890001K', 'c5', 'AEAT SOAP fault: z');
-        self::assertCount(1, $store->resolveHeld('89890001K', false, $now));
-        self::assertSame(['accepted', 'accepted', 'pending', 'pending'], $this->ljColumn('submissionStatus'));
-        self::assertSame([0, 0, 0, 0], $this->ljColumn('submissionFailures'));
+        // Failed by hand (--fail): pending, held or confirming only; requeueable.
+        self::assertNull($store->failRecord('89890001K', 1, 'by hand', $now));
+        self::assertSame(4, $store->failRecord('89890001K', 4, 'by hand', $now)?->position);
+        self::assertSame(['accepted', 'accepted', 'pending', 'failed'], $this->ljColumn('submissionStatus'));
+        self::assertSame('by hand', $this->ljColumn('submissionError')[3]);
+        self::assertSame(1, $store->requeueFailed('89890001K'));
     }
 
     /**
@@ -191,10 +196,14 @@ trait SubmissionQueueDatabaseScenarios
             $number = 30000000 + $n++;
             $issuer = $number . 'TRWAGMYFPDXBNJZSQVHLCKE'[$number % 23];
             $this->ljChain($numbers, $issuer);
-            $paused = new ArrayObject();
-            $events = new EventDispatcher();
+            $paused  = new ArrayObject();
+            $stalled = new ArrayObject();
+            $events  = new EventDispatcher();
             $events->addListener(VerifactuEvents::ISSUER_SUBMISSION_PAUSED, static function () use ($paused): void {
                 $paused->append(true);
+            });
+            $events->addListener(VerifactuEvents::ISSUER_SUBMISSION_STALLED, static function () use ($stalled): void {
+                $stalled->append(true);
             });
             $clock = new MockClock('2026-11-11 10:00:00');
             /** @var list<Closure> $script */
@@ -202,14 +211,17 @@ trait SubmissionQueueDatabaseScenarios
             $client    = new ScriptedBatchClient(...$script);
             $submitter = new BillingRecordBatchSubmitter($this->ljStore(), $client, $this->ljHeads(), $events, new CacheFlowControl(new ArrayAdapter()), $clock, null, 1000, 300, 60, 'issuer', null, 5);
 
-            for ($i = 0; $i < 60; ++$i) {
+            for ($i = 0; $i < 50; ++$i) {
                 $submitter->submitPending($issuer);
                 $clock->sleep(61);
             }
 
             $statuses = array_map(static fn (StoredBillingRecord $s): string => $s->submissionStatus, [...$this->ljStore()->findByIssuer($issuer)]);
             self::assertSame(array_fill(0, 60, 'pending'), $statuses, $name);
+            // 4104 is a header code: paused at once, one alert; the others: one stalled alert.
             self::assertCount($name === 'Client 4104' ? 1 : 0, $paused, $name);
+            self::assertCount($name === 'Client 4104' ? 0 : 1, $stalled, $name);
+            self::assertCount($name === 'Client 4104' ? 1 : 50, $client->requests, $name);
         }
     }
 
@@ -280,6 +292,76 @@ trait SubmissionQueueDatabaseScenarios
         $this->ljEntityManager()->getConnection()->executeStatement('UPDATE ' . $this->ljTable() . ' SET ' . DbalRowWriter::column($this->ljEntityManager(), BillingRecordEntry::class, 'environment') . ' = NULL');
         self::assertSame([], $store->issuersWithPendingRecords());
         self::assertSame([], $store->claimNext('89890001K', 1000, 'd', $now, 300));
+    }
+
+    /**
+     * LJD2-M1: runs of consecutive bad records (an unknown code: probes; a record code: failed directly) and an
+     * issuer-wide unknown error (the suspects and the newest record refused: paused, suspects kept, then confirmed and
+     * accepted once the AEAT answers again) on the database.
+     */
+    public function testTheCircuitBreakerOnTheDatabase(): void
+    {
+        $cases = [
+            '2 in a row, unknown' => [[7, 8], 4199],
+            '3 in a row, unknown' => [[7, 8, 9], 4199],
+            '3 in a row, record'  => [[7, 8, 9], 4102],
+        ];
+        $numbers = array_map(static fn (int $i): string => 'C-' . $i, range(1, 20));
+        $n       = 0;
+        foreach ($cases as $name => [$bad, $code]) {
+            $number = 40000000 + $n++;
+            $issuer = $number . 'TRWAGMYFPDXBNJZSQVHLCKE'[$number % 23];
+            $this->ljChain($numbers, $issuer);
+            $badNumbers = array_map(static fn (int $i): string => 'C-' . $i, $bad);
+            /** @var list<Closure> $script */
+            $script = array_fill(0, 200, static fn (array $records): AeatBatchResponse => array_intersect($badNumbers, array_map(static fn (BillingRecord $r): string => $r->invoiceSeriesNumber, $records)) !== []
+                ? ScriptedBatchClient::fault($code)
+                : ScriptedBatchClient::allAccepted($records));
+            $paused = new ArrayObject();
+            $events = new EventDispatcher();
+            $events->addListener(VerifactuEvents::ISSUER_SUBMISSION_PAUSED, static function () use ($paused): void {
+                $paused->append(true);
+            });
+            $clock     = new MockClock('2026-11-11 10:00:00');
+            $submitter = new BillingRecordBatchSubmitter($this->ljStore(), new ScriptedBatchClient(...$script), $this->ljHeads(), $events, new CacheFlowControl(new ArrayAdapter()), $clock, null, 1000, 300, 60, 'issuer', null, 2);
+            for ($i = 0; $i < 100 && $submitter->submitPending($issuer)->state !== BatchSubmissionResult::STATE_IDLE; ++$i) {
+                $clock->sleep(61);
+            }
+
+            $statuses = array_map(static fn (StoredBillingRecord $s): string => $s->submissionStatus, [...$this->ljStore()->findByIssuer($issuer)]);
+            self::assertSame(array_map(static fn (int $i): string => in_array($i, $bad, true) ? 'failed' : 'accepted', range(1, 20)), $statuses, $name);
+            self::assertCount(0, $paused, $name);
+        }
+
+        // Issuer-wide, unknown code.
+        $number = 40000000 + $n;
+        $issuer = $number . 'TRWAGMYFPDXBNJZSQVHLCKE'[$number % 23];
+        $this->ljChain($numbers, $issuer);
+        $aeat = new ArrayObject(['broken' => true]);
+        /** @var list<Closure> $script */
+        $script = array_fill(0, 200, static fn (array $records): AeatBatchResponse => $aeat['broken'] === true ? ScriptedBatchClient::fault(4199) : ScriptedBatchClient::allAccepted($records));
+        $pauses = [];
+        $events = new EventDispatcher();
+        $events->addListener(VerifactuEvents::ISSUER_SUBMISSION_PAUSED, static function (IssuerSubmissionPausedEvent $event) use (&$pauses): void {
+            $pauses[] = $event;
+        });
+        $clock     = new MockClock('2026-11-11 10:00:00');
+        $submitter = new BillingRecordBatchSubmitter($this->ljStore(), new ScriptedBatchClient(...$script), $this->ljHeads(), $events, new CacheFlowControl(new ArrayAdapter()), $clock, null, 1000, 300, 60, 'issuer', null, 2);
+        for ($i = 0; $i < 40; ++$i) {
+            $submitter->submitPending($issuer);
+            $clock->sleep(61);
+        }
+        self::assertSame([[1, 2, 3]], array_map(static fn (IssuerSubmissionPausedEvent $e): array => $e->heldPositions, $pauses));
+        $statuses = array_map(static fn (StoredBillingRecord $s): string => $s->submissionStatus, [...$this->ljStore()->findByIssuer($issuer)]);
+        self::assertSame(['held', 'held', 'held', ...array_fill(0, 17, 'pending')], $statuses);
+
+        $aeat['broken'] = false;
+        $clock->sleep(3600);
+        for ($i = 0; $i < 20 && $submitter->submitPending($issuer)->state !== BatchSubmissionResult::STATE_IDLE; ++$i) {
+            $clock->sleep(61);
+        }
+        $statuses = array_map(static fn (StoredBillingRecord $s): string => $s->submissionStatus, [...$this->ljStore()->findByIssuer($issuer)]);
+        self::assertSame(array_fill(0, 20, 'accepted'), $statuses, 'Nothing failed');
     }
 
     /**

@@ -182,45 +182,91 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
         return $released;
     }
 
-    public function holdClaim(string $issuerNif, string $claimToken, string $failure): int
+    public function suspects(string $issuerNif): array
     {
-        $key  = $this->normalizeKey($issuerNif);
-        $held = 0;
+        return array_values(array_filter(
+            $this->records[$this->normalizeKey($issuerNif)] ?? [],
+            static fn (StoredBillingRecord $stored): bool => in_array($stored->submissionStatus, [StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_CONFIRMING], true),
+        ));
+    }
+
+    public function newestWaitingPosition(string $issuerNif, DateTimeImmutable $now, int $claimTimeoutSeconds): ?int
+    {
+        $waiting = $this->waiting($issuerNif, $now, $claimTimeoutSeconds);
+
+        return $waiting === [] ? null : $waiting[count($waiting) - 1]->position;
+    }
+
+    public function claimRecord(string $issuerNif, int $position, string $claimToken, DateTimeImmutable $now, int $claimTimeoutSeconds): ?StoredBillingRecord
+    {
+        $key     = $this->normalizeKey($issuerNif);
+        $current = $this->find($key, $position);
+        $stale   = $current instanceof StoredBillingRecord && $current->submissionStatus === StoredBillingRecord::STATUS_SENDING
+            && ($this->claims[$key][$position][1] ?? $now) < $this->cutoff($now, $claimTimeoutSeconds);
+        if (!$current instanceof StoredBillingRecord || !$current->record->environment instanceof AeatEnvironment
+            || (!$stale && !in_array($current->submissionStatus, [StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_CONFIRMING], true))) {
+            return null;
+        }
+        $claimed = $this->copy($current, StoredBillingRecord::STATUS_SENDING);
+        $this->replace($key, $claimed);
+        // @igor-ignore - Request-scoped: cleared by WorkerStateResetSubscriber on every main request and on kernel.reset.
+        $this->claims[$key][$position] = [$claimToken, $now];
+
+        return $claimed;
+    }
+
+    public function parkClaim(string $issuerNif, string $claimToken, string $status, ?string $failure = null, bool $countFailure = false): int
+    {
+        $key    = $this->normalizeKey($issuerNif);
+        $parked = 0;
         foreach ($this->claimed($issuerNif, $claimToken) as $current) {
-            $this->replace($key, $this->copy($current, StoredBillingRecord::STATUS_HELD, error: $failure, failures: $current->submissionFailures + 1));
+            $this->replace($key, $this->copy($current, $status, error: $failure ?? $current->submissionError, failures: $current->submissionFailures + ($countFailure ? 1 : 0)));
             // @igor-ignore - Request-scoped: cleared by WorkerStateResetSubscriber on every main request and on kernel.reset.
             unset($this->claims[$key][$current->position]);
-            ++$held;
+            ++$parked;
         }
 
-        return $held;
+        return $parked;
     }
 
-    public function heldRecord(string $issuerNif): ?StoredBillingRecord
-    {
-        foreach ($this->records[$this->normalizeKey($issuerNif)] ?? [] as $stored) {
-            if ($stored->submissionStatus === StoredBillingRecord::STATUS_HELD) {
-                return $stored;
-            }
-        }
-
-        return null;
-    }
-
-    public function resolveHeld(string $issuerNif, bool $failed, DateTimeImmutable $now): array
+    public function failClaim(string $issuerNif, string $claimToken, string $failure, DateTimeImmutable $now): array
     {
         $key    = $this->normalizeKey($issuerNif);
         $hashes = [];
-        foreach ($this->records[$key] ?? [] as $stored) {
-            if ($stored->submissionStatus === StoredBillingRecord::STATUS_HELD) {
-                $hashes[] = strtoupper((string) $stored->record->hash);
-                $this->replace($key, $failed ? $this->copy($stored, StoredBillingRecord::STATUS_FAILED) : $this->copy($stored, StoredBillingRecord::STATUS_PENDING, failures: 0));
-            } elseif (!$failed && $stored->submissionStatus === StoredBillingRecord::STATUS_PENDING) {
-                $this->replace($key, $this->copy($stored, failures: 0));
-            }
+        foreach ($this->claimed($issuerNif, $claimToken) as $current) {
+            $this->replace($key, new StoredBillingRecord($current->position, $current->record, StoredBillingRecord::STATUS_FAILED, $current->submissionReference, $current->submissionAttempts, null, $failure, $current->submissionFailures + 1));
+            // @igor-ignore - Request-scoped: cleared by WorkerStateResetSubscriber on every main request and on kernel.reset.
+            unset($this->claims[$key][$current->position]);
+            $hashes[] = strtoupper((string) $current->record->hash);
         }
 
         return $hashes;
+    }
+
+    public function confirmSuspects(string $issuerNif): int
+    {
+        $key   = $this->normalizeKey($issuerNif);
+        $count = 0;
+        foreach ($this->records[$key] ?? [] as $stored) {
+            if ($stored->submissionStatus === StoredBillingRecord::STATUS_HELD) {
+                $this->replace($key, $this->copy($stored, StoredBillingRecord::STATUS_CONFIRMING));
+                ++$count;
+            }
+        }
+
+        return $count;
+    }
+
+    public function failRecord(string $issuerNif, int $position, string $reason, DateTimeImmutable $now): ?StoredBillingRecord
+    {
+        $key     = $this->normalizeKey($issuerNif);
+        $current = $this->find($key, $position);
+        if (!$current instanceof StoredBillingRecord || !in_array($current->submissionStatus, [StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_CONFIRMING], true)) {
+            return null;
+        }
+        $this->replace($key, $this->copy($current, StoredBillingRecord::STATUS_FAILED, error: $reason, failures: $current->submissionFailures + 1));
+
+        return $current;
     }
 
     public function requeueFailed(string $issuerNif): int
@@ -255,7 +301,7 @@ final class InMemoryBillingRecordStore implements BillingRecordStoreInterface, S
         $issuers = [];
         foreach ($this->records as $key => $records) {
             foreach ($records as $stored) {
-                if ($stored->record->environment instanceof AeatEnvironment && in_array($stored->submissionStatus, [StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_SENDING], true)) {
+                if ($stored->record->environment instanceof AeatEnvironment && in_array($stored->submissionStatus, [StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_SENDING, StoredBillingRecord::STATUS_HELD, StoredBillingRecord::STATUS_CONFIRMING], true)) {
                     $issuers[] = (string) $key;
 
                     break;

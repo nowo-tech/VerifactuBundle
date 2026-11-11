@@ -85,24 +85,46 @@ interface SubmissionQueueInterface
     public function releaseClaim(string $issuerNif, string $claimToken, ?string $failure = null, bool $countFailure = false): int;
 
     /**
-     * Sets the records of the claim aside as `held` (one more submission failure, the failure text): a record the AEAT
-     * kept refusing on its own, while the next record goes alone to tell a bad record from an issuer-wide error.
+     * The issuer's suspects (held and confirming records, see the circuit breaker in BillingRecordBatchSubmitter), in
+     * chain order. They are not waiting.
+     *
+     * @return list<StoredBillingRecord>
      */
-    public function holdClaim(string $issuerNif, string $claimToken, string $failure): int;
+    public function suspects(string $issuerNif): array;
 
     /**
-     * The issuer's held record, if any.
+     * Position of the newest waiting record (for a probe), or null.
      */
-    public function heldRecord(string $issuerNif): ?StoredBillingRecord;
+    public function newestWaitingPosition(string $issuerNif, DateTimeImmutable $now, int $claimTimeoutSeconds): ?int;
 
     /**
-     * Resolves the issuer's held record in one transaction and returns its hash: $failed marks it failed (the next
-     * record got an answer, so it was at fault); otherwise it goes back to pending and every waiting record of the
-     * issuer loses its submission failures (an issuer-wide error: no record was at fault).
+     * Claims one record by position (pending, held, confirming, or of a stale claim) and returns it, or null.
+     */
+    public function claimRecord(string $issuerNif, int $position, string $claimToken, DateTimeImmutable $now, int $claimTimeoutSeconds): ?StoredBillingRecord;
+
+    /**
+     * Ends a claim without an answer by putting its records in $status (pending, held or confirming); a non-null
+     * $failure replaces the stored error; $countFailure adds one submission failure. Returns the records updated.
+     */
+    public function parkClaim(string $issuerNif, string $claimToken, string $status, ?string $failure = null, bool $countFailure = false): int;
+
+    /**
+     * Marks every record of the claim failed (one more submission failure) in one transaction and returns their hashes.
      *
      * @return list<string>
      */
-    public function resolveHeld(string $issuerNif, bool $failed, DateTimeImmutable $now): array;
+    public function failClaim(string $issuerNif, string $claimToken, string $failure, DateTimeImmutable $now): array;
+
+    /**
+     * Turns the issuer's held records into confirming ones (a probe was answered). Returns the records updated.
+     */
+    public function confirmSuspects(string $issuerNif): int;
+
+    /**
+     * Marks one pending, held or confirming record failed by hand (one more submission failure, so --retry-failed can
+     * requeue it) and returns it as it was, or null when it is in no such state.
+     */
+    public function failRecord(string $issuerNif, int $position, string $reason, DateTimeImmutable $now): ?StoredBillingRecord;
 
     /**
      * Puts back to pending, with no submission failures, the issuer's records the batch submitter marked failed
@@ -118,7 +140,7 @@ interface SubmissionQueueInterface
     public function resolveUnconfirmed(string $issuerNif, int $position, RecordSubmissionStatus $status, ?string $reference, DateTimeImmutable $now): bool;
 
     /**
-     * Issuers with records waiting to be sent or in flight.
+     * Issuers with records waiting to be sent, in flight, held or confirming.
      *
      * @return list<string>
      */

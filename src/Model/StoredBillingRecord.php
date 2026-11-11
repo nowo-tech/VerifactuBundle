@@ -35,11 +35,17 @@ final class StoredBillingRecord
     public const STATUS_UNCONFIRMED = 'unconfirmed';
 
     /**
-     * Refused by the AEAT on its own `max_attempts` times and held aside while the next record goes alone (1.7, circuit
-     * breaker): the record is marked failed when that next request gets an answer, or put back to pending and the issuer
-     * paused when it is refused as well (an issuer-wide error). Never waiting.
+     * Suspect (1.7, circuit breaker): the AEAT refused the record on its own with a fault that does not say whether the
+     * record or the issuer is at fault. Set aside while other records are sent alone as probes; never waiting; listed by
+     * `submit-pending --list`.
      */
     public const STATUS_HELD = 'held';
+
+    /**
+     * A suspect after a probe was answered (1.7): the AEAT accepts this issuer's requests, so the record is sent alone
+     * once more; refused again, it is marked failed, otherwise it takes its answer.
+     */
+    public const STATUS_CONFIRMING = 'confirming';
 
     /**
      * Creates a stored record.
