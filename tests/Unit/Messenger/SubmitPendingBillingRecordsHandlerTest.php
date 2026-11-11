@@ -199,7 +199,7 @@ final class SubmitPendingBillingRecordsHandlerTest extends TestCase
         }
 
         self::assertCount(1, $this->dispatched, 'One message alive for the pause');
-        self::assertTrue($this->message(0)->wakeUp);
+        self::assertNotNull($this->message(0)->wakeUpToken);
 
         // The woken message, still refused: paused again, and it is again the only message alive.
         $this->clock?->sleep(600);
@@ -207,6 +207,26 @@ final class SubmitPendingBillingRecordsHandlerTest extends TestCase
         self::assertCount(2, $this->dispatched);
         self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler(new SubmitPendingBillingRecords('89890001K'))->state);
         self::assertCount(2, $this->dispatched);
+    }
+
+    /**
+     * LJD4-I1: when a fresh message probes at the end of a pause before the wake-up message does, it holds the new
+     * pause's wake-up; the old wake-up message is dropped instead of living on.
+     */
+    public function testASupersededWakeUpMessageIsDropped(): void
+    {
+        $fault             = static fn (array $records): AeatBatchResponse => ScriptedBatchClient::fault(4104);
+        [$handler, $store] = $this->handler(new ScriptedBatchClient($fault, $fault));
+        $this->chain($store, 1);
+
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler(new SubmitPendingBillingRecords('89890001K'))->state);
+        $this->clock?->sleep(3600);
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler(new SubmitPendingBillingRecords('89890001K'))->state, 'A fresh message probes first');
+        self::assertCount(2, $this->dispatched);
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler($this->message(0))->state, 'The old wake-up message');
+        self::assertCount(2, $this->dispatched, 'Dropped');
+        self::assertSame(BatchSubmissionResult::STATE_PAUSED, $handler($this->message(1))->state, 'The new one, early');
+        self::assertCount(3, $this->dispatched, 'Kept');
     }
 
     /**

@@ -247,8 +247,9 @@ final class BillingRecordBatchSubmitter
         $this->clearNoAnswer($issuerNif, $now);
         $outcomes = array_map(fn (StoredBillingRecord $stored): RecordSubmissionOutcome => $this->outcome($stored, $response), $claimed);
         $updated  = $this->queue->recordOutcomes($issuerNif, $token, $outcomes, $now);
-        if (in_array($mode, [self::MODE_PROBE, self::MODE_PROBE_NEWEST], true)) {
-            // A probe was answered: the AEAT accepts this issuer's requests. Each suspect is sent alone once more.
+        if (in_array($mode, [self::MODE_PROBE, self::MODE_PROBE_NEWEST, self::MODE_LONE], true)) {
+            // A probe, or a lone suspect, was answered: the AEAT accepts this issuer's requests. Each other suspect is
+            // sent alone once more (LJD4-L1: an answered lone suspect confirms the others too).
             $this->queue->confirmSuspects($issuerNif);
         }
 
@@ -345,28 +346,35 @@ final class BillingRecordBatchSubmitter
 
     /**
      * Whether a Messenger message that found the issuer paused until $until should be dispatched again at the end of
-     * the pause (LJD3-L2): true for the first one, which registers the wake-up in the flow control store, false while
-     * a wake-up at or after $until is already pending (the other messages are dropped: one message per issuer stays
-     * alive during a pause). A submitter without a flow control store never pauses, so it always answers true.
+     * the pause (LJD3-L2, LJD4-I1). Returns the wake-up token to carry in the rescheduled message (the Unix time of the
+     * pause end it is registered for), or null to drop the message:
+     *
+     * - no wake-up pending for this pause: it is registered in the flow control store (`wake|<NIF>`) and its token
+     *   returned (the first message);
+     * - a wake-up pending: only the message carrying its token ($token) keeps it (it may run a little before the pause
+     *   ends); every other message, a superseded wake-up message included, is dropped.
+     *
+     * One message per issuer stays alive during a pause. A submitter without a flow control store never pauses, so it
+     * always returns the token.
      */
-    public function scheduleWakeUp(string $issuerNif, DateTimeImmutable $until): bool
+    public function scheduleWakeUp(string $issuerNif, DateTimeImmutable $until, ?int $token = null): ?int
     {
         $flowControl = $this->flowControl;
         if (!$flowControl instanceof FlowControlInterface) {
-            return true;
+            return $until->getTimestamp();
         }
         $issuerNif = strtoupper(trim($issuerNif));
         $key       = self::WAKE_KEY_PREFIX . $issuerNif;
 
-        return $this->underIssuerLock($issuerNif, function () use ($flowControl, $key, $until): bool {
+        return $this->underIssuerLock($issuerNif, function () use ($flowControl, $key, $until, $token): ?int {
             $pending = $flowControl->nextSubmissionAt($key);
             if ($pending instanceof DateTimeImmutable && $pending >= $until) {
-                return false;
+                return $token === $pending->getTimestamp() ? $token : null;
             }
             $now = $this->now();
             $flowControl->registerSubmission($key, $now, max(1, $until->getTimestamp() - $now->getTimestamp()));
 
-            return true;
+            return $until->getTimestamp();
         });
     }
 
@@ -435,7 +443,8 @@ final class BillingRecordBatchSubmitter
      * What to send next (called under the issuer lock): a normal batch, or one record alone for the circuit breaker.
      *
      * - a confirming suspect (a probe was answered): that suspect alone, once more;
-     * - held suspects and nothing else waiting: the first suspect alone again (it cannot be probed);
+     * - held suspects and nothing else waiting: one suspect alone (it cannot be probed), rotating (LJD4-L1): the one
+     *   refused the fewest times, the newest on a tie; answered, the others are confirmed like after a probe;
      * - fewer than MAX_SUSPECTS held: the next waiting record alone (a probe, in chain order);
      * - MAX_SUSPECTS held: the NEWEST waiting record alone (the last probe, away from a run of bad records); a refused
      *   newest probe is held too, so the next one goes to the record before it (LJD3-L1);
@@ -454,7 +463,7 @@ final class BillingRecordBatchSubmitter
         $held              = array_values(array_filter($suspects, static fn (StoredBillingRecord $s): bool => $s->submissionStatus === StoredBillingRecord::STATUS_HELD));
         [$mode, $position] = match (true) {
             $confirming !== []                 => [self::MODE_CONFIRM, $confirming[0]->position],
-            $waiting === 0                     => [self::MODE_LONE, $held[0]->position],
+            $waiting === 0                     => [self::MODE_LONE, $this->loneSuspect($held)],
             count($held) >= self::MAX_SUSPECTS => [self::MODE_PROBE_NEWEST, $this->queue->newestWaitingPosition($issuerNif, $now, $this->claimTimeout)],
             default                            => [self::MODE_PROBE, null],
         };
@@ -464,6 +473,24 @@ final class BillingRecordBatchSubmitter
         $record = $position === null ? null : $this->queue->claimRecord($issuerNif, $position, $token, $now, $this->claimTimeout);
 
         return [$mode, $record instanceof StoredBillingRecord ? [$record] : []];
+    }
+
+    /**
+     * The held suspect to send alone when nothing else is waiting: the one refused the fewest times, the newest on a
+     * tie, so a bad record never keeps the others from being tried (each lone refusal counts one more failure).
+     *
+     * @param list<StoredBillingRecord> $held never empty here (no confirming suspect, so at least one is held)
+     */
+    private function loneSuspect(array $held): int
+    {
+        $best = $held[0];
+        foreach ($held as $suspect) {
+            if ($suspect->submissionFailures < $best->submissionFailures || ($suspect->submissionFailures === $best->submissionFailures && $suspect->position > $best->position)) {
+                $best = $suspect;
+            }
+        }
+
+        return $best->position;
     }
 
     /**
@@ -496,8 +523,9 @@ final class BillingRecordBatchSubmitter
      *   (reason issuer_refused), the suspects stay held, listed by `--list`, and the refused newest record is held too,
      *   so the next probe, after the pause, goes to the record before it. A bad record at the tail of the queue thus
      *   delays the healthy records by one pause and never blocks them; while an issuer-wide error lasts, one more record
-     *   is held per pause (each confirmed alone once the AEAT answers again). A suspect with nothing else waiting is
-     *   paused too (reason awaiting_probe) and sent alone again after the pause.
+     *   is held per pause (each confirmed alone once the AEAT answers again). Suspects with nothing else waiting pause
+     *   the issuer too (reason awaiting_probe); after each pause one of them goes alone, rotating (the fewest refusals,
+     *   the newest on a tie), and an answered one confirms the others like a probe (LJD4-L1).
      *
      * Anything else (transport, Server fault, HTTP or non-SOAP error) counts nothing; when the issuer's previous request
      * got no answer either (no answer in between), ISSUER_SUBMISSION_STALLED is dispatched, at most once per
@@ -541,7 +569,8 @@ final class BillingRecordBatchSubmitter
         }
 
         if ($mode === self::MODE_LONE) {
-            $this->queue->parkClaim($issuerNif, $token, StoredBillingRecord::STATUS_HELD, $failure);
+            // One more refusal counted, so the next lone send goes to another suspect (rotation, LJD4-L1).
+            $this->queue->parkClaim($issuerNif, $token, StoredBillingRecord::STATUS_HELD, $failure, true);
 
             return $this->pause($issuerNif, IssuerSubmissionPausedEvent::REASON_AWAITING_PROBE, $failure, $response, $now);
         }

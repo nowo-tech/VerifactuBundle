@@ -406,7 +406,7 @@ final class BillingRecordBatchSubmitterTest extends TestCase
 
         self::assertTrue($submitter->failRecord(' 89890001k ', 1));
         self::assertSame(1, $submitter->requeueFailed('89890001k'));
-        self::assertTrue($submitter->scheduleWakeUp('89890001k', $this->clock->now()->modify('+1 hour')));
+        self::assertNotNull($submitter->scheduleWakeUp('89890001k', $this->clock->now()->modify('+1 hour')));
 
         self::assertSame(array_merge(...array_fill(0, 3, ['lock:89890001K', 'unlock:89890001K'])), $lockable->calls);
     }
@@ -420,12 +420,16 @@ final class BillingRecordBatchSubmitterTest extends TestCase
         $submitter = $this->submitter(new ScriptedBatchClient());
         $until     = $this->clock->now()->modify('+1 hour');
 
-        self::assertTrue($submitter->scheduleWakeUp('89890001K', $until));
-        self::assertFalse($submitter->scheduleWakeUp(' 89890001k ', $until));
-        self::assertFalse($submitter->scheduleWakeUp('89890001K', $until->modify('-1 minute')));
-        self::assertTrue($submitter->scheduleWakeUp(self::nif(7), $until), 'Another issuer');
-        self::assertTrue($submitter->scheduleWakeUp('89890001K', $until->modify('+1 hour')), 'A later pause');
-        self::assertTrue($this->submitter(new ScriptedBatchClient(), flowControl: false)->scheduleWakeUp('89890001K', $until));
+        $token = $until->getTimestamp();
+
+        self::assertSame($token, $submitter->scheduleWakeUp('89890001K', $until));
+        self::assertNull($submitter->scheduleWakeUp(' 89890001k ', $until));
+        self::assertSame($token, $submitter->scheduleWakeUp('89890001K', $until, $token), 'The holder keeps it');
+        self::assertNull($submitter->scheduleWakeUp('89890001K', $until->modify('-1 minute')));
+        self::assertSame($token, $submitter->scheduleWakeUp(self::nif(7), $until), 'Another issuer');
+        self::assertSame($token + 3600, $submitter->scheduleWakeUp('89890001K', $until->modify('+1 hour'), $token), 'A later pause');
+        self::assertNull($submitter->scheduleWakeUp('89890001K', $until->modify('+1 hour'), $token), 'LJD4-I1: a superseded wake-up is dropped');
+        self::assertSame($token, $this->submitter(new ScriptedBatchClient(), flowControl: false)->scheduleWakeUp('89890001K', $until));
     }
 
     public function testAQueueThatClaimsNothingIsIdle(): void
@@ -787,6 +791,43 @@ final class BillingRecordBatchSubmitterTest extends TestCase
         $this->clock->sleep(3601);
         $this->drive($submitter, 20);
         self::assertSame(array_fill(0, 60, 'accepted'), $this->statuses());
+    }
+
+    /**
+     * LJD4-L1: a 24 h issuer-wide outage with an unknown code holds every record (one more per pause); a bad record among
+     * them must not block the others once the AEAT answers again, with no new invoice: the lone suspect rotates, an
+     * answered one confirms the others, and only the bad record ends failed.
+     */
+    #[DataProvider('outageWithABadRecord')]
+    public function testALongUnknownOutageWithABadRecordNeverBlocksTheHeldRecords(int $bad): void
+    {
+        $this->fill(20);
+        $aeat   = new ArrayObject(['broken' => true]);
+        $client = new ScriptedBatchClient(...$this->script(static fn (array $records): bool => $aeat['broken'] === true || in_array('Q-' . $bad, array_map(static fn (BillingRecord $r): string => $r->invoiceSeriesNumber, $records), true), 4199, 400));
+        $failed = new ArrayObject();
+        $this->dispatcher->addListener(VerifactuEvents::RECORD_SUBMISSION_FAILED, static function (RecordSubmissionFailedEvent $event) use ($failed): void {
+            $failed->append($event->position);
+        });
+        $submitter = $this->submitter($client);
+
+        $this->drive($submitter, 1416);
+        self::assertSame(array_fill(0, 20, 'held'), $this->statuses(), 'Every record held after 24 h');
+        self::assertSame([], $failed->getArrayCopy());
+
+        $aeat['broken'] = false;
+        $this->drive($submitter, 1416);
+
+        self::assertSame(array_map(static fn (int $i): string => $i === $bad ? 'failed' : 'accepted', range(1, 20)), $this->statuses());
+        self::assertSame([$bad], $failed->getArrayCopy());
+    }
+
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function outageWithABadRecord(): iterable
+    {
+        yield 'bad #1' => [1];
+        yield 'bad #7' => [7];
     }
 
     /**

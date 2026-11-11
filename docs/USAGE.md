@@ -227,12 +227,15 @@ After a Client refusal, its `Codigo[NNNN]` decides (`Submission\AeatFaultClassif
     them; the issuer is paused (reason `issuer_refused`, `heldPositions`). After the pause the newest record that is
     not held goes alone: answered, every suspect (the held newest one included) is confirmed alone as above. So a run
     of bad records followed by a bad newest record delays the healthy records between them by one pause per bad record
-    at the tail, and never blocks them until someone acts; a new invoice (a new newest record) or `--fail` ends it
-    sooner. While an issuer-wide error with an unknown code lasts, one more record is held per pause; each is
-    confirmed alone once the AEAT answers again (one request per `TiempoEsperaEnvio`).
-  - A suspect and nothing else waiting: it cannot be told apart from an issuer error. It is never failed on its own
-    word: the issuer is paused (reason `awaiting_probe`, `heldPositions`), the suspect is sent alone again after the
-    pause, and the next invoice is the probe.
+    at the tail; a new invoice (a new newest record) or `--fail` ends it sooner. While an issuer-wide error with an
+    unknown code lasts, one more record is held per pause, until every waiting record is held (then the next case
+    applies); each is confirmed alone once the AEAT answers again (one request per `TiempoEsperaEnvio`).
+  - Suspects and nothing else waiting: a suspect cannot be told apart from an issuer error, so none is failed on its
+    own word. One suspect goes alone per pause, rotating: the one refused the fewest times, the newest on a tie (each
+    lone refusal counts one more). Refused, it stays `held` and the issuer is paused (reason `awaiting_probe`,
+    `heldPositions`). Answered, it takes its answer and every other suspect is confirmed alone as after a probe. So
+    after a long outage a bad record among the held ones delays the others by at most one pause per bad record tried
+    first, and never blocks them; it ends `failed` once another suspect was answered. A new invoice is a probe too.
 
 An answer resets the failures of a record. The operator always sees and can act:
 `nowo:verifactu:submit-pending --issuer=… --list` (`recordsToReview()`) lists the `unconfirmed`, `held`,
@@ -242,7 +245,8 @@ submitter (or `--fail`) failed. `--fail` and `--retry-failed` take the issuer's 
 record with `submissionAttempts` above 0 was transmitted before and may be registered at the AEAT although its answer
 was lost: query it at the AEAT before failing it by hand. During a pause one Messenger message per issuer stays alive
 and is dispatched again once, at the end of the pause; every other message that finds the issuer paused is dropped
-(`BillingRecordBatchSubmitter::scheduleWakeUp()`, key `wake|<NIF>` in the flow control store).
+(`BillingRecordBatchSubmitter::scheduleWakeUp()`, key `wake|<NIF>` in the flow control store; the rescheduled message
+carries the wake-up token, so a wake-up message superseded by a newer pause is dropped too).
 
 **Attempts and duplicates.** `submissionAttempts` counts the requests that carried the record, counted right before the
 request is transmitted (a claim that died before sending, or a client that failed before sending, is not an attempt).

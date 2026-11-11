@@ -61,10 +61,13 @@ store, add the new submission columns. See [UPGRADING](UPGRADING.md#unreleased).
   refused pause the issuer, keeping the suspects, and the refused newest record is held too, so the next probe goes to
   the record before it. Runs of consecutive bad records are failed one by one; when the newest records are bad too,
   the healthy records wait one pause per bad record at the tail (a new invoice or `--fail` ends it sooner), never
-  until someone acts. `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`) and
+  until someone acts. With nothing else waiting, the held suspects go alone one per pause, rotating (fewest refusals,
+  newest on a tie), and an answered one confirms the others, so a bad record never blocks the held healthy ones after
+  a long outage. `VerifactuEvents::RECORD_SUBMISSION_FAILED` (`Event\RecordSubmissionFailedEvent`) and
   `VerifactuEvents::ISSUER_SUBMISSION_PAUSED` (`Event\IssuerSubmissionPausedEvent`, reason `issuer_refused` or
   `awaiting_probe`, held positions, AEAT code) are dispatched after the commit; during a pause one Messenger message
-  per issuer stays alive and is dispatched again once at its end, the others are dropped (`wake|<NIF>` key). `nowo:verifactu:submit-pending --list` / `--fail=<position>` / `--retry-failed` /
+  per issuer stays alive and is dispatched again once at its end, the others are dropped (`wake|<NIF>` key; the
+  rescheduled message carries its token, so a superseded wake-up message is dropped too). `nowo:verifactu:submit-pending --list` / `--fail=<position>` / `--retry-failed` /
   `--resolve` (`recordsToReview()`, `failRecord()`, `requeueFailed()`, `resolveUnconfirmed()`) let an operator see and
   act on every record that needs a person; `--retry-failed` puts back only what the submitter (or `--fail`) failed.
   `--fail` and `--retry-failed` run under the issuer's chain lock, like a claim, so they never interleave with a batch
