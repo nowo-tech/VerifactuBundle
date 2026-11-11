@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Unit\Certificate;
 
+use LogicException;
 use Nowo\VerifactuBundle\Certificate\Certificate;
 use Nowo\VerifactuBundle\Certificate\CertificateLoader;
 use Nowo\VerifactuBundle\Certificate\ConfigCertificateProvider;
@@ -13,6 +14,7 @@ use Nowo\VerifactuBundle\Provider\ConfigAeatEnvironmentProvider;
 use PHPUnit\Framework\TestCase;
 
 use function dirname;
+use function strlen;
 
 use const OPENSSL_KEYTYPE_RSA;
 
@@ -51,6 +53,25 @@ final class CertificateProvidersTest extends TestCase
     {
         $this->expectException(InvalidAeatEnvironmentException::class);
         (new ConfigAeatEnvironmentProvider('staging'))->getEnvironment();
+    }
+
+    public function testCertificateIsMaskedInJsonAndNeverSerialized(): void
+    {
+        $certificate = Certificate::fromContents('SECRET-BYTES', 'secret-pass', 'pem');
+
+        $json = (string) json_encode($certificate);
+        self::assertStringNotContainsString('SECRET-BYTES', $json);
+        self::assertStringNotContainsString('secret-pass', $json);
+        self::assertStringContainsString('"format":"pem"', $json);
+
+        try {
+            serialize($certificate);
+            self::fail('A certificate was serialized.');
+        } catch (LogicException) {
+        }
+
+        $this->expectException(LogicException::class);
+        unserialize('O:' . strlen(Certificate::class) . ':"' . Certificate::class . '":0:{}');
     }
 
     public function testLoaderReadsCertificatesFromPathAndFromContents(): void

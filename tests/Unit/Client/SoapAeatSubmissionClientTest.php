@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Tests\Unit\Client;
 
 use InvalidArgumentException;
+use LogicException;
 use Nowo\VerifactuBundle\Certificate\Certificate;
 use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use Nowo\VerifactuBundle\Client\AeatEndpointResolver;
+use Nowo\VerifactuBundle\Client\CertificateAwareSoapTransportInterface;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapEnvelopeBuilder;
 use Nowo\VerifactuBundle\Client\SoapTransportInterface;
@@ -282,6 +284,36 @@ final class SoapAeatSubmissionClientTest extends TestCase
         self::assertSame('P12-FROM-DATABASE', $transport->calls[0]['contents']);
         self::assertSame('db-pass', $transport->calls[0]['passphrase']);
         self::assertFileDoesNotExist($transport->calls[0]['path'], 'The temporary certificate file is removed after the call');
+    }
+
+    public function testCertificateContentsGoFromMemoryWhenTheTransportCan(): void
+    {
+        $transport = new class implements CertificateAwareSoapTransportInterface {
+            public ?Certificate $certificate = null;
+
+            public function send(string $endpoint, string $soapAction, string $payload, string $certificatePath, ?string $certificatePassword, int $timeout): array
+            {
+                throw new LogicException('The file fallback must not be used.');
+            }
+
+            public function supportsCertificateInMemory(): bool
+            {
+                return true;
+            }
+
+            public function sendWithCertificate(string $endpoint, string $soapAction, string $payload, Certificate $certificate, int $timeout): array
+            {
+                $this->certificate = $certificate;
+
+                return ['status_code' => 200, 'body' => '<EstadoRegistro>Correcto</EstadoRegistro>'];
+            }
+        };
+        $certificates = $this->createMock(CertificateProviderInterface::class);
+        $certificates->method('getCertificate')->willReturn(Certificate::fromContents('P12-FROM-DATABASE', 'db-pass'));
+        $client = new SoapAeatSubmissionClient(new SoapEnvelopeBuilder(), new AeatEndpointResolver(), $transport, ['nif' => '89890001K'], 'verifactu', 'sandbox', null, null, certificateProvider: $certificates);
+
+        self::assertTrue($client->submit($this->createRecord())['success']);
+        self::assertSame('P12-FROM-DATABASE', $transport->certificate?->contents());
     }
 
     public function testCertificateProviderWithoutCertificateForTheIssuerRefusesToSubmit(): void

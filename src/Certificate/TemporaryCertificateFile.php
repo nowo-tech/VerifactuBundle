@@ -40,7 +40,9 @@ final class TemporaryCertificateFile
         // @igor-ignore - One handler per temporary file (rare fallback), capturing only its directory path.
         // @phpstan-ignore frankenphp.worker.noRegisterShutdownFunction (cleanup of one file after a fatal error; the request cleanup is finally / __destruct)
         register_shutdown_function(static function () use ($directory): void {
+            // @codeCoverageIgnoreStart
             self::removeDirectory($directory);
+            // @codeCoverageIgnoreEnd
         });
     }
 
@@ -122,9 +124,7 @@ final class TemporaryCertificateFile
             if ($written !== strlen($contents)) {
                 throw new RuntimeException('Unable to write the temporary AEAT certificate file.');
             }
-            // @codeCoverageIgnoreEnd
         } catch (RuntimeException $exception) {
-            // @codeCoverageIgnoreStart
             // @igor-ignore - $file is this call's own temporary file, not a shared service.
             $file->remove();
 

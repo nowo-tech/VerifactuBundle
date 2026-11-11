@@ -16,6 +16,7 @@ final class BillingRecordHashChainTest extends TestCase
     public function testConstructorNormalizesValuesAndUpdateRefreshesState(): void
     {
         $entity = new BillingRecordHashChain(' 89890001k ', ' FAC-001 ', ' 09-07-2026 ', ' abcdef ');
+        self::assertNull($entity->getEnvironment(), 'Written by the repository through DBAL; null before 1.6');
 
         self::assertNull($entity->getId());
         self::assertSame('89890001K', $entity->getIssuerNif());

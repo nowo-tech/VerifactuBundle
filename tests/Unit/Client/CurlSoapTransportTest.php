@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Unit\Client;
 
+use Nowo\VerifactuBundle\Certificate\Certificate;
 use Nowo\VerifactuBundle\Client\CurlSoapTransport;
 use PHPUnit\Framework\TestCase;
 
@@ -110,6 +111,28 @@ final class CurlSoapTransportTest extends TestCase
             self::assertArrayHasKey('error', $result);
         } finally {
             @unlink($pemPath);
+        }
+    }
+
+    public function testSendWithCertificateFromPathUsesTheFileOptions(): void
+    {
+        $result = $this->transport->sendWithCertificate('https://invalid.localhost.test/soap', 'action', '<xml/>', Certificate::fromPath('/nonexistent/cert.p12', 'pass'), 2);
+
+        self::assertSame(0, $result['status_code']);
+        self::assertNotEmpty($result['error'] ?? '');
+    }
+
+    public function testSendWithCertificateFromMemoryForPemAndPkcs12(): void
+    {
+        if (!$this->transport->supportsCertificateInMemory()) {
+            self::markTestSkipped('This libcurl build has no CURLOPT_SSLCERT_BLOB.');
+        }
+
+        foreach ([Certificate::fromContents('PEM-BYTES', 'pass', 'pem'), Certificate::fromContents('P12-BYTES')] as $certificate) {
+            $result = $this->transport->sendWithCertificate('https://invalid.localhost.test/soap', 'action', '<xml/>', $certificate, 2);
+
+            self::assertSame(0, $result['status_code']);
+            self::assertNotEmpty($result['error'] ?? '');
         }
     }
 }
