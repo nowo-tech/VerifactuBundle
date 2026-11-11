@@ -1,4 +1,6 @@
 validation:
+  correction_flags:
+    invalid: 'Subsanacion / RechazoPrevio / SinRegistroPrevio non validi: l''Alta ammette Subsanacion S/N e RechazoPrevio N/S/X (X solo con Subsanacion S); l''Anulacion ammette SinRegistroPrevio e RechazoPrevio S/N.'
   issuer_nif:
     invalid: 'Il codice fiscale del emittente (NIF/CIF/NIE) non è valido.'
     provider_mismatch: 'Il codice fiscale dell''emittente del record non è l''emittente di questa applicazione (provider dell''emittente).'

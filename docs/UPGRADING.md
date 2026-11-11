@@ -34,6 +34,52 @@
 
 ## Unreleased
 
+From **1.6.0** — minor:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- **Nothing changes until you use the batch submitter.** `process(..., submitToAeat: true)` still sends one record and
+  marks it `accepted` / `failed`.
+- **Database (with `record_store.storage: doctrine`):** new nullable / defaulted columns and one index on the record
+  log. Generate a migration (`php bin/console doctrine:migrations:diff`, then `migrate`) or apply (add your
+  `doctrine.table_prefix`):
+
+  ```sql
+  -- MySQL / MariaDB
+  ALTER TABLE verifactu_billing_record ADD submission_attempts INT DEFAULT 0 NOT NULL, ADD submission_claim VARCHAR(32) DEFAULT NULL,
+      ADD submission_claimed_at DATETIME DEFAULT NULL, ADD submission_error_code INT DEFAULT NULL,
+      ADD submission_error LONGTEXT DEFAULT NULL, ADD submitted_at DATETIME DEFAULT NULL;
+  CREATE INDEX idx_verifactu_billing_record_submission ON verifactu_billing_record (issuer_nif, submission_status, position);
+
+  -- PostgreSQL
+  ALTER TABLE verifactu_billing_record ADD submission_attempts INT DEFAULT 0 NOT NULL, ADD submission_claim VARCHAR(32) DEFAULT NULL,
+      ADD submission_claimed_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL, ADD submission_error_code INT DEFAULT NULL,
+      ADD submission_error TEXT DEFAULT NULL, ADD submitted_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;
+  CREATE INDEX idx_verifactu_billing_record_submission ON verifactu_billing_record (issuer_nif, submission_status, position);
+
+  -- SQLite
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_attempts INTEGER DEFAULT 0 NOT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_claim VARCHAR(32) DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_claimed_at DATETIME DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_error_code INTEGER DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submission_error CLOB DEFAULT NULL;
+  ALTER TABLE verifactu_billing_record ADD COLUMN submitted_at DATETIME DEFAULT NULL;
+  CREATE INDEX idx_verifactu_billing_record_submission ON verifactu_billing_record (issuer_nif, submission_status, position);
+  ```
+
+  Existing rows keep their status: `pending` rows are sent by the batch submitter; `accepted` and `failed` rows (from
+  `process(..., submitToAeat: true)`) are not sent again.
+- **Adopting batch submission:** chain with `process()` / `processBatch()` without `submitToAeat`, then, after your
+  commit, dispatch `SubmitPendingBillingRecords($nif)` (route it to an async transport) or run
+  `nowo:verifactu:submit-pending` from a scheduler. Do not mix both paths for the same records. Listen to
+  `AFTER_RECORD_SUBMISSION` for the per-record outcome; correct `rejected` records with a new record
+  (`correction: 'S', previousRejection: 'X'`).
+- **Custom code:** a host `record_store.service` must implement `SubmissionQueueInterface` to use the submitter; a
+  custom `aeat.submission_client` must implement `BatchAeatSubmissionClientInterface` (or set `submission.client`).
+  `submission.claim_timeout` must be longer than `aeat.timeout`. The flow control uses `cache.app` by default.
+
 ## To 1.6.0
 
 From **1.5.0**:

@@ -16,4 +16,7 @@ final class VerifactuEvents
     public const AFTER_BILLING_RECORD_GENERATED   = 'nowo_verifactu.after_billing_record_generated';
     public const BEFORE_AEAT_SUBMISSION           = 'nowo_verifactu.before_aeat_submission';
     public const AFTER_AEAT_SUBMISSION            = 'nowo_verifactu.after_aeat_submission';
+
+    /** One per record of a batch submission, after its AEAT answer is committed in the record log (1.7). */
+    public const AFTER_RECORD_SUBMISSION = 'nowo_verifactu.after_record_submission';
 }

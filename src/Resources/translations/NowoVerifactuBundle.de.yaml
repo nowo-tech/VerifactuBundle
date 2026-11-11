@@ -1,4 +1,6 @@
 validation:
+  correction_flags:
+    invalid: 'Ungültige Subsanacion / RechazoPrevio / SinRegistroPrevio: Alta erlaubt Subsanacion S/N und RechazoPrevio N/S/X (X nur mit Subsanacion S); Anulacion erlaubt SinRegistroPrevio und RechazoPrevio S/N.'
   issuer_nif:
     invalid: 'Die Steuer-ID des Ausstellers (NIF/CIF/NIE) ist ungültig.'
     provider_mismatch: 'Die Steuernummer des Ausstellers im Datensatz ist nicht der Aussteller dieser Anwendung (Aussteller-Provider).'

@@ -8,6 +8,7 @@ The bundle provides console commands for common Veri*Factu operations.
 - [Verify hash](#verify-hash)
 - [Verify a stored chain](#verify-a-stored-chain)
 - [Reset a chain](#reset-a-chain)
+- [Submit waiting records in batches](#submit-waiting-records-in-batches)
 - [Submit to AEAT sandbox](#submit-to-aeat-sandbox)
 
 ## Validate billing record
@@ -69,6 +70,19 @@ php bin/console nowo:verifactu:reset-chain --issuer=89890001K [--force]
 Removes the chain head of the issuer, so its next record starts a new chain (no previous hash). Needed before the first
 production record of an issuer that was tested in the sandbox: a record is never chained onto a head of the other
 environment. Stored records are kept. Asks for confirmation; `--force` skips it (required in non-interactive runs).
+
+## Submit waiting records in batches
+
+```bash
+php bin/console nowo:verifactu:submit-pending [--issuer=89890001K]
+```
+
+Available with a record store. Sends the next batch of waiting records (up to `submission.batch_size`, at most 1000) of
+the issuer, or of every issuer with waiting records, once, and prints the per-record outcome (accepted, accepted with
+errors, rejected, without answer), how many records are still waiting and when the next submission may start (AEAT
+`TiempoEsperaEnvio`). A throttled issuer is reported, not waited for: run the command from a scheduler, or dispatch the
+`SubmitPendingBillingRecords` Messenger message, which reschedules itself. Exit code `1` when a batch got no AEAT
+answer (its records stay pending).
 
 ## Submit to AEAT sandbox
 

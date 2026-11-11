@@ -9,12 +9,16 @@ use LogicException;
 use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use Nowo\VerifactuBundle\Certificate\ConfigCertificateProvider;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
+use Nowo\VerifactuBundle\Client\BatchAeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
+use Nowo\VerifactuBundle\Command\SubmitPendingCommand;
 use Nowo\VerifactuBundle\Command\VerifyChainCommand;
 use Nowo\VerifactuBundle\DependencyInjection\NowoVerifactuExtension;
 use Nowo\VerifactuBundle\Doctrine\TablePrefixListener;
 use Nowo\VerifactuBundle\EventSubscriber\WorkerStateResetSubscriber;
+use Nowo\VerifactuBundle\Messenger\SubmitPendingBillingRecords;
+use Nowo\VerifactuBundle\Messenger\SubmitPendingBillingRecordsHandler;
 use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Provider\ConfigAeatEnvironmentProvider;
 use Nowo\VerifactuBundle\Provider\ConfigIssuerProvider;
@@ -27,9 +31,13 @@ use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
+use Nowo\VerifactuBundle\Repository\SubmissionQueueInterface;
+use Nowo\VerifactuBundle\Service\BillingRecordBatchSubmitter;
 use Nowo\VerifactuBundle\Service\ChainVerifier;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
+use Nowo\VerifactuBundle\Submission\CacheFlowControl;
+use Nowo\VerifactuBundle\Submission\FlowControlInterface;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
@@ -421,6 +429,54 @@ final class NowoVerifactuExtensionTest extends TestCase
         self::assertFalse($container->hasDefinition(VerifyChainCommand::class));
         self::assertFalse($container->hasAlias(ChainVerifier::SERVICE_NAME));
         self::assertFalse($container->hasAlias(BillingRecordStoreInterface::class));
+    }
+
+    public function testTheBatchSubmitterNeedsARecordStore(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[]], $container);
+
+        self::assertFalse($container->hasDefinition(BillingRecordBatchSubmitter::class));
+        self::assertFalse($container->hasDefinition(SubmitPendingCommand::class));
+        self::assertFalse($container->hasAlias(BillingRecordBatchSubmitter::SERVICE_NAME));
+        self::assertFalse($container->hasDefinition(SubmitPendingBillingRecordsHandler::class));
+    }
+
+    public function testTheBatchSubmitterOverTheRecordStore(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'memory'], 'submission' => ['batch_size' => 250, 'flow_control_scope' => 'global']]], $container);
+
+        $definition = $container->getDefinition(BillingRecordBatchSubmitter::class);
+        self::assertSame(InMemoryBillingRecordStore::class, (string) $container->getAlias(SubmissionQueueInterface::class));
+        self::assertSame(NullAeatSubmissionClient::class, (string) $container->getAlias(BatchAeatSubmissionClientInterface::class));
+        self::assertSame(CacheFlowControl::class, (string) $container->getAlias(FlowControlInterface::class));
+        self::assertSame('cache.app', (string) $container->getDefinition(CacheFlowControl::class)->getArgument(0));
+        self::assertSame([250, 300, 60, 'global'], [$definition->getArgument('$batchSize'), $definition->getArgument('$claimTimeout'), $definition->getArgument('$defaultWait'), $definition->getArgument('$flowControlScope')]);
+        self::assertSame([['handles' => SubmitPendingBillingRecords::class]], $container->getDefinition(SubmitPendingBillingRecordsHandler::class)->getTag('messenger.message_handler'));
+    }
+
+    public function testTheBatchClientAndFlowControlCanBeReplaced(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[
+            'record_store' => ['storage' => 'memory'],
+            'aeat'         => ['certificate_path' => '/run/aeat.p12'],
+            'submission'   => ['flow_control' => 'app.flow'],
+        ]], $container);
+        self::assertSame(SoapAeatSubmissionClient::class, (string) $container->getAlias(BatchAeatSubmissionClientInterface::class));
+        self::assertSame('app.flow', (string) $container->getAlias(FlowControlInterface::class));
+
+        $custom = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'memory'], 'submission' => ['client' => 'app.batch_client']]], $custom);
+        self::assertSame('app.batch_client', (string) $custom->getAlias(BatchAeatSubmissionClientInterface::class));
+    }
+
+    public function testTheClaimTimeoutMustOutliveTheAeatRequest(): void
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('claim_timeout must be longer than nowo_verifactu.aeat.timeout');
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'memory'], 'aeat' => ['timeout' => 60], 'submission' => ['claim_timeout' => 60]]], new ContainerBuilder());
     }
 
     public function testMemoryRecordStore(): void

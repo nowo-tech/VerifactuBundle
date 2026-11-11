@@ -31,6 +31,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Batch submission to the AEAT (V7) for Symfony Beacon spec 226. Standard hosts need no change; with the Doctrine record
+store, add the new submission columns. See [UPGRADING](UPGRADING.md#unreleased).
+
+### Added
+
+- **Batch submission (V7).** `Service\BillingRecordBatchSubmitter::submitPending($nif)` sends the stored records of an
+  issuer in chain order, up to 1000 per SuministroLR request (AEAT *Servicios web* v1.0.3 p. 10; `SuministroLR.xsd`
+  `maxOccurs="1000"`; `submission.batch_size`), one AEAT environment and one record per invoice id and operation per
+  request. One batch in flight per issuer: the batch is claimed inside the issuer's chain lock, sent outside any
+  transaction, and its answers are committed in one transaction.
+- **Per-record answers.** `Client\AeatResponseParser` reads `RespuestaRegFactuSistemaFacturacion` (EstadoEnvio, CSV,
+  TiempoEsperaEnvio, every RespuestaLinea with CodigoErrorRegistro / DescripcionErrorRegistro / RegistroDuplicado; no
+  DTD, no network). Records become `accepted`, `accepted_errors` or `rejected`; a record without a line goes back to
+  `pending`; a request without an answer (transport error, HTTP status, SoapFault) puts the batch back to `pending`.
+- **Idempotent retries.** Resends carry the same stored XML; a duplicate answer on attempt 2+ takes the state the AEAT
+  holds (Correcta / AceptadaConErrores / Anulada); stale claims (`submission.claim_timeout`) are claimed again and can no
+  longer store an answer.
+- **AEAT flow control** (Orden HAC/1177/2024 art. 16.2; *Servicios web* §6.4.4.1): the next submission waits
+  `TiempoEsperaEnvio` (default 60 s, `submission.default_wait`) unless a full batch is waiting.
+  `Submission\FlowControlInterface`, default `CacheFlowControl` over `cache.app`; scope per issuer or `global`.
+- **After-commit events.** `VerifactuEvents::AFTER_RECORD_SUBMISSION` (`Event\RecordSubmittedEvent`), once per answered
+  record after its answer is committed; the submitter refuses to run inside a transaction.
+- **`BillingRecordProcessor::processBatch()`**: several records of one issuer chained in order in one chain lock, all or
+  nothing (the head never points at a record that was not stored).
+- **Corrections:** `BillingRecord` takes `correction` (Subsanacion), `previousRejection` (RechazoPrevio, X = Alta after
+  an AEAT rejection) and `withoutPreviousRecord` (SinRegistroPrevio), written in the AEAT order and validated
+  (`validation.correction_flags.invalid`, 7 locales).
+- **Async and CLI:** `Messenger\SubmitPendingBillingRecords` + handler (reschedules itself with a `DelayStamp`; only
+  with symfony/messenger) and `nowo:verifactu:submit-pending [--issuer]`.
+- **Ports for DDD hosts:** `Repository\SubmissionQueueInterface` (implemented by the Doctrine and in-memory stores),
+  `Client\BatchAeatSubmissionClientInterface` (SOAP and null clients; `submission.client`), `FlowControlInterface`.
+- **Tests:** batches of 1, 3 and 1000 records and corrections validated against the official `SuministroLR.xsd`; the
+  response fixture against `RespuestaSuministro.xsd`; multi-process submission tests (submitters racing each other
+  and the chaining processes, one lost answer) on MySQL, MariaDB and PostgreSQL.
+
+### Changed
+
+- **Record log columns:** `verifactu_billing_record` gets `submission_attempts`, `submission_claim`,
+  `submission_claimed_at`, `submission_error_code`, `submission_error`, `submitted_at` and the index
+  `idx_verifactu_billing_record_submission`. `StoredBillingRecord` exposes the attempts and the last error.
+- `psr/cache` is a dependency (flow control state).
+
 ## [1.6.0] - 2026-11-11
 
 Complete AEAT records (recipients, rectification, operation date, regime keys), runtime AEAT environment and per-issuer certificate providers with in-memory TLS keys, one hash chain per environment, issuer enforcement and reset-chain. See [UPGRADING](https://github.com/nowo-tech/VerifactuBundle/blob/v1.6.0/docs/UPGRADING.md#to-160).

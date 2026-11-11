@@ -8,6 +8,7 @@ use InvalidArgumentException;
 use Nowo\VerifactuBundle\Certificate\Certificate;
 use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use Nowo\VerifactuBundle\Certificate\TemporaryCertificateFile;
+use Nowo\VerifactuBundle\Model\AeatBatchResponse;
 use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
@@ -27,7 +28,7 @@ use const ENT_XML1;
  * @copyright 2026 Nowo.tech
  */
 #[AsAlias(id: self::SERVICE_NAME, public: true)]
-final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
+final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface, BatchAeatSubmissionClientInterface
 {
     public const SERVICE_NAME = 'nowo_verifactu.client.soap_aeat_submission';
 
@@ -55,6 +56,7 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
         private readonly ?IssuerProviderInterface $issuerProvider = null,
         private readonly ?CertificateProviderInterface $certificateProvider = null,
         private readonly ?AeatEnvironmentProviderInterface $environmentProvider = null,
+        private readonly AeatResponseParser $responseParser = new AeatResponseParser(),
     ) {
     }
 
@@ -63,30 +65,12 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
      */
     public function submit(BillingRecord $record): array
     {
-        $certificate = $this->certificateProvider instanceof CertificateProviderInterface
-            // Normalised NIF: the provider must still authorize it for the current tenant (see CertificateProviderInterface).
-            ? $this->certificateProvider->getCertificate(strtoupper(trim($record->issuerNif)))
-            : ($this->certificatePath === null || $this->certificatePath === '' ? null : Certificate::fromPath($this->certificatePath, $this->certificatePassword));
-        if (!$certificate instanceof Certificate) {
-            throw new InvalidArgumentException('AEAT certificate path is required for SOAP submission.');
-        }
-
+        $certificate = $this->certificateFor($record->issuerNif);
         // A chained record goes to the environment it was chained for; otherwise the current one.
         $environment = $record->environment ?? $this->environmentProvider?->getEnvironment() ?? AeatEnvironment::fromValue($this->environment);
         $payload     = $this->envelopeBuilder->buildSubmissionEnvelope($record, $this->issuerProvider?->getIssuer()->toArray() ?? $this->issuerConfig);
         $endpoint    = $this->endpointResolver->resolve($this->mode, $environment, $this->certificateType);
-
-        // Contents go to cURL from memory when the transport can (no key file at all); otherwise a private temporary file.
-        $response = $certificate->path === null && $this->transport instanceof CertificateAwareSoapTransportInterface && $this->transport->supportsCertificateInMemory()
-            ? $this->transport->sendWithCertificate($endpoint, AeatEndpointResolver::SOAP_ACTION_ALTA, $payload, $certificate, $this->timeout)
-            : TemporaryCertificateFile::with($certificate, fn (string $path): array => $this->transport->send(
-                $endpoint,
-                AeatEndpointResolver::SOAP_ACTION_ALTA,
-                $payload,
-                $path,
-                $certificate->password(),
-                $this->timeout,
-            ));
+        $response    = $this->transmit($certificate, $endpoint, $payload);
 
         if (($response['error'] ?? null) !== null) {
             return [
@@ -119,6 +103,65 @@ final class SoapAeatSubmissionClient implements AeatSubmissionClientInterface
         }
 
         return $result;
+    }
+
+    /**
+     * Sends the records (one issuer, one environment, chain order) in one request and parses the per-record answer.
+     * A transport error, a non-2xx status, a SoapFault or an unreadable body gives a failed response: no record of
+     * the request was registered, so the same records may be sent again.
+     */
+    public function submitBatch(array $records): AeatBatchResponse
+    {
+        if ($records === []) {
+            throw new InvalidArgumentException('An AEAT submission needs at least one record.');
+        }
+        $environment = $records[0]->environment ?? $this->environmentProvider?->getEnvironment() ?? AeatEnvironment::fromValue($this->environment);
+        foreach ($records as $record) {
+            if ($record->environment !== null && $record->environment !== $environment) {
+                throw new InvalidArgumentException('All records of one AEAT submission must belong to the same AEAT environment.');
+            }
+        }
+
+        $certificate = $this->certificateFor($records[0]->issuerNif);
+        $payload     = $this->envelopeBuilder->buildBatchEnvelope($records, $this->issuerProvider?->getIssuer()->toArray() ?? $this->issuerConfig);
+        $endpoint    = $this->endpointResolver->resolve($this->mode, $environment, $this->certificateType);
+        $response    = $this->transmit($certificate, $endpoint, $payload);
+        if (($response['error'] ?? null) !== null) {
+            return AeatBatchResponse::failed((string) $response['error'], $response['status_code'], $response['body'], $endpoint);
+        }
+
+        return $this->responseParser->parse($response['body'], $response['status_code'], $endpoint);
+    }
+
+    private function certificateFor(string $issuerNif): Certificate
+    {
+        $certificate = $this->certificateProvider instanceof CertificateProviderInterface
+            // Normalised NIF: the provider must still authorize it for the current tenant (see CertificateProviderInterface).
+            ? $this->certificateProvider->getCertificate(strtoupper(trim($issuerNif)))
+            : ($this->certificatePath === null || $this->certificatePath === '' ? null : Certificate::fromPath($this->certificatePath, $this->certificatePassword));
+        if (!$certificate instanceof Certificate) {
+            throw new InvalidArgumentException('AEAT certificate path is required for SOAP submission.');
+        }
+
+        return $certificate;
+    }
+
+    /**
+     * @return array{status_code: int, body: string, error?: string}
+     */
+    private function transmit(#[SensitiveParameter] Certificate $certificate, string $endpoint, string $payload): array
+    {
+        // Contents go to cURL from memory when the transport can (no key file at all); otherwise a private temporary file.
+        return $certificate->path === null && $this->transport instanceof CertificateAwareSoapTransportInterface && $this->transport->supportsCertificateInMemory()
+            ? $this->transport->sendWithCertificate($endpoint, AeatEndpointResolver::SOAP_ACTION_ALTA, $payload, $certificate, $this->timeout)
+            : TemporaryCertificateFile::with($certificate, fn (string $path): array => $this->transport->send(
+                $endpoint,
+                AeatEndpointResolver::SOAP_ACTION_ALTA,
+                $payload,
+                $path,
+                $certificate->password(),
+                $this->timeout,
+            ));
     }
 
     /**

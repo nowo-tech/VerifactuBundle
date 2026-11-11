@@ -1,4 +1,6 @@
 validation:
+  correction_flags:
+    invalid: 'Subsanacion / RechazoPrevio / SinRegistroPrevio no válidos: el alta admite Subsanacion S/N y RechazoPrevio N/S/X (X solo con Subsanacion S); la anulación admite SinRegistroPrevio y RechazoPrevio S/N.'
   issuer_nif:
     invalid: 'El NIF/CIF/NIE del emisor no es válido.'
     provider_mismatch: 'El NIF del emisor del registro no es el emisor de esta aplicación (proveedor del emisor).'

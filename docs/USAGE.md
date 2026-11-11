@@ -8,6 +8,7 @@
 - [Dates in Europe/Madrid](#dates-in-europemadrid)
 - [Issuer and software identity at runtime](#issuer-and-software-identity-at-runtime)
 - [Record store and chain verification](#record-store-and-chain-verification)
+- [Batch submission to the AEAT](#batch-submission-to-the-aeat)
 - [Complete records: recipients, rectifications, tax qualification](#complete-records-recipients-rectifications-tax-qualification)
 - [Hash only](#hash-only)
 - [QR in Twig](#qr-in-twig)
@@ -142,7 +143,8 @@ with its hash, previous hash, XML and submission state, in the same transaction 
 
 ```php
 foreach ($recordStore->findByIssuer('89890001K') as $stored) {   // BillingRecordStoreInterface, chain order
-    $stored->position; $stored->record->hash; $stored->record->xml; $stored->submissionStatus; // pending|accepted|failed
+    $stored->position; $stored->record->hash; $stored->record->xml;
+    $stored->submissionStatus; // pending|sending|accepted|accepted_errors|rejected (batch) or failed (process())
 }
 
 $result = $chainVerifier->verify('89890001K');                    // Service\ChainVerifier
@@ -156,6 +158,64 @@ exact starting hash. The Doctrine store reads the log in pages, so long chains v
 `process(..., submitToAeat: true)` marks the record `accepted` (with the AEAT CSV) or `failed`. If that update fails,
 the submission result is still returned and the exception is in `$result['store_errors']`. Your invoice references the
 record by issuer NIF and hash (or position); there is no Doctrine relation to your entities.
+
+## Batch submission to the AEAT
+
+From 1.7 the stored records can be sent in batches (`Service\BillingRecordBatchSubmitter`, needs a record store): up to
+**1000 records per request** ("El número máximo de registros por envío es de 1.000", AEAT *Sistemas Informáticos de
+Facturación – Servicios web* v1.0.3, p. 10; `RegistroFactura maxOccurs="1000"` in `SuministroLR.xsd`), in chain order,
+with the AEAT flow control and one answer per record.
+
+```php
+// 1. Chain and store (in your transaction), without submitting.
+$processor->process($record);                                   // one record
+$result = $processor->processBatch([$a, $b, $c]);               // several records of ONE issuer, one lock, all or nothing
+$result['records']; $result['errors'];                          // errors: [index => list<string>]; nothing chained then
+
+// 2. After your commit: send what is waiting (Messenger, a command or a scheduler).
+$bus->dispatch(new SubmitPendingBillingRecords('89890001K'));   // Messenger\SubmitPendingBillingRecords
+// or: php bin/console nowo:verifactu:submit-pending [--issuer=89890001K]
+// or: $outcome = $submitter->submitPending('89890001K');        // BatchSubmissionResult
+```
+
+**Chain integrity.** Records are chained and stored before they are sent; sending never chains, re-chains or reorders
+anything. `processBatch()` chains record n+1 onto record n inside one chain lock and stores nothing when any record
+fails, so the head never points at a record that was not stored. The submitter claims the next batch inside the
+issuer's chain lock (one batch in flight per issuer, oldest first) and sends it outside any transaction.
+
+**Answers per record** (`EstadoRegistro`, AEAT *Servicios web* v1.0.3 p. 11):
+
+| AEAT | Stored status | Meaning |
+|---|---|---|
+| `Correcto` | `accepted` | Registered; the submission CSV is stored as the reference |
+| `AceptadoConErrores` | `accepted_errors` | Registered with errors (`submissionErrorCode`, `submissionError`); correct it with a new record, `correction: 'S'` (Subsanacion) |
+| `Incorrecto` | `rejected` | Not registered. It stays in the chain; correct the invoice and chain a NEW record with `correction: 'S', previousRejection: 'X'` (Subsanacion S, RechazoPrevio X: *Servicios web* §9.1.3; AEAT FAQ v1.3 §17) |
+| no line for the record | `pending` | Sent again with the next batch |
+
+A request without an answer (transport error, HTTP status, SoapFault: an XML format error rejects the whole message,
+*Servicios web* p. 10) puts the whole batch back to `pending` (`BatchSubmissionResult::isRetryable()`).
+
+**Retries are idempotent.** A resend carries the same stored XML. When a record sent before (attempt 2 or later) gets
+the AEAT "duplicate" answer (`RegistroDuplicado`), an earlier send whose answer was lost registered it, and the record
+takes the state the AEAT holds (`Correcta` → `accepted`, `AceptadaConErrores` → `accepted_errors`, `Anulada` →
+`rejected`). On a first attempt a duplicate is a real conflict (the invoice id was already used, FAQ v1.3 §6) and the
+record is `rejected`. A batch claimed by a process that died is claimed again after `submission.claim_timeout`.
+
+**Flow control** (Orden HAC/1177/2024 art. 16.2; *Servicios web* §6.4.4.1, p. 40): the AEAT returns
+`TiempoEsperaEnvio` «t» (initially 60 s) with every answer; the next submission waits «t» seconds unless a full batch
+(1000 records) is waiting, whichever comes first. The submitter keeps «t» in `cache.app` (`CacheFlowControl`, shared by
+every process; your own `Submission\FlowControlInterface` via `submission.flow_control`) per issuer NIF, or for every
+issuer with `submission.flow_control_scope: global`. A throttled call returns `STATE_THROTTLED` and
+`nextSubmissionAt`; the Messenger handler dispatches itself again with a `DelayStamp`.
+
+**Events after commit.** `VerifactuEvents::AFTER_RECORD_SUBMISSION` (`Event\RecordSubmittedEvent`) is dispatched once
+per answered record, after the submitter has committed the answers. The submitter refuses to run inside a transaction
+on the store's connection (`LogicException`), so the event never fires for an answer that could still roll back. A
+listener failure is logged and returned in `BatchSubmissionResult::$eventErrors`; the stored answer stays.
+
+**Worker mode.** The submitter, the handler and the command keep no state between calls: the queue is the record log,
+the wait time lives in the cache pool. The in-memory record store is request-scoped, so in production use
+`record_store.storage: doctrine` (or your own store implementing `Repository\SubmissionQueueInterface`).
 
 ## Complete records: recipients, rectifications, tax qualification
 
@@ -245,6 +305,7 @@ php bin/console nowo:verifactu:verify-chain --issuer=89890001K
 | `AFTER_BILLING_RECORD_GENERATED` | `AfterBillingRecordGeneratedEvent` | After hash, XML (and signature); chain state stored | No: the event carries a copy of the record |
 | `BEFORE_AEAT_SUBMISSION` | `BeforeAeatSubmissionEvent` | Right before the AEAT client is called (`submitToAeat: true` only) | No |
 | `AFTER_AEAT_SUBMISSION` | `AfterAeatSubmissionEvent` | After the AEAT client returned | No |
+| `AFTER_RECORD_SUBMISSION` | `RecordSubmittedEvent` | Batch submission (1.7): once per answered record, after its answer is committed | No |
 
 The two AEAT submission events are informational (audit log, metrics, outbox): there is **no veto**. Whether a record is
 submitted is decided by the caller (`process(..., submitToAeat: true)`), not by a listener, so a listener can never
@@ -347,6 +408,9 @@ domain event when the AEAT answers, either map `$result['submission']` in the ad
   `Provider\AeatEnvironmentProviderInterface` / `Certificate\CertificateProviderInterface` via `providers.*` (values
   kept in your database, resolved on every call; see [CONFIGURATION](CONFIGURATION.md#runtime-aeat-environment-and-certificate)).
 - `Client\AeatSubmissionClientInterface` via `aeat.submission_client`; `Signer\BillingRecordSignerInterface`.
+- Batch submission (1.7): `Repository\SubmissionQueueInterface` (implemented by your `record_store.service`),
+  `Client\BatchAeatSubmissionClientInterface` via `submission.client`, `Submission\FlowControlInterface` via
+  `submission.flow_control`. The standard path needs none of them.
 
 ### Known limitations
 

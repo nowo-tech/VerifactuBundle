@@ -19,6 +19,15 @@ final class StoredBillingRecord
     public const STATUS_ACCEPTED = 'accepted';
     public const STATUS_FAILED   = 'failed';
 
+    /** Claimed by a batch submission in flight (1.7). */
+    public const STATUS_SENDING = 'sending';
+
+    /** AEAT AceptadoConErrores: registered, with errors to correct (1.7). */
+    public const STATUS_ACCEPTED_WITH_ERRORS = 'accepted_errors';
+
+    /** AEAT Incorrecto: not registered; correct it with a new record (Subsanacion S, RechazoPrevio X) (1.7). */
+    public const STATUS_REJECTED = 'rejected';
+
     /**
      * Creates a stored record.
      */
@@ -27,6 +36,9 @@ final class StoredBillingRecord
         public readonly BillingRecord $record,
         public readonly string $submissionStatus = self::STATUS_PENDING,
         public readonly ?string $submissionReference = null,
+        public readonly int $submissionAttempts = 0,
+        public readonly ?int $submissionErrorCode = null,
+        public readonly ?string $submissionError = null,
     ) {
     }
 }

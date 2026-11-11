@@ -90,6 +90,8 @@ final class BillingRecordXmlGenerator
         $xml .= '  <IDVersion>1.0</IDVersion>' . "\n";
         $xml .= $this->renderIdFactura($record);
         $xml .= '  <NombreRazonEmisor>' . $this->escape($issuerName) . '</NombreRazonEmisor>' . "\n";
+        $xml .= $this->renderFlag('Subsanacion', $record->correction);
+        $xml .= $this->renderFlag('RechazoPrevio', $record->previousRejection);
         $xml .= '  <TipoFactura>' . $this->escape($record->invoiceType) . '</TipoFactura>' . "\n";
         $xml .= $this->renderRectification($record);
         if ($record->operationDate !== null && trim($record->operationDate) !== '') {
@@ -126,6 +128,8 @@ final class BillingRecordXmlGenerator
         $xml .= '<RegistroAnulacion xmlns="' . self::NS_SUMINISTRO . '">' . "\n";
         $xml .= '  <IDVersion>1.0</IDVersion>' . "\n";
         $xml .= $this->renderIdFacturaAnulada($record);
+        $xml .= $this->renderFlag('SinRegistroPrevio', $record->withoutPreviousRecord);
+        $xml .= $this->renderFlag('RechazoPrevio', $record->previousRejection);
         $xml .= $this->renderEncadenamiento($previousState);
         $xml .= $this->renderSistemaInformatico($softwareConfig, $installationConfig);
         $xml .= '  <FechaHoraHusoGenRegistro>' . $this->escape($record->generatedAt) . '</FechaHoraHusoGenRegistro>' . "\n";
@@ -133,6 +137,16 @@ final class BillingRecordXmlGenerator
         $xml .= '  <Huella>' . $this->escape($hash) . '</Huella>' . "\n";
 
         return $xml . '</RegistroAnulacion>';
+    }
+
+    /**
+     * An optional one-letter flag (Subsanacion, RechazoPrevio, SinRegistroPrevio); omitted when null or empty.
+     */
+    private function renderFlag(string $element, ?string $value): string
+    {
+        $value = strtoupper(trim((string) $value));
+
+        return $value === '' ? '' : '  <' . $element . '>' . $this->escape($value) . '</' . $element . '>' . "\n";
     }
 
     private function renderIdFacturaAnulada(BillingRecord $record): string

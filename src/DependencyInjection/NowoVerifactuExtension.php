@@ -8,10 +8,14 @@ use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use LogicException;
 use Nowo\VerifactuBundle\Certificate\CertificateProviderInterface;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
+use Nowo\VerifactuBundle\Client\BatchAeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Nowo\VerifactuBundle\Client\SoapAeatSubmissionClient;
+use Nowo\VerifactuBundle\Command\SubmitPendingCommand;
 use Nowo\VerifactuBundle\Command\VerifyChainCommand;
 use Nowo\VerifactuBundle\Doctrine\TablePrefixListener;
+use Nowo\VerifactuBundle\Messenger\SubmitPendingBillingRecords;
+use Nowo\VerifactuBundle\Messenger\SubmitPendingBillingRecordsHandler;
 use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
@@ -21,18 +25,25 @@ use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
+use Nowo\VerifactuBundle\Repository\SubmissionQueueInterface;
+use Nowo\VerifactuBundle\Service\BillingRecordBatchSubmitter;
 use Nowo\VerifactuBundle\Service\ChainVerifier;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Signer\XadesBillingRecordSigner;
+use Nowo\VerifactuBundle\Submission\CacheFlowControl;
+use Nowo\VerifactuBundle\Submission\FlowControlInterface;
 use Symfony\Component\Config\Definition\Processor;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Extension\Extension;
 use Symfony\Component\DependencyInjection\Extension\PrependExtensionInterface;
 use Symfony\Component\DependencyInjection\Loader\YamlFileLoader;
 use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\Messenger\MessageBusInterface;
 
+use function interface_exists;
 use function is_string;
 
 /**
@@ -91,8 +102,9 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         $this->assertPersistentChainForProduction($config);
         $this->configureHashChainRepository($container, $config);
         $this->configureProviders($container, $config);
-        $this->configureRecordStore($container, $config);
+        $store = $this->configureRecordStore($container, $config);
         $this->configureSubmissionClient($container, $config);
+        $this->configureBatchSubmission($container, $config, $store);
         $this->configureSigner($container, $config);
         $this->registerTablePrefixListener($container);
     }
@@ -225,7 +237,7 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
      *
      * @param array<string, mixed> $config
      */
-    private function configureRecordStore(ContainerBuilder $container, array $config): void
+    private function configureRecordStore(ContainerBuilder $container, array $config): ?string
     {
         $service = $config['record_store']['service'];
         $storage = $config['record_store']['storage'];
@@ -251,11 +263,67 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
             $container->removeAlias(ChainVerifier::SERVICE_NAME);
             $container->removeAlias(BillingRecordStoreInterface::class);
 
-            return;
+            return null;
         }
 
         $container->setAlias(BillingRecordStoreInterface::class, $service);
         $container->setAlias('nowo_verifactu.billing_record_store', $service)->setPublic(true);
+
+        return $service;
+    }
+
+    /**
+     * Wires the batch submitter (V7) over the record store, which must implement SubmissionQueueInterface (the bundle
+     * stores do). Without a record store there is nothing to send: the submitter, its command and its Messenger
+     * handler are removed.
+     *
+     * @param array<string, mixed> $config
+     */
+    private function configureBatchSubmission(ContainerBuilder $container, array $config, ?string $store): void
+    {
+        if ($store === null) {
+            $container->removeDefinition(BillingRecordBatchSubmitter::class);
+            $container->removeDefinition(SubmitPendingCommand::class);
+            $container->removeAlias(BillingRecordBatchSubmitter::SERVICE_NAME);
+
+            return;
+        }
+        if ($config['submission']['claim_timeout'] <= $config['aeat']['timeout']) {
+            throw new LogicException('nowo_verifactu.submission.claim_timeout must be longer than nowo_verifactu.aeat.timeout: a claim must outlive the AEAT request it protects.');
+        }
+
+        $container->setAlias(SubmissionQueueInterface::class, $store);
+
+        $client = $config['submission']['client']
+            ?? $config['aeat']['submission_client']
+            ?? ($this->hasCertificate($config) ? SoapAeatSubmissionClient::class : NullAeatSubmissionClient::class);
+        $container->setAlias(BatchAeatSubmissionClientInterface::class, $client);
+
+        $flowControl = $config['submission']['flow_control'];
+        if ($flowControl === null) {
+            $container->setDefinition(CacheFlowControl::class, new Definition(CacheFlowControl::class, [new Reference('cache.app')]));
+            $flowControl = CacheFlowControl::class;
+        }
+        $container->setAlias(FlowControlInterface::class, $flowControl);
+
+        $container->getDefinition(BillingRecordBatchSubmitter::class)
+            ->setArgument('$queue', new Reference(SubmissionQueueInterface::class))
+            ->setArgument('$client', new Reference(BatchAeatSubmissionClientInterface::class))
+            ->setArgument('$flowControl', new Reference(FlowControlInterface::class))
+            ->setArgument('$clock', new Reference('clock', ContainerInterface::NULL_ON_INVALID_REFERENCE))
+            ->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE))
+            ->setArgument('$batchSize', $config['submission']['batch_size'])
+            ->setArgument('$claimTimeout', $config['submission']['claim_timeout'])
+            ->setArgument('$defaultWait', $config['submission']['default_wait'])
+            ->setArgument('$flowControlScope', $config['submission']['flow_control_scope']);
+
+        if (interface_exists(MessageBusInterface::class)) {
+            $container->setDefinition(SubmitPendingBillingRecordsHandler::class, (new Definition(SubmitPendingBillingRecordsHandler::class, [
+                new Reference(BillingRecordBatchSubmitter::class),
+                new Reference(MessageBusInterface::class, ContainerInterface::NULL_ON_INVALID_REFERENCE),
+                new Reference('clock', ContainerInterface::NULL_ON_INVALID_REFERENCE),
+            ]))->addTag('messenger.message_handler', ['handles' => SubmitPendingBillingRecords::class]));
+        }
     }
 
     /**

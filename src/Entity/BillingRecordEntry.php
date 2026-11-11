@@ -22,6 +22,7 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Entity]
 #[ORM\Table(name: 'verifactu_billing_record')]
 #[ORM\UniqueConstraint(name: 'uniq_verifactu_billing_record_hash', columns: ['issuer_nif', 'hash'])]
+#[ORM\Index(name: 'idx_verifactu_billing_record_submission', columns: ['issuer_nif', 'submission_status', 'position'])]
 class BillingRecordEntry
 {
     #[ORM\Id]
@@ -81,6 +82,35 @@ class BillingRecordEntry
 
     #[ORM\Column(name: 'created_at', type: Types::DATETIME_IMMUTABLE)]
     private DateTimeImmutable $createdAt;
+
+    /** Number of AEAT submissions of this record (1.7, batch submission). */
+    #[ORM\Column(name: 'submission_attempts', type: Types::INTEGER, options: ['default' => 0])]
+    private int $submissionAttempts = 0;
+
+    /** Token of the submission that claimed the record while it is in flight (1.7). */
+    #[ORM\Column(name: 'submission_claim', type: Types::STRING, length: 32, nullable: true)]
+    /** @phpstan-ignore property.unusedType, property.onlyWritten (written by DoctrineBillingRecordStore through DBAL) */
+    private ?string $submissionClaim = null;
+
+    /** When the in-flight claim was taken (1.7). */
+    #[ORM\Column(name: 'submission_claimed_at', type: Types::DATETIME_IMMUTABLE, nullable: true)]
+    /** @phpstan-ignore property.unusedType, property.onlyWritten (written by DoctrineBillingRecordStore through DBAL) */
+    private ?DateTimeImmutable $submissionClaimedAt = null;
+
+    /** AEAT CodigoErrorRegistro of the last answer (1.7). */
+    #[ORM\Column(name: 'submission_error_code', type: Types::INTEGER, nullable: true)]
+    /** @phpstan-ignore property.unusedType (written by DoctrineBillingRecordStore through DBAL) */
+    private ?int $submissionErrorCode = null;
+
+    /** AEAT DescripcionErrorRegistro of the last answer, or the failure of the last attempt (1.7). */
+    #[ORM\Column(name: 'submission_error', type: Types::TEXT, nullable: true)]
+    /** @phpstan-ignore property.unusedType (written by DoctrineBillingRecordStore through DBAL) */
+    private ?string $submissionError = null;
+
+    /** When the AEAT answered for this record (1.7). */
+    #[ORM\Column(name: 'submitted_at', type: Types::DATETIME_IMMUTABLE, nullable: true)]
+    /** @phpstan-ignore property.unusedType (written by DoctrineBillingRecordStore through DBAL) */
+    private ?DateTimeImmutable $submittedAt = null;
 
     /**
      * Creates a log entry (used by tests and hosts that read the table through the ORM; the bundle writes it with DBAL).
@@ -256,6 +286,38 @@ class BillingRecordEntry
     public function getSignedXml(): ?string
     {
         return $this->signedXml;
+    }
+
+    /**
+     * Returns the number of AEAT submissions of this record.
+     */
+    public function getSubmissionAttempts(): int
+    {
+        return $this->submissionAttempts;
+    }
+
+    /**
+     * Returns the AEAT CodigoErrorRegistro of the last answer, if any.
+     */
+    public function getSubmissionErrorCode(): ?int
+    {
+        return $this->submissionErrorCode;
+    }
+
+    /**
+     * Returns the AEAT error description of the last answer, or the failure of the last attempt.
+     */
+    public function getSubmissionError(): ?string
+    {
+        return $this->submissionError;
+    }
+
+    /**
+     * Returns when the AEAT answered for this record.
+     */
+    public function getSubmittedAt(): ?DateTimeImmutable
+    {
+        return $this->submittedAt;
     }
 
     /**

@@ -426,7 +426,7 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *         resources?: Param|string|array<string, scalar|Param|null>,
  *     },
  *     messenger?: bool|array{ // Messenger configuration
- *         enabled?: bool|Param, // Default: false
+ *         enabled?: bool|Param, // Default: true
  *         routing?: array<string, Param|string|array{ // Default: []
  *             senders?: list<scalar|Param|null>,
  *         }>,
@@ -999,6 +999,14 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *     record_store?: array{ // Optional log of every chained record (hash, XML, submission state) and the nowo:verifactu:verify-chain command
  *         storage?: "none"|"memory"|"doctrine"|Param, // Default: "none"
  *         service?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface (overrides storage) // Default: null
+ *     },
+ *     submission?: array{ // Batch submission of the stored records (BillingRecordBatchSubmitter, nowo:verifactu:submit-pending, SubmitPendingBillingRecords message); needs a record store
+ *         batch_size?: int|Param, // Records per AEAT request; the AEAT limit is 1000 (Servicios web v1.0.3 p. 10) // Default: 1000
+ *         claim_timeout?: int|Param, // Seconds after which a batch claimed by a process that died is claimed again (longer than aeat.timeout) // Default: 300
+ *         default_wait?: int|Param, // Seconds to wait between submissions when the AEAT returned no TiempoEsperaEnvio (initially 60, Orden HAC/1177/2024 art. 16.2) // Default: 60
+ *         flow_control_scope?: "issuer"|"global"|Param, // issuer: one AEAT wait per issuer NIF; global: one wait shared by every issuer // Default: "issuer"
+ *         flow_control?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Submission\FlowControlInterface (null = CacheFlowControl over cache.app) // Default: null
+ *         client?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Client\BatchAeatSubmissionClientInterface (null = the AEAT submission client) // Default: null
  *     },
  *     doctrine?: array{ // Doctrine storage options (REQ-ORM-002)
  *         mapping?: "attribute"|"xml"|Param, // Mapping of the bundle entities: attribute (default) or xml (Resources/config/doctrine/*.orm.xml, for hosts that only load XML mappings) // Default: "attribute"

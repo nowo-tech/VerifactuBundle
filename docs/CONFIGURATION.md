@@ -138,6 +138,26 @@ R1 – R5 need TipoRectificativa (AEAT "Validaciones y errores" v1.2.2, §3.1.3 
 schema but the AEAT warns when an IVA line has none and rejects it from 2027-01-01 (§15.6): pass it per line or set
 `xml.default_regime_key` (for example `'01'`, general regime).
 
+### Batch submission (1.7)
+
+```yaml
+nowo_verifactu:
+    record_store:
+        storage: doctrine          # the queue of records to send
+    submission:
+        batch_size: 1000           # records per AEAT request (1 – 1000)
+        claim_timeout: 300         # s; a batch claimed by a process that died is claimed again (> aeat.timeout)
+        default_wait: 60           # s between submissions when the AEAT gave no TiempoEsperaEnvio
+        flow_control_scope: issuer # issuer: one AEAT wait per NIF; global: one wait for every issuer
+        flow_control: null         # service id of a Submission\FlowControlInterface (null = cache.app)
+        client: null               # service id of a Client\BatchAeatSubmissionClientInterface (null = the AEAT client)
+```
+
+Without a record store the submitter, `nowo:verifactu:submit-pending` and the Messenger handler are not registered.
+With symfony/messenger installed, `SubmitPendingBillingRecordsHandler` handles `SubmitPendingBillingRecords`; route the
+message to an async transport. A custom `aeat.submission_client` must also implement `BatchAeatSubmissionClientInterface`
+(or set `submission.client`). See [USAGE](USAGE.md#batch-submission-to-the-aeat).
+
 ### XAdES signing (No-Veri*Factu)
 
 In `no_verifactu` mode, billing records are signed automatically when a certificate is configured. You can force signing in Veri*Factu mode with `aeat.sign_xades: true`.

@@ -79,6 +79,26 @@ final class DbalRowWriter
     }
 
     /**
+     * The quoted table name of an entity (table prefix and quote strategy applied), for hand-written statements.
+     *
+     * @param class-string $entityClass
+     */
+    public static function table(EntityManagerInterface $entityManager, string $entityClass): string
+    {
+        return self::tableName($entityManager, $entityManager->getClassMetadata($entityClass));
+    }
+
+    /**
+     * The quoted column name of an entity field, for hand-written statements.
+     *
+     * @param class-string $entityClass
+     */
+    public static function column(EntityManagerInterface $entityManager, string $entityClass, string $field): string
+    {
+        return self::columnName($entityManager, $entityManager->getClassMetadata($entityClass), $field);
+    }
+
+    /**
      * Updates the rows matching the criteria.
      *
      * @param class-string $entityClass

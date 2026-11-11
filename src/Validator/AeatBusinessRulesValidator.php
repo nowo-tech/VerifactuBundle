@@ -102,7 +102,33 @@ final class AeatBusinessRulesValidator
             }
         }
 
+        if (!$this->hasValidCorrectionFlags($record)) {
+            $errors[] = $this->translator->trans('validation.correction_flags.invalid', [], 'NowoVerifactuBundle');
+        }
+
         return $errors;
+    }
+
+    /**
+     * Subsanacion / RechazoPrevio / SinRegistroPrevio (AEAT Servicios web v1.0.3, Anexo II §9.1 – §10.2): Alta takes
+     * Subsanacion S / N and RechazoPrevio N / S / X, where X (an Alta of a record the AEAT rejected) needs Subsanacion
+     * S; Anulacion takes SinRegistroPrevio S / N and RechazoPrevio S / N.
+     */
+    private function hasValidCorrectionFlags(BillingRecord $record): bool
+    {
+        $flag  = static fn (?string $value): string => strtoupper(trim((string) $value));
+        $yesNo = ['', BillingRecord::FLAG_YES, BillingRecord::FLAG_NO];
+
+        if ($record->recordType === RecordType::Alta) {
+            return in_array($flag($record->correction), $yesNo, true)
+                && in_array($flag($record->previousRejection), [...$yesNo, BillingRecord::PREVIOUS_REJECTION_NOT_REGISTERED], true)
+                && $flag($record->withoutPreviousRecord) === ''
+                && ($flag($record->previousRejection) !== BillingRecord::PREVIOUS_REJECTION_NOT_REGISTERED || $flag($record->correction) === BillingRecord::FLAG_YES);
+        }
+
+        return $flag($record->correction) === ''
+            && in_array($flag($record->previousRejection), $yesNo, true)
+            && in_array($flag($record->withoutPreviousRecord), $yesNo, true);
     }
 
     /**
