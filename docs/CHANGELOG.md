@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [[Unreleased]](#unreleased)
+- [[1.6.0] - 2026-11-11](#160---2026-11-11)
 - [[1.5.0] - 2026-11-10](#150---2026-11-10)
 - [[1.4.1] - 2026-11-10](#141---2026-11-10)
 - [[1.4.0] - 2026-10-30](#140---2026-10-30)
@@ -29,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [[1.0.0] - 2026-07-18](#100---2026-07-18)
 
 ## [Unreleased]
+
+## [1.6.0] - 2026-11-11
+
+Complete AEAT records (recipients, rectification, operation date, regime keys), runtime AEAT environment and per-issuer certificate providers with in-memory TLS keys, one hash chain per environment, issuer enforcement and reset-chain. See [UPGRADING](https://github.com/nowo-tech/VerifactuBundle/blob/v1.6.0/docs/UPGRADING.md#to-160).
 
 Complete AEAT records (V4) and the rest of the runtime providers (V5) for Symfony Beacon spec 226. A record built as in
 1.5 produces the same XML. See [UPGRADING](UPGRADING.md#unreleased).
@@ -505,7 +510,8 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.3.0...v1.4.0
