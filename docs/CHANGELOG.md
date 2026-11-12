@@ -40,6 +40,10 @@ Target: 1.7.1 (patch).
   annotated inline (`TemporaryCertificateFile` one-per-process shutdown handler, `BillingRecordBatchSubmitter` write to
   the shared flow-control store) and recorded in `docs/FRANKENPHP-WORKER-AUDIT.md`. No behaviour change.
 
+### Tests
+
+- `WorkerKeptAliveKernelTest`: one kept-alive kernel, 1000 `http_kernel` requests as two issuers with the in-memory chain and record store, no resetter; `InMemoryBillingRecordStore::reset()` unit test (REQ-RUNTIME-002). `docs/FRANKENPHP-WORKER-AUDIT.md` refreshed.
+
 ## [1.7.0] - 2026-11-11
 
 Batch submission to the AEAT (V7) for Symfony Beacon spec 226. Standard hosts need no change; with the Doctrine record

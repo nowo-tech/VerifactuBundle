@@ -4,6 +4,7 @@
 |-------|-------|
 | Package | `nowo-tech/verifactu-bundle` (`symfony-bundle`) |
 | Audited revision | `v1.0.9` (release of worker-mode remediations) |
+| Reviewed version | `v1.7.0` plus the unreleased commit `06a240b` (2026-11-12 review). `git diff v1.7.0 -- src` shows only `@igor-ignore` comment changes in `Certificate/TemporaryCertificateFile.php` and `Service/BillingRecordBatchSubmitter.php`; no statement changed |
 | Audit date | 2026-09-23 (re-confirmed 2026-09-25) |
 | Method | Manual review of every file under `src/` (services, repositories, entity, clients, signer, validators, Twig extension, commands, DI extension, `Resources/config`) |
 | Remediation (2026-09-23 / shipped in 1.0.9) | W-01 resolved (request-scoped in-memory storage via `src/EventSubscriber/WorkerStateResetSubscriber.php` + `kernel.reset`, non-debug warning, `hash_chain.repository` alias bug fixed); W-02/W-03 resolved in `src/Repository/DoctrineHashChainRepository.php` (fresh reads, detach, closed-manager reset); W-04 resolved; W-05 accepted. Tests: `tests/Integration/WorkerModeIntegrationTest.php`, `tests/Integration/DoctrineHashChainWorkerModeTest.php` |
@@ -21,6 +22,7 @@
   - [W-03 — A failed flush closes the EntityManager for the rest of the worker's life (Medium, scenario B)](#w-03--a-failed-flush-closes-the-entitymanager-for-the-rest-of-the-workers-life-medium-scenario-b)
   - [W-04 — `XsdValidator` forces the libxml internal-errors flag to `false` instead of restoring it (Low)](#w-04--xsdvalidator-forces-the-libxml-internal-errors-flag-to-false-instead-of-restoring-it-low)
   - [W-05 — Hash-chain read-then-write is not atomic (Info)](#w-05--hash-chain-read-then-write-is-not-atomic-info)
+- [Kept-alive kernel tests (REQ-RUNTIME-002)](#kept-alive-kernel-tests-req-runtime-002)
 - [Usage recommendations in worker mode](#usage-recommendations-in-worker-mode)
 - [Re-audit triggers](#re-audit-triggers)
 
@@ -55,6 +57,7 @@ A bundle that is safe under **B** is safe under **A** and under classic mode / P
 | Service | Shared | Mutable state | Scenario A | Scenario B |
 |---------|--------|---------------|------------|------------|
 | `Repository\InMemoryHashChainRepository` (default `HashChainRepositoryInterface`) | yes (public alias) | `private array $states` (request-scoped) | ✅ `kernel.reset` → `clear()` | ✅ cleared per main request |
+| `Repository\InMemoryBillingRecordStore` (`record_store.storage: memory`, public alias `nowo_verifactu.repository.in_memory_billing_record_store`) | yes | `private array $records`, `private array $claims` (request-scoped) | ✅ `kernel.reset` → `clear()` / `reset()` (`ResetInterface`) | ✅ cleared per main request by `WorkerStateResetSubscriber` |
 | `Repository\DoctrineHashChainRepository` (`storage: doctrine`) | yes | none (`readonly` registry); fresh reads, detached entities | ✅ | ✅ |
 | `Service\BillingRecordProcessor` | yes (public alias) | none (`readonly` collaborators and config) | inherits repository status | inherits repository status |
 | `Generator\HashChainGenerator` | yes | none | ✅ | ✅ |
@@ -118,6 +121,17 @@ A bundle that is safe under **B** is safe under **A** and under classic mode / P
 - **Status:** Accepted — not worker-specific; a correct lock spans the whole `BillingRecordProcessor::process()` (read, sign, store) and belongs to the application (Symfony Lock keyed by NIF or a single Messenger consumer). Documented below.
 
 No other findings. AEAT submission uses explicit, configurable timeouts, the cURL handle is closed on every call, and the certificate is loaded per call (so certificate rotation does not need a worker restart).
+
+## Kept-alive kernel tests (REQ-RUNTIME-002)
+
+**Safe with kernel reset false.** Two tests boot ONE kernel and never call `services_resetter` or `kernel.reset`:
+
+- `tests/Integration/Worker/WorkerKeptAliveKernelTest.php::testInMemoryStorageInOneKernelWithoutResetterNeverCarriesStateBetweenRequests` (default in-memory hash chain plus `record_store.storage: memory` through `Tests\Kernel\MemoryStoreTestKernel`): 1000 `http_kernel` `handle()` + `terminate()` main requests alternating two issuers (tenants). Each request must start with an empty chain and an empty record store for both issuers (cleared by `WorkerStateResetSubscriber`), chain two records (the second one's `previousHash` is the first one's hash), see only its own issuer's records, and memory growth after a 50-request warm-up must stay under 4 MiB.
+- `tests/Integration/WorkerModeWithoutKernelResetTest.php::testManyRequestsForTwoIssuersKeepMemoryFlatAndTheChainsApart` (Doctrine storage, SQLite): 1000 requests for two issuers on one booted non-debug kernel, no `EntityManager::clear()` by the host; no managed entity survives a request, no transaction stays open, memory stays flat, the two chains stay apart and verify.
+
+`tests/Unit/Repository/InMemoryBillingRecordStoreTest.php::testResetDropsRecordsAndClaimsLikeClear` covers `reset()` (the `kernel.reset` / `ResetInterface` entry point), which drops records and claims.
+
+Rule 7 (host Doctrine): the bundle never clears, flushes or closes the host's default EntityManager; `DoctrineHashChainRepository` takes the manager of the bundle entity from `ManagerRegistry` per call and only resets a manager it finds closed. Clearing the application's own identity map between requests stays the application's responsibility.
 
 ## Usage recommendations in worker mode
 
