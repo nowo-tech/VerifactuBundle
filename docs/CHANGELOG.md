@@ -32,7 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Target: 1.7.1 (patch).
+Target: 1.8.0 (minor).
+
+### Added
+
+- `Service\BillingRecordProcessorInterface` (`process()`, `processBatch()`, `processToResult()`, `processBatchToResult()`), implemented by `BillingRecordProcessor` and aliased in the container; `SubmitToAeatSandboxCommand` type-hints it (REQ-ARCH-001 rule 1). The class id and the `nowo_verifactu.service.billing_record_processor` id keep working.
+- Typed result value objects `Model\BillingRecordResult` and `Model\BillingRecordBatchResult`, the typed form of the arrays returned by `process()` / `processBatch()` (the arrays are unchanged).
+
+### Security
+
+- `SpanishTaxIdValidator`: the NIF, NIE and CIF patterns end with `/D`, so a value with a trailing newline cannot pass `$` (REQ-SEC-006 item 5). `isValid()` already trimmed its input; behaviour for real values is unchanged.
 
 ### Changed
 

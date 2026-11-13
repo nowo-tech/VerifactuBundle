@@ -17,6 +17,8 @@ use Nowo\VerifactuBundle\Generator\HashChainGenerator;
 use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\Amount;
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Model\BillingRecordBatchResult;
+use Nowo\VerifactuBundle\Model\BillingRecordResult;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Model\IssuerIdentity;
 use Nowo\VerifactuBundle\Model\RecordType;
@@ -50,7 +52,7 @@ use function ksort;
  * @copyright 2026 Nowo.tech
  */
 #[AsAlias(id: self::SERVICE_NAME, public: true)]
-final class BillingRecordProcessor
+final class BillingRecordProcessor implements BillingRecordProcessorInterface
 {
     public const SERVICE_NAME = 'nowo_verifactu.service.billing_record_processor';
 
@@ -298,6 +300,24 @@ final class BillingRecordProcessor
         }
 
         return $result;
+    }
+
+    /**
+     * Same as process(), returned as a typed value object.
+     */
+    public function processToResult(BillingRecord $record, bool $submitToAeat = false, bool $persistChainState = true): BillingRecordResult
+    {
+        return BillingRecordResult::fromArray($this->process($record, $submitToAeat, $persistChainState));
+    }
+
+    /**
+     * Same as processBatch(), returned as a typed value object.
+     *
+     * @param list<BillingRecord> $records
+     */
+    public function processBatchToResult(array $records, bool $persistChainState = true): BillingRecordBatchResult
+    {
+        return BillingRecordBatchResult::fromArray($this->processBatch($records, $persistChainState));
     }
 
     /**

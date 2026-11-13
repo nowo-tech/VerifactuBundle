@@ -3,6 +3,7 @@
 ## Table of contents
 
 - [Unreleased](#unreleased)
+- [To 1.8.0](#to-180)
 - [To 1.7.0](#to-170)
 - [To 1.6.0](#to-160)
 - [To 1.5.0](#to-150)
@@ -34,6 +35,18 @@
 - [From 1.0.7 to 1.0.8](#from-107-to-108)
 
 ## Unreleased
+
+## To 1.8.0
+
+From **1.7.0** — minor, strictly additive, no configuration change:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- New `Service\BillingRecordProcessorInterface`, aliased to `BillingRecordProcessor`. Type-hint the interface; a host can re-alias it to its own implementation. `process()` and `processBatch()` still return arrays. `processToResult()` and `processBatchToResult()` return the new `BillingRecordResult` / `BillingRecordBatchResult` value objects with the same content.
+- A host that **implements** `BillingRecordProcessorInterface` (or decorates the processor) must provide the four methods; the bundle's own class does.
+- The Spanish tax id patterns now end with `/D` (REQ-SEC-006 item 5). No effect on valid ids.
 
 ## To 1.7.0
 

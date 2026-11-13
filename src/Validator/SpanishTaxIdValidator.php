@@ -41,7 +41,7 @@ final class SpanishTaxIdValidator
 
     private function isValidNif(string $taxId): bool
     {
-        if (!preg_match('/^\d{8}[A-Z]$/', $taxId)) {
+        if (!preg_match('/^\d{8}[A-Z]$/D', $taxId)) {
             return false;
         }
 
@@ -54,7 +54,7 @@ final class SpanishTaxIdValidator
 
     private function isValidNie(string $taxId): bool
     {
-        if (!preg_match('/^[XYZ]\d{7}[A-Z]$/', $taxId)) {
+        if (!preg_match('/^[XYZ]\d{7}[A-Z]$/D', $taxId)) {
             return false;
         }
 
@@ -74,7 +74,7 @@ final class SpanishTaxIdValidator
      */
     private function isValidCif(string $taxId): bool
     {
-        if (!preg_match('/^[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]$/', $taxId)) {
+        if (!preg_match('/^[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]$/D', $taxId)) {
             return false;
         }
 
