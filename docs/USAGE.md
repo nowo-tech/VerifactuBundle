@@ -22,7 +22,7 @@
 ```php
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
-use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
+use Nowo\VerifactuBundle\Service\BillingRecordProcessorInterface;
 
 $result = $processor->process(new BillingRecord(
     RecordType::Alta,
@@ -449,7 +449,7 @@ final readonly class VerifactuInvoiceRegistrar implements InvoiceRegistrar
 {
     public function __construct(
         private InvoiceToBillingRecordMapper $mapper,
-        private BillingRecordProcessor $processor,
+        private BillingRecordProcessorInterface $processor,
         private ClockInterface $clock,
     ) {}
 
@@ -465,6 +465,7 @@ final readonly class VerifactuInvoiceRegistrar implements InvoiceRegistrar
         ));
 
         $result = $this->processor->process($record, submitToAeat: true);
+        // Or, typed: $result = $this->processor->processToResult($record, submitToAeat: true); ($result->record, ->errors, ...)
 
         return new RegistrationResult(
             $result['record']->hash,

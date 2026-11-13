@@ -13,7 +13,7 @@ use Nowo\VerifactuBundle\Integration\InvoiceToBillingRecordMapper;
 use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
-use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
+use Nowo\VerifactuBundle\Service\BillingRecordProcessorInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -44,7 +44,7 @@ final class SubmitToAeatSandboxCommand extends Command
      */
     public function __construct(
         private readonly InvoiceToBillingRecordMapper $mapper,
-        private readonly BillingRecordProcessor $processor,
+        private readonly BillingRecordProcessorInterface $processor,
         #[Autowire('%nowo_verifactu.aeat.certificate_path%')]
         private readonly ?string $certificatePath,
         #[Autowire('%nowo_verifactu.aeat.environment%')]

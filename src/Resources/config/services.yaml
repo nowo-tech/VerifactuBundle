@@ -116,6 +116,8 @@ services:
             $defaultEnvironment: '%nowo_verifactu.aeat.environment%'
             $enforceProviderIssuer: '%nowo_verifactu.providers.issuer_enforced%'
 
+    Nowo\VerifactuBundle\Service\BillingRecordProcessorInterface: '@Nowo\VerifactuBundle\Service\BillingRecordProcessor'
+
     Nowo\VerifactuBundle\Service\ChainVerifier:
         arguments:
             $defaultEnvironment: '%nowo_verifactu.aeat.environment%'
