@@ -104,9 +104,20 @@ Symfony bundle for Spanish Veri*Factu (RD 1007/2023): SHA-256 hash chains, billi
 - **FR-SIGN-001**: `XadesBillingRecordSigner` MUST sign records with PKCS#12/PEM certificates.
 - **FR-CERT-001**: `CertificateLoader` MUST load PKCS#12 and PEM material.
 
+### Runtime providers, record log & batch submission
+
+- **FR-PROV-001**: Issuer, software identity and AEAT environment MUST come from runtime providers (`IssuerProviderInterface`, `SoftwareIdentityProviderInterface`, `AeatEnvironmentProviderInterface`; config-backed defaults) read per record, never at container build; only `sandbox` / `production` exist (`AeatEnvironment`).
+- **FR-CERT-002**: The client certificate MUST come from `CertificateProviderInterface` per issuer NIF (default `ConfigCertificateProvider`); transports that take certificate contents avoid temporary files (`TemporaryCertificateFile` only as a fallback).
+- **FR-STORE-002**: The optional record log (`BillingRecordStoreInterface`, Doctrine or in-memory) MUST keep every chained record per issuer in chain order with its submission state; bundle rows are written through DBAL (`DbalRowWriter`), never by flushing the host entity manager.
+- **FR-BATCH-001**: `BillingRecordBatchSubmitter` MUST send stored records of one issuer in chain order, up to 1000 per SuministroLR request, store each AEAT answer, split refused batches and confirm duplicates.
+- **FR-BATCH-002**: `RecordSubmittedEvent` / `RecordSubmissionFailedEvent` MUST be dispatched once per record only after its outcome is committed in the record log; `IssuerSubmissionPausedEvent` once per pause and `IssuerSubmissionStalledEvent` when the AEAT gave no answer to two submissions in a row.
+- **FR-BATCH-003**: With symfony/messenger, `SubmitPendingBillingRecords` + handler MUST send the next batch and schedule the following one.
+- **FR-FLOW-001**: AEAT flow control (TiempoEsperaEnvio) MUST be honoured across processes (`FlowControlInterface`, default `CacheFlowControl` on a shared PSR-6 pool).
+- **FR-VERIFY-001**: `ChainVerifier` MUST check positions, fingerprints and links of the stored chain of an issuer (`verify-chain`).
+
 ### CLI & Twig
 
-- **FR-CLI-001**: Commands: validate-record, verify-hash, submit-sandbox.
+- **FR-CLI-001**: Commands: validate-record, verify-hash, submit-sandbox, submit-pending, verify-chain, reset-chain.
 - **FR-TWIG-001**: Twig extension with qr_data_uri, qr_url, legend functions.
 - **FR-I18N-001**: Seven locale translation files for validation messages.
 
@@ -114,7 +125,7 @@ Symfony bundle for Spanish Veri*Factu (RD 1007/2023): SHA-256 hash chains, billi
 
 ## Success Criteria
 
-- **SC-001**: **55/55** artifacts mapped in [`code-inventory.md`](code-inventory.md).
+- **SC-001**: **116/116** artifacts mapped in [`code-inventory.md`](code-inventory.md).
 - **SC-002**: AEAT example hash test vector passes in PHPUnit.
 - **SC-003**: PHPUnit + PHPStan pass in CI; coverage target ~100% (minimum 80% enforced in CI).
 - **SC-004**: XSD validation passes for generated Alta and Anulación XML in tests.

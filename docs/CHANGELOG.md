@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `SubmitPendingBillingRecordsHandler`: the Messenger `DelayStamp` now receives integer milliseconds (`(int) ($delay * 1000)`); the backoff `2 ** n` is typed `int|float`, which PHPStan 2 rejects. Same values, no behaviour change.
+
+### Documentation
+
+- Spec Kit baseline: `code-inventory.md` maps all 116 `src/` files again (60 files added in 1.2–1.8 were missing: runtime providers, certificate provider, record log and submission queue, batch submitter and flow control, Messenger, chain verifier, XML mappings, models, events, exceptions and commands); `spec.md` gains `FR-PROV-001`, `FR-CERT-002`, `FR-STORE-002`, `FR-BATCH-001`…`003`, `FR-FLOW-001`, `FR-VERIFY-001` (REQ-SPECKIT-001/003), and `docs/SPEC-DRIVEN-DEVELOPMENT.md` links `docs/SPEC-KIT.md` (REQ-SPECKIT-002).
+
 ## [1.8.0] - 2026-11-13
 
 Target: 1.8.0 (minor).
