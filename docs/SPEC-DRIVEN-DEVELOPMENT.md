@@ -2,7 +2,7 @@
 
 Three synchronized layers:
 
-1. **GitHub Spec Kit baseline** — `specs/001-baseline/` ([`spec.md`](../specs/001-baseline/spec.md), [`code-inventory.md`](../specs/001-baseline/code-inventory.md))
+1. **GitHub Spec Kit baseline** — [`specs/001-baseline/`](../specs/001-baseline/) ([`spec.md`](../specs/001-baseline/spec.md), [`code-inventory.md`](../specs/001-baseline/code-inventory.md)), initialized with [GitHub Spec Kit](https://github.com/github/spec-kit) (`.specify/`, **Cursor Agent** skills in `.cursor/skills/speckit-*`). The inventory maps **100%** of production code in `src/`. **How to install, initialize, and use Spec Kit:** [`SPEC-KIT.md`](SPEC-KIT.md).
 2. **Product behavior** — [`USAGE.md`](USAGE.md), [`CONFIGURATION.md`](CONFIGURATION.md), [`INTEGRATION-NOWO.md`](INTEGRATION-NOWO.md), [`SANDBOX.md`](SANDBOX.md)
 3. **Traceability** — `REQ-*` in Makefiles, CI, and demos
 
