@@ -89,7 +89,7 @@ final class SubmitPendingBillingRecordsHandler
             ]);
         }
         if ($delay !== null && $this->bus instanceof MessageBusInterface) {
-            $this->bus->dispatch(new SubmitPendingBillingRecords($result->issuerNif, $failedRuns, $wakeUpToken), [new DelayStamp($delay * 1000)]);
+            $this->bus->dispatch(new SubmitPendingBillingRecords($result->issuerNif, $failedRuns, $wakeUpToken), [new DelayStamp((int) ($delay * 1000))]);
         }
 
         return $result;
