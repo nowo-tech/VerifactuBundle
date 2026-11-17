@@ -1,4 +1,4 @@
 twig:
     default_path: '%kernel.project_dir%/templates'
-    form_themes: ['bootstrap_5_layout.html.twig']
-
+    # REQ-DEMO-015: UiKit's form theme (FormKit profiles sit on top of it); no CSS framework form theme.
+    form_themes: ['@NowoUiKit/form/nowo_ui_layout.html.twig']

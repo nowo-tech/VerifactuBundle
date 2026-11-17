@@ -7,6 +7,8 @@ return [
     Symfony\Bundle\TwigBundle\TwigBundle::class               => ['all' => true],
     Doctrine\Bundle\DoctrineBundle\DoctrineBundle::class      => ['all' => true],
     Nowo\VerifactuBundle\NowoVerifactuBundle::class           => ['all' => true],
+    Nowo\FormKitBundle\NowoFormKitBundle::class               => ['all' => true],
+    Nowo\UiKitBundle\NowoUiKitBundle::class                   => ['all' => true],
     Symfony\Bundle\DebugBundle\DebugBundle::class             => ['dev' => true],
     Symfony\Bundle\WebProfilerBundle\WebProfilerBundle::class => ['dev' => true, 'test' => true],
     Nowo\HotReloadBundle\NowoHotReloadBundle::class           => ['dev' => true, 'test' => true],
