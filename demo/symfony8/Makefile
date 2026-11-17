@@ -23,6 +23,8 @@ help:
 
 up:
 	@if [ ! -f .env ]; then cp .env.example .env 2>/dev/null || true; fi
+	@echo "Installing dependencies (one-off container: the worker-mode server needs vendor/ before it starts)..."
+	@$(COMPOSE) run --rm -T --no-deps --entrypoint composer -e COMPOSER_MEMORY_LIMIT=-1 php install --no-interaction --no-scripts
 	$(COMPOSE) up -d
 	@echo "Waiting for container to be ready..."
 	@sleep 5

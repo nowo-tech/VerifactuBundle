@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Demo
+
+- The demo is built on UiKit and FormKit (REQ-DEMO-014 / REQ-DEMO-015): `templates/base.html.twig` is UiKit's admin layout with its default theme and masthead instead of the inline-styled single page, `App\Form\InvoiceType` is a FormKit form (`#[FormKitConfig('demo')]`, UiKit form theme, same flat field names), and the page uses UiKit cards, flashes, badges and buttons. The demo requires `nowo-tech/ui-kit-bundle` `^2.53` and `nowo-tech/form-kit-bundle` `^2.23`. No bundle runtime change.
+
+### Tests
+
+- REQ-TEST-011: `make demo-smoke` (root and `demo/`) boots the demo, expects HTTP 200 from `http://127.0.0.1:8010/` and tears the stack down; `.github/workflows/demo-smoke.yml` runs it weekly, on release tags and on demand.
+
 ### Fixed
 
 - `SubmitPendingBillingRecordsHandler`: the Messenger `DelayStamp` now receives integer milliseconds (`(int) ($delay * 1000)`); the backoff `2 ** n` is typed `int|float`, which PHPStan 2 rejects. Same values, no behaviour change.

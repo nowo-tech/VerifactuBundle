@@ -1,63 +1,40 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VerifactuBundle Demo — Flujo Nowo</title>
-    <style>
-        body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
-        form { display: grid; gap: 0.75rem; margin-bottom: 2rem; }
-        form div:not(.grid-2) { display: grid; gap: 0.25rem; }
-        label { font-weight: 600; }
-        input, select, button, textarea { padding: 0.5rem; font: inherit; }
-        button { cursor: pointer; width: fit-content; }
-        pre { background: #f5f5f5; padding: 1rem; overflow: auto; border-radius: 4px; font-size: 0.85rem; }
-        .errors { color: #b00020; }
-        .info { background: #eef6ff; border: 1px solid #b3d4fc; padding: 1rem; border-radius: 4px; margin-bottom: 1.5rem; }
-        .warn { background: #fff8e1; border: 1px solid #ffe082; padding: 0.75rem 1rem; border-radius: 4px; }
-        .qr { margin-top: 1rem; }
-        .legend { font-size: 0.875rem; margin-top: 0.5rem; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
-    </style>
-</head>
-<body>
-    <h1>VerifactuBundle Demo</h1>
-    <p>Flujo de adopción Nowo: factura → <code>InvoiceDraft</code> → registro AEAT con cadena de hashes persistente (Doctrine).</p>
+{% extends 'base.html.twig' %}
 
-    <div class="info">
-        <strong>Estado del sistema</strong>
-        <ul>
-            <li>Hash chain (Doctrine): {% if hashChainState %}último registro <code>{{ hashChainState.invoiceSeriesNumber }}</code> — hash <code>{{ hashChainState.hash|slice(0, 16) }}…</code>{% else %}sin registros previos{% endif %}</li>
-            <li>Certificado AEAT: {% if aeatConfigured %}<strong>configurado</strong> (envío sandbox disponible){% else %}<span class="warn">no configurado — define <code>AEAT_CERT_PATH</code> y <code>AEAT_CERT_PASSWORD</code> en <code>.env.local</code></span>{% endif %}</li>
-        </ul>
+{% block nowo_ui_page_header %}
+    <div class="nowo-ui-page-header">
+        <h1 class="nowo-ui-page-header__title">VerifactuBundle Demo</h1>
+        <p class="nowo-ui-muted">Flujo de adopción Nowo: factura → <code class="nowo-ui-code">InvoiceDraft</code> → registro AEAT con cadena de hashes persistente (Doctrine).</p>
     </div>
+{% endblock %}
 
-    {{ form_start(form) }}
-        {{ form_errors(form) }}
-        <div class="grid-2">
-            {{ form_row(form.numserie) }}
-            {{ form_row(form.fecha) }}
+{% block body %}
+    <section class="nowo-ui-card" data-testid="demo-system-state">
+        <div class="nowo-ui-card__header"><h2 class="nowo-ui-card__title">Estado del sistema</h2></div>
+        <div class="nowo-ui-card__body">
+            <ul>
+                <li>Hash chain (Doctrine): {% if hashChainState %}último registro <code class="nowo-ui-code">{{ hashChainState.invoiceSeriesNumber }}</code> — hash <code class="nowo-ui-code">{{ hashChainState.hash|slice(0, 16) }}…</code>{% else %}sin registros previos{% endif %}</li>
+                <li>Certificado AEAT: {% if aeatConfigured %}<strong>configurado</strong> (envío sandbox disponible){% else %}<span class="nowo-ui-badge nowo-ui-badge--warning">no configurado</span> — define <code class="nowo-ui-code">AEAT_CERT_PATH</code> y <code class="nowo-ui-code">AEAT_CERT_PASSWORD</code> en <code class="nowo-ui-code">.env.local</code>{% endif %}</li>
+            </ul>
         </div>
-        <div class="grid-2">
-            {{ form_row(form.record_type) }}
-            {{ form_row(form.tipo) }}
+    </section>
+
+    <section class="nowo-ui-card" data-testid="demo-invoice-form">
+        <div class="nowo-ui-card__header"><h2 class="nowo-ui-card__title">Emitir factura</h2></div>
+        <div class="nowo-ui-card__body">
+            {{ form_start(form, {attr: {class: 'nowo-ui-form'}}) }}
+                {{ form_errors(form) }}
+                {% for child in form %}
+                    {% if not child.rendered %}
+                        {{ form_row(child) }}
+                    {% endif %}
+                {% endfor %}
+            {{ form_end(form, {render_rest: false}) }}
         </div>
-        <div class="grid-2">
-            {{ form_row(form.cuota) }}
-            {{ form_row(form.importe) }}
-        </div>
-        {% for child in form %}
-            {% if not child.rendered %}
-                {{ form_row(child) }}
-            {% endif %}
-        {% endfor %}
-        <button type="submit">Emitir factura Veri*Factu</button>
-    {{ form_end(form) }}
+    </section>
 
     {% if result is not null %}
         {% if result.errors is not empty %}
-            <div class="errors">
+            <div class="nowo-ui-flash nowo-ui-flash--error" role="alert" data-testid="demo-result-errors">
                 <h2>Errores de validación</h2>
                 <ul>
                     {% for error in result.errors %}
@@ -66,38 +43,41 @@
                 </ul>
             </div>
         {% else %}
-            <h2>Registro generado</h2>
-            <p><strong>Hash:</strong> {{ result.record.hash }}</p>
-            <p><strong>Hash anterior:</strong> {{ result.record.previousHash ?? '(primer registro)' }}</p>
-            {% if result.submission is defined %}
-                <p><strong>Envío AEAT:</strong>
-                    {% if result.submission.success %}
-                        OK — referencia {{ result.submission.reference ?? '(sin CSV)' }}
-                    {% else %}
-                        Fallido
-                        {% if result.submission.errors is defined %}
-                            <ul>{% for error in result.submission.errors %}<li>{{ error }}</li>{% endfor %}</ul>
+            <section class="nowo-ui-card" data-testid="demo-result">
+                <div class="nowo-ui-card__header"><h2 class="nowo-ui-card__title">Registro generado</h2></div>
+                <div class="nowo-ui-card__body">
+                    <p><strong>Hash:</strong> {{ result.record.hash }}</p>
+                    <p><strong>Hash anterior:</strong> {{ result.record.previousHash ?? '(primer registro)' }}</p>
+                    {% if result.submission is defined %}
+                        <p><strong>Envío AEAT:</strong>
+                            {% if result.submission.success %}
+                                OK — referencia {{ result.submission.reference ?? '(sin CSV)' }}
+                            {% else %}
+                                Fallido
+                                {% if result.submission.errors is defined %}
+                                    <ul>{% for error in result.submission.errors %}<li>{{ error }}</li>{% endfor %}</ul>
+                                {% endif %}
+                            {% endif %}
+                        </p>
+                        {% if result.submission.endpoint is defined %}
+                            <p class="nowo-ui-muted">Endpoint: {{ result.submission.endpoint }}</p>
                         {% endif %}
                     {% endif %}
-                </p>
-                {% if result.submission.endpoint is defined %}
-                    <p><small>Endpoint: {{ result.submission.endpoint }}</small></p>
-                {% endif %}
-            {% endif %}
-            {% if qrDataUri %}
-                <div class="qr">
-                    <img src="{{ qrDataUri }}" alt="QR Veri*Factu" width="140" height="140">
-                    <p class="legend">{{ verifactu_legend() }}</p>
-                    <p><a href="{{ verifactu_qr_url(result.record) }}" target="_blank" rel="noopener">Abrir URL de verificación AEAT</a></p>
+                    {% if qrDataUri %}
+                        <div>
+                            <img src="{{ qrDataUri }}" alt="QR Veri*Factu" width="140" height="140">
+                            <p class="nowo-ui-muted">{{ verifactu_legend() }}</p>
+                            <p><a class="nowo-ui-link" href="{{ verifactu_qr_url(result.record) }}" target="_blank" rel="noopener">Abrir URL de verificación AEAT</a></p>
+                        </div>
+                    {% endif %}
+                    <h3>XML</h3>
+                    <pre class="nowo-ui-code">{{ result.record.xml|e }}</pre>
+                    {% if result.record.signedXml %}
+                        <h3>XML firmado (XAdES)</h3>
+                        <pre class="nowo-ui-code">{{ result.record.signedXml|e }}</pre>
+                    {% endif %}
                 </div>
-            {% endif %}
-            <h3>XML</h3>
-            <pre>{{ result.record.xml|e }}</pre>
-            {% if result.record.signedXml %}
-                <h3>XML firmado (XAdES)</h3>
-                <pre>{{ result.record.signedXml|e }}</pre>
-            {% endif %}
+            </section>
         {% endif %}
     {% endif %}
-</body>
-</html>
+{% endblock %}

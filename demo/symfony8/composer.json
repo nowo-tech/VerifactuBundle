@@ -7,6 +7,8 @@
         "php": ">=8.2,<8.6",
         "doctrine/doctrine-bundle": "^2.18 || ^3.2",
         "doctrine/orm": "^3.0",
+        "nowo-tech/form-kit-bundle": "^2.23",
+        "nowo-tech/ui-kit-bundle": "^2.53",
         "nowo-tech/verifactu-bundle": "@dev",
         "symfony/console": "^8.0",
         "symfony/dotenv": "^8.0",

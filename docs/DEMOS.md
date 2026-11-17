@@ -22,6 +22,8 @@ make -C demo/symfony8 up
 
 See [DEMO-FRANKENPHP.md](DEMO-FRANKENPHP.md) for Docker details, environment variables, and smoke tests.
 
+**Smoke test (REQ-TEST-011):** `make demo-smoke` boots the demo, expects HTTP 200 from `http://127.0.0.1:8010/` (redirects followed) and tears the stack down; `.github/workflows/demo-smoke.yml` runs it weekly, on release tags and on demand.
+
 ## What the demo shows
 
 - Processing a sample invoice into a Veri*Factu billing record

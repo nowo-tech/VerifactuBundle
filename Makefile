@@ -1,7 +1,7 @@
 # Makefile for Verifactu Bundle
 # Simplifies Docker commands for development
 
-.PHONY: help up down build shell install test test-coverage coverage-php-percent coverage-check test-coverage-100 cs-check cs-fix qa clean assets ensure-up rector rector-dry phpstan igor release-check release-check-demos composer-sync update validate validate-translations setup-hooks check-no-cursor-coauthor strip-cursor-coauthor-from-history check-open-prs check-no-raw-html-form
+.PHONY: help up down build shell install test test-coverage coverage-php-percent coverage-check test-coverage-100 cs-check cs-fix qa clean assets ensure-up rector rector-dry phpstan igor release-check release-check-demos composer-sync update validate validate-translations setup-hooks check-no-cursor-coauthor strip-cursor-coauthor-from-history check-open-prs check-no-raw-html-form demo-smoke
 
 # Default target
 help:
@@ -35,6 +35,7 @@ help:
 	@echo "  setup-hooks            Install .githooks (REQ-GIT-001 / REQ-MAKE-006)"
 	@echo "  check-no-cursor-coauthor  Fail if Cursor co-author trailers in history"
 	@echo "Demos:"
+	@echo "  demo-smoke      REQ-TEST-011: boot the demo and expect HTTP 200"
 	@echo "  (use make -C demo or make -C demo/symfonyX)"
 	@echo ""
 
@@ -135,6 +136,10 @@ check-no-raw-html-form:
 
 release-check-demos:
 	@$(MAKE) -C demo release-check
+
+# REQ-TEST-011: demo smoke (boot the demo, HTTP 200, tear down); also run by .github/workflows/demo-smoke.yml
+demo-smoke:
+	@$(MAKE) -C demo demo-smoke
 
 check-no-cursor-coauthor:
 	@chmod +x .scripts/check-no-cursor-coauthor.sh

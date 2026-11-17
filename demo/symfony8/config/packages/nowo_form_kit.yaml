@@ -1,0 +1,12 @@
+# REQ-DEMO-015: demo forms are FormKit forms (profile `demo`) on UiKit's form theme (twig.yaml), not on a CSS framework.
+nowo_form_kit:
+    css_framework: none
+    default_profile: demo
+    profiles:
+        demo:
+            alias: demo
+            translation_domain: messages
+            defaults:
+                row_attr:
+                    class: 'nowo-ui-form-row'
+            field_types: {}
