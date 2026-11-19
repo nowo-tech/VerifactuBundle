@@ -205,11 +205,16 @@ FrankenPHP worker mode with the kernel reset off is supported (see
 DQL and connection, so it keeps working when the host's manager was closed by a failed flush of the host, and it never
 resets or replaces it. With the kernel reset off, **a closed host EntityManager is not replaced** for the host's own code
 unless something does it between requests: transaction-doctrine's worker hygiene (`WorkerConnectionHygiene`) or
-`services_resetter`. **PostgreSQL:** when the bundle throws inside your transaction it leaves the aborted transaction
-open (rollback-only) for your rollback. If your code lets the exception escape without rolling back, that aborted
-transaction survives into the next request of the worker: roll back in your exception handling, or run
-transaction-doctrine's `WorkerConnectionHygiene` (or `services_resetter`) between requests. The bundle never leaves the
-nesting level off by one: a chain lock whose SAVEPOINT fails in such a transaction closes the connection and throws
+`services_resetter`. **Always roll back.** When the bundle throws inside your transaction and the transaction is still
+open (PostgreSQL: aborted; MySQL / MariaDB: when the database kept it), it is left open, rollback-only, for your
+rollback. If your code lets the exception escape without rolling back, that transaction survives into the next request
+of a kept-alive worker, on every platform: the next request's writes in autocommit style then join it and are lost when
+it is finally rolled back. Do not rely on worker hygiene for this: transaction-doctrine's `WorkerConnectionHygiene`
+does not recognise `SubmittedRecordNotCommittedException` or a `ChainTransactionLostException` without a previous
+exception as database failures, and `services_resetter` never rolls connections back. Roll back in your own error
+handling (`if ($connection->isTransactionActive()) $connection->rollBack();`, or `Connection::transactional()`). The
+bundle never leaves the nesting level off by one: a chain lock whose SAVEPOINT fails in such a transaction closes the
+connection and throws
 `ChainTransactionLostException`. After `ChainTransactionLostException` on MySQL / MariaDB the connection is closed and reconnects on the next statement,
 with DBAL's nesting level back to 0.
 

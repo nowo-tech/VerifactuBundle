@@ -52,6 +52,9 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
 {
     public const SERVICE_NAME = 'nowo_verifactu.repository.doctrine_hash_chain';
 
+    /** Most nesting levels closeLostConnection() rolls back after a reconnection (a fresh session has one or two). */
+    private const MAX_NESTING = 8;
+
     private readonly ManagerRegistry $managerRegistry;
 
     /**
@@ -196,14 +199,21 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     /**
      * Closes a connection whose transaction is lost (DBAL's nesting level back to 0) and clears a rollback-only mark
      * DBAL would otherwise keep across the reconnection: close() resets the nesting level, not the mark, so the next
-     * request's first commit would fail. One empty BEGIN / ROLLBACK on the new session does it; when the database is
-     * unreachable, the connection is simply left closed (the mark then fails a commit loudly, never silently).
+     * request's first commit would fail. One empty BEGIN / ROLLBACK on the new session does it (with auto_commit off:
+     * down to level 1, then the level-1 rollback, after which DBAL begins its implicit transaction again); when the
+     * database is unreachable, the connection is simply left closed (the mark then fails a commit loudly, never
+     * silently).
      */
     private function closeLostConnection(Connection $connection): void
     {
         $connection->close();
         try {
+            // With auto_commit off DBAL reopens a transaction on connect, so the new one is a savepoint: roll back
+            // down to level 1, then the level-1 rollBack() that clears the mark (and, auto_commit off, begins again).
             $connection->beginTransaction();
+            for ($guard = 0; $guard < self::MAX_NESTING && $connection->getTransactionNestingLevel() > 1; ++$guard) {
+                $connection->rollBack();
+            }
             $connection->rollBack();
         } catch (Throwable) {
             $connection->close();

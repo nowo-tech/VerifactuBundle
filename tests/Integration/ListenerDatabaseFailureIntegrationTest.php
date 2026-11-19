@@ -15,6 +15,8 @@ use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Tests\Kernel\DoctrineTestKernel;
+use PHPUnit\Framework\Attributes\DataProvider;
+use ReflectionMethod;
 use ReflectionProperty;
 use RuntimeException;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -86,6 +88,36 @@ final class ListenerDatabaseFailureIntegrationTest extends KernelTestCase
         self::assertSame(1, $connection->getTransactionNestingLevel(), 'the host rolls its transaction back itself');
         self::assertTrue($connection->isRollbackOnly(), 'a host that commits anyway fails loudly');
         $connection->rollBack();
+    }
+
+    /**
+     * @return iterable<string, array{bool}>
+     */
+    public static function autoCommitModes(): iterable
+    {
+        yield 'auto_commit on' => [true];
+        yield 'auto_commit off' => [false];
+    }
+
+    /** UO5-4: closing a lost connection clears its rollback-only mark, also with auto_commit off. */
+    #[DataProvider('autoCommitModes')]
+    public function testClosingALostConnectionClearsTheRollbackOnlyMark(bool $autoCommit): void
+    {
+        $connection = $this->entityManager()->getConnection();
+        $connection->setAutoCommit($autoCommit);
+        $connection->beginTransaction();
+        $connection->setRollbackOnly();
+
+        (new ReflectionMethod(DoctrineHashChainRepository::class, 'closeLostConnection'))->invoke($this->repository(), $connection);
+
+        // auto_commit off: DBAL keeps its implicit transaction (level 1) open again, unmarked.
+        self::assertSame($autoCommit ? 0 : 1, $connection->getTransactionNestingLevel());
+        if (!$autoCommit) {
+            self::assertFalse($connection->isRollbackOnly());
+            $connection->commit();
+            $connection->setAutoCommit(true);
+        }
+        self::assertSame(0, $connection->getTransactionNestingLevel());
     }
 
     public function testNestedChainLocksThatThrowLeaveNoOwnLockAndNoTransaction(): void

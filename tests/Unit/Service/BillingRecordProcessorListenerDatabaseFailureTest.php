@@ -309,6 +309,7 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
         yield 'no namespace' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace(' xmlns="' . BillingRecordXmlGenerator::NS_SUMINISTRO . '"', '', (string) $r->xml)), 'XML'];
         yield 'Huella in another namespace' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<Huella>' . $r->hash . '</Huella>', '<o:Huella xmlns:o="urn:other">' . $r->hash . '</o:Huella>', (string) $r->xml)), 'XML'];
         yield 'internal DTD entity' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace(['<RegistroAlta', '<Huella>' . $r->hash . '<'], ['<!DOCTYPE RegistroAlta [<!ENTITY h "' . $r->hash . '">]><RegistroAlta', '<Huella>&h;<'], (string) $r->xml)), 'XML'];
+        yield 'DOCTYPE in UTF-16 (past the string check)' => [static fn (BillingRecord $r): BillingRecord => $r->withXml("\xFF\xFE" . (string) mb_convert_encoding(str_replace(['encoding="UTF-8"', '<RegistroAlta', '<Huella>' . $r->hash . '<'], ['encoding="UTF-16"', '<!DOCTYPE RegistroAlta [<!ENTITY h "' . $r->hash . '">]><RegistroAlta', '<Huella>&h;<'], (string) $r->xml), 'UTF-16LE', 'UTF-8')), 'XML'];
         yield 'a previous record on a first record' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<Encadenamiento>', '<Encadenamiento><RegistroAnterior><Huella>' . str_repeat('C', 64) . '</Huella></RegistroAnterior>', (string) $r->xml)), 'XML'];
         yield 'no XML' => [static fn (BillingRecord $r): BillingRecord => (new BillingRecord(RecordType::Alta, $r->issuerNif, $r->invoiceSeriesNumber, $r->issueDate, 'F1', $r->totalTaxAmount, $r->totalAmount, $r->generatedAt, previousHash: $r->previousHash, issuerName: $r->issuerName, operationDescription: $r->operationDescription, environment: $r->environment))->withHash((string) $r->hash, $r->previousHash), 'XML'];
     }
@@ -433,6 +434,30 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
             $deep = new RuntimeException('wrapper ' . $i, 0, $deep);
         }
         self::assertNull(SubmittedRecordNotCommittedException::find($deep));
+    }
+
+    public function testAListenerThatLeaksATransactionNeverMakesACommittedRecordFail(): void
+    {
+        // Outside any host transaction the head is committed when the chain lock returns. A listener that opens a
+        // transaction and fails (and leaks it) must not turn that into a rethrow: a host retry would add a duplicate
+        // record (UO5-2). The transaction state is read once, before any listener.
+        $failure    = self::deadlock();
+        $repository = new TransactionStateHashChainRepository(false);
+        $dispatcher = new EventDispatcher();
+        $dispatcher->addListener(VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, static function () use ($repository, $failure): never {
+            $repository->insideTransaction = true;
+
+            throw $failure;
+        });
+        $client = new RecordingAeatSubmissionClient(new ArrayObject());
+
+        $result = $this->processor($dispatcher, $repository, $client)->process($this->record('FAC-2026-724'), submitToAeat: true);
+
+        self::assertSame($failure, $result['event_errors'][0]['exception'] ?? null);
+        self::assertSame($result['record']->hash, $repository->getLastState('89890001K')?->hash);
+        self::assertSame('CSV-1', $result['submission']['reference'] ?? null);
+        self::assertSame(0, $repository->rollbackOnlyMarks);
+        self::assertSame(0, $repository->verifications, 'no head check for a record committed before the listener');
     }
 
     public function testPersistSubmittedRecordRefusesToRunInsideATransaction(): void

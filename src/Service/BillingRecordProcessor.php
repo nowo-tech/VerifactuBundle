@@ -6,6 +6,7 @@ namespace Nowo\VerifactuBundle\Service;
 
 use Doctrine\DBAL\Exception as DbalException;
 use DOMDocument;
+use DOMDocumentType;
 use DOMElement;
 use InvalidArgumentException;
 use LogicException;
@@ -180,6 +181,10 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
         }
 
         $record = $chained['record'];
+        // Whether the head is still inside the host's transaction, read once, before any listener runs: a listener that
+        // opens (and leaks) a transaction must never make a committed record look uncommitted (a host retry would then
+        // add a duplicate record).
+        $hostTransaction = $this->transactionalChainRepository();
 
         // From here on the chain head already points at this record. Listeners receive copies (they cannot change the
         // hash, XML or signed XML that is submitted and returned), and a failing (informational) listener must neither
@@ -191,7 +196,7 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
             new AfterBillingRecordGeneratedEvent(clone $record),
             VerifactuEvents::AFTER_BILLING_RECORD_GENERATED,
             $eventErrors,
-            true,
+            $hostTransaction,
         );
 
         $result = ['record' => $record, 'errors' => []];
@@ -201,12 +206,12 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
                 new BeforeAeatSubmissionEvent(clone $record),
                 VerifactuEvents::BEFORE_AEAT_SUBMISSION,
                 $eventErrors,
-                true,
+                $hostTransaction,
             );
 
             // Inside the host's transaction the head commits only with it: check it is still there before sending (a
             // listener may have swallowed a database error), and again after (UO-VF-1 / UO-VF-2).
-            $transactional = $persistChainState ? $this->transactionalChainRepository() : null;
+            $transactional = $persistChainState ? $hostTransaction : null;
             if ($transactional instanceof TransactionStateAwareInterface) {
                 $this->logger?->warning('A Veri*Factu record is submitted to the AEAT inside an open database transaction: the chain row stays locked during the AEAT request, and the record is at the AEAT even if the transaction rolls back. Prefer the record store with the batch submitter (docs/CONCURRENCY.md).');
                 $transactional->verifyHeadInTransaction($record->issuerNif, (string) $record->hash);
@@ -328,9 +333,10 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
             return $result;
         }
 
-        $eventErrors = [];
+        $eventErrors     = [];
+        $hostTransaction = $this->transactionalChainRepository();
         foreach ($result['records'] as $record) {
-            $this->dispatchObserverEvent(new AfterBillingRecordGeneratedEvent(clone $record), VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, $eventErrors, true);
+            $this->dispatchObserverEvent(new AfterBillingRecordGeneratedEvent(clone $record), VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, $eventErrors, $hostTransaction);
         }
         if ($eventErrors !== []) {
             $result['event_errors'] = $eventErrors;
@@ -570,7 +576,8 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
             libxml_use_internal_errors($previousUseErrors);
         }
 
-        return $loaded ? $document->documentElement : null;
+        // The string check above misses other encodings (UTF-16): refuse any DTD once the document is parsed too.
+        return $loaded && !$document->doctype instanceof DOMDocumentType ? $document->documentElement : null;
     }
 
     /**
@@ -701,9 +708,9 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
      * Dispatches an event raised after the chain head moved (generated, before / after AEAT submission) and contains
      * any listener failure.
      *
-     * One exception (REQ-RUNTIME-003 rule 8): before anything is sent to the AEAT ($beforeSubmission), a database
-     * failure is rethrown while the chain repository's connection is inside a transaction (the host's own transaction
-     * around process()). The new chain head is not committed yet, and the database may already have ended the host's
+     * One exception (REQ-RUNTIME-003 rule 8): before anything is sent to the AEAT, a database failure is rethrown when
+     * $hostTransaction is set: the chain repository whose connection was inside the host's transaction around
+     * process() when the chain lock returned (read before any listener ran). The new chain head is not committed yet, and the database may already have ended the host's
      * transaction (MySQL / MariaDB deadlock) or aborted it (PostgreSQL: every later statement fails and the COMMIT
      * rolls back): containing it would submit, or return as chained, a record whose chain head never commits, and the
      * host's retry would then chain a second record onto the same predecessor (a forked chain). Outside a transaction
@@ -711,12 +718,12 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
      *
      * @param list<array{event: string, exception: Throwable}> $eventErrors
      */
-    private function dispatchObserverEvent(object $event, string $eventName, array &$eventErrors, bool $beforeSubmission = false): void
+    private function dispatchObserverEvent(object $event, string $eventName, array &$eventErrors, ?TransactionStateAwareInterface $hostTransaction = null): void
     {
         try {
             $this->eventDispatcher->dispatch($event, $eventName);
         } catch (Throwable $exception) {
-            $transactional = $beforeSubmission && $this->isDatabaseFailure($exception) ? $this->transactionalChainRepository() : null;
+            $transactional = $hostTransaction instanceof TransactionStateAwareInterface && $this->isDatabaseFailure($exception) ? $hostTransaction : null;
             if ($transactional instanceof TransactionStateAwareInterface) {
                 // @igor-ignore - Marks the host's current database transaction rollback-only, not service state.
                 $transactional->setRollbackOnly();

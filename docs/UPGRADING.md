@@ -63,9 +63,13 @@ composer update nowo-tech/verifactu-bundle
   the record store with the batch submitter.
 - **Catch-and-commit fails loudly:** when the bundle throws inside your still-open transaction it marks it rollback-only,
   so a `commit()` after catching the exception throws `CommitFailedRollbackOnly` (DBAL 3: `ConnectionException`). Roll
-  back instead. On PostgreSQL, roll back in your error handling or run worker hygiene between requests: an aborted
-  transaction left open survives into the next worker request.
+  back instead, always, in your own error handling: a transaction left open survives into the next request of a
+  kept-alive worker on every platform (the next request's autocommit-style writes join it and are lost), and neither
+  transaction-doctrine's `WorkerConnectionHygiene` (it does not recognise these exceptions) nor `services_resetter`
+  (it never rolls connections back) cleans it up for you.
 - `persistSubmittedRecord()` must run after the rollback, outside any transaction (`LogicException` otherwise).
+- `auto_commit: false` connections are supported: when the bundle closes a lost connection it clears the rollback-only
+  mark on the implicit transaction DBAL reopens.
 - `persistSubmittedRecord()` accepts only the unchanged record of that exception (not an import API): a record whose
   hash is not its fingerprint, whose XML lacks it, or whose environment or issuer does not match is refused with
   `InvalidArgumentException` and nothing is written.
@@ -88,8 +92,9 @@ composer update nowo-tech/verifactu-bundle
   `DeadlockException` came out with DBAL still believing your transaction was open. If you catch `RetryableException`
   around a unit that calls `process()`, also catch `ChainTransactionLostException` (both mean: restart the whole unit).
   transaction-doctrine classifies both as `CONFLICT_001`.
-- A custom `hash_chain.repository` can implement the new `Repository\TransactionStateAwareInterface` to get the same
-  behaviour; without it, listener errors stay contained as in 1.8.
+- A custom `hash_chain.repository` can implement the new `Repository\TransactionStateAwareInterface`
+  (`isInsideTransaction()`, `verifyHeadInTransaction()`, `setRollbackOnly()`) to get the same behaviour; without it,
+  listener errors stay contained as in 1.8.
 - No new runtime dependency: nowo-tech/transaction-doctrine (`^1.7`, the first version with
   `TransientFailureClassifier::findConflict()`) is only a dev dependency (it pins the host conflict contract
   in the tests). The bundle wraps no connection and installs no commit tracking.

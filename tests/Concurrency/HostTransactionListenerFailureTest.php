@@ -348,6 +348,31 @@ final class HostTransactionListenerFailureTest extends TestCase
         $kernel->shutdown();
     }
 
+    /** UO5-2: outside any host transaction, a listener that leaks a failed transaction never fails a committed record. */
+    public function testAListenerThatLeaksATransactionNeverFailsACommittedRecord(): void
+    {
+        [$kernel, $connection, $processor, $dispatcher] = $this->bootWithSeed();
+        $leak                                           = static function () use ($connection): void {
+            $connection->beginTransaction();
+            $connection->executeStatement('SELECT * FROM verifactu_table_that_does_not_exist');
+        };
+        $dispatcher->addListener(VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, $leak);
+
+        $result = $processor->process($this->record('FAC-LEAKED-TX'), submitToAeat: true);
+        $dispatcher->removeListener(VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, $leak);
+
+        // Contained (the record is committed), sent and returned; the leaked transaction is the listener's problem.
+        self::assertSame([], $result['errors']);
+        self::assertInstanceOf(DbalException::class, $result['event_errors'][0]['exception'] ?? null);
+        self::assertSame('SANDBOX-' . $result['record']->hash, $result['submission']['reference'] ?? null);
+        for ($guard = 0; $guard < 4 && $connection->isTransactionActive(); ++$guard) {
+            $connection->rollBack();
+        }
+        self::assertSame(1, (int) $connection->fetchOne("SELECT COUNT(*) FROM verifactu_billing_record WHERE invoice_series_number = 'FAC-LEAKED-TX'"));
+        self::assertSame($result['record']->hash, $connection->fetchOne("SELECT hash FROM verifactu_hash_chain WHERE issuer_nif = '89890001K'"));
+        $kernel->shutdown();
+    }
+
     /**
      * A BEFORE_AEAT_SUBMISSION listener that breaks the host transaction and hides it: on PostgreSQL a swallowed error
      * (the transaction is aborted), on MySQL / MariaDB a moved head (the head check then finds another head).
