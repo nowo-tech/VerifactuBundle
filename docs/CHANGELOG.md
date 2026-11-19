@@ -33,6 +33,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Repository\TransactionStateAwareInterface` (`isInsideTransaction()`), implemented by `DoctrineHashChainRepository`: whether the chain's connection is inside a transaction.
+- `docs/CONCURRENCY.md` (REQ-RUNTIME-003): every write path with its transaction, concurrency control and conflict answer, the conflict codes a host on nowo-tech/transaction-doctrine gets (`ChainTransactionLostException` and the chain lock's DBAL `RetryableException` are `CONFLICT_001`, or `CONFLICT_002` when the request committed earlier), retries, host options, worker mode and residual risks. W-05 of `docs/FRANKENPHP-WORKER-AUDIT.md` now says that the bundle serialises the chain itself (the "application lock" text was stale since 1.1.0).
+
+### Changed
+
+- `BillingRecordProcessor`: a database error (`Doctrine\DBAL\Exception` anywhere in the chain of previous exceptions) thrown by an `AFTER_BILLING_RECORD_GENERATED` or `BEFORE_AEAT_SUBMISSION` listener while a transaction is open on the chain's connection is now rethrown instead of being returned in `event_errors` (REQ-RUNTIME-003 rule 8). Nothing has been sent to the AEAT at that point. Outside a transaction, and after the AEAT submission, listener and store failures stay contained as before. See UPGRADING.
+
+### Fixed
+
+- PostgreSQL, `process()` / `processBatch()` inside the host's transaction: a database error in an `AFTER_BILLING_RECORD_GENERATED` or `BEFORE_AEAT_SUBMISSION` listener aborts the transaction, but it was contained, so the record was returned as chained (and, with `submitToAeat: true`, sent to the AEAT) while the host's `COMMIT` silently rolled back the chain head, the record log and the host's rows. The next record then chained onto the previous head. It is now rethrown (see Changed). On MySQL / MariaDB a deadlock in such a listener ends the whole transaction: the host's commit then fails, but with `submitToAeat: true` the record had already been sent to the AEAT.
+
+- DBAL 3 without savepoints (`use_savepoints` off), MySQL / MariaDB: a deadlock inside the chain lock while it ran in the host's transaction was rethrown as the plain `DeadlockException` with DBAL still at the host's nesting level, although InnoDB had rolled back the whole transaction. The nested `rollBack()` only marks the transaction rollback-only and succeeds, so the closing of the connection that 1.5 added for this case never ran: a host that went on (or retried `process()` alone) ran its statements in autocommit without the row lock. The deadlock itself is now detected: the connection is closed and `ChainTransactionLostException` is thrown, as on DBAL 4.
+
+### Tests
+
+- Concurrency suite: every test session waits at most 15 s for a row lock (`innodb_lock_wait_timeout`, PostgreSQL `lock_timeout`), so a hang fails fast. `HostTransactionListenerFailureTest` (MySQL, MariaDB, PostgreSQL) covers the rethrown listener error, the host rollback and the replay; `DeadlockRecoveryTest` checks that transaction-doctrine classifies `ChainTransactionLostException` as a transient `CONFLICT_001`.
+- `ChainTransactionLostConflictCodeTest` pins the host conflict contract (`CONFLICT_001`, `CONFLICT_002` with a committed watermark; unique violations and connection loss are not conflicts). `nowo-tech/transaction-doctrine` `^1.6` is a dev dependency only.
+- The `host_invoice` test fixture uses an IDENTITY id (DBAL 3 on PostgreSQL created it with a sequence that raw inserts never used).
+- CI: the "Chain concurrency" job also runs on DBAL 3 (MySQL 8.4, MariaDB 11.4, PostgreSQL 17); new "Dependency floor (nowo-tech/transaction-* lowest, demo lock)" job with `.scripts/check-demo-lock.py`.
+
 ### Demo
 
 - The demo is built on UiKit and FormKit (REQ-DEMO-014 / REQ-DEMO-015): `templates/base.html.twig` is UiKit's admin layout with its default theme and masthead instead of the inline-styled single page, `App\Form\InvoiceType` is a FormKit form (`#[FormKitConfig('demo')]`, UiKit form theme, same flat field names), and the page uses UiKit cards, flashes, badges and buttons. The demo requires `nowo-tech/ui-kit-bundle` `^2.53` and `nowo-tech/form-kit-bundle` `^2.23`. No bundle runtime change.

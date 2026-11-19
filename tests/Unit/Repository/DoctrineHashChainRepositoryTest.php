@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Tests\Unit\Repository;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Driver\AbstractException;
+use Doctrine\DBAL\Exception\DeadlockException;
+use Doctrine\DBAL\Platforms\MySQLPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\Persistence\ManagerRegistry;
 use LogicException;
@@ -100,5 +104,51 @@ final class DoctrineHashChainRepositoryTest extends TestCase
             self::assertSame($original, $exception->getPrevious());
             self::assertStringContainsString('Restart your unit of work', $exception->getMessage());
         }
+    }
+
+    public function testANestedMysqlDeadlockIsALostTransactionEvenWhenTheNestedRollbackSucceeds(): void
+    {
+        // DBAL 3 without savepoints: the nested rollBack() only marks the transaction rollback-only and succeeds.
+        $original   = new RuntimeException('wrapped', 0, new DeadlockException(new class('Deadlock found', '40001', 1213) extends AbstractException {}, null));
+        $connection = $this->createMock(Connection::class);
+        $connection->method('getTransactionNestingLevel')->willReturn(2);
+        $connection->method('isTransactionActive')->willReturn(true);
+        $connection->method('getDatabasePlatform')->willReturn(new MySQLPlatform());
+        $connection->expects(self::never())->method('rollBack');
+        $connection->expects(self::once())->method('close');
+
+        $entityManager = $this->createMock(EntityManagerInterface::class);
+        $entityManager->method('getConnection')->willReturn($connection);
+        $entityManager->method('getClassMetadata')->willThrowException($original);
+        $registry = $this->createMock(ManagerRegistry::class);
+        $registry->method('getManagerForClass')->willReturn($entityManager);
+
+        try {
+            (new DoctrineHashChainRepository($registry))->withChainLock('89890001K', static fn (): bool => true);
+            self::fail('ChainTransactionLostException expected');
+        } catch (ChainTransactionLostException $exception) {
+            self::assertSame($original, $exception->getPrevious());
+        }
+    }
+
+    public function testANestedPostgresqlDeadlockRollsBackToTheSavepoint(): void
+    {
+        // PostgreSQL keeps the transaction (aborted until the savepoint is rolled back): no lost transaction.
+        $original   = new DeadlockException(new class('deadlock detected', '40P01', 7) extends AbstractException {}, null);
+        $connection = $this->createMock(Connection::class);
+        $connection->method('getTransactionNestingLevel')->willReturn(2);
+        $connection->method('isTransactionActive')->willReturn(true);
+        $connection->method('getDatabasePlatform')->willReturn(new PostgreSQLPlatform());
+        $connection->expects(self::once())->method('rollBack');
+        $connection->expects(self::never())->method('close');
+
+        $entityManager = $this->createMock(EntityManagerInterface::class);
+        $entityManager->method('getConnection')->willReturn($connection);
+        $entityManager->method('getClassMetadata')->willThrowException($original);
+        $registry = $this->createMock(ManagerRegistry::class);
+        $registry->method('getManagerForClass')->willReturn($entityManager);
+
+        $this->expectExceptionObject($original);
+        (new DoctrineHashChainRepository($registry))->withChainLock('89890001K', static fn (): bool => true);
     }
 }

@@ -36,6 +36,34 @@
 
 ## Unreleased
 
+From **1.8.0** — minor, no configuration change:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- **Behaviour change (BC note):** `process()` and `processBatch()` now **rethrow** a database error (any
+  `Doctrine\DBAL\Exception` in the chain of previous exceptions) thrown by an `AFTER_BILLING_RECORD_GENERATED` or
+  `BEFORE_AEAT_SUBMISSION` listener **while a transaction is open on the chain's connection** (your transaction around
+  `process()`). Before, it was returned in `event_errors` and the record was submitted and returned as chained although
+  the database had aborted (PostgreSQL) or ended (MySQL / MariaDB deadlock) your transaction. Nothing has been sent to the
+  AEAT when it is rethrown: roll back and replay your whole unit of work, as for a lock conflict. A host on
+  nowo-tech/transaction-doctrine answers a deadlock or lock-wait timeout with 409 + `CONFLICT_001`. Every other listener
+  error, every failure outside a transaction and every failure after the AEAT submission stays in `event_errors` /
+  `store_errors` as before.
+- **Exception change (BC note), DBAL 3 without `use_savepoints`, MySQL / MariaDB:** a deadlock inside the chain lock
+  while it runs in your transaction now throws `ChainTransactionLostException` (the `DeadlockException` is its previous
+  exception) and closes the connection, as it already did on DBAL 4 or with savepoints. Before, the plain
+  `DeadlockException` came out with DBAL still believing your transaction was open. If you catch `RetryableException`
+  around a unit that calls `process()`, also catch `ChainTransactionLostException` (both mean: restart the whole unit).
+  transaction-doctrine classifies both as `CONFLICT_001`.
+- A custom `hash_chain.repository` can implement the new `Repository\TransactionStateAwareInterface` to get the same
+  behaviour; without it, listener errors stay contained as in 1.8.
+- No new runtime dependency: nowo-tech/transaction-doctrine is only a dev dependency (it pins the host conflict contract
+  in the tests). The bundle wraps no connection and installs no commit tracking.
+- Read [CONCURRENCY.md](CONCURRENCY.md) for the write paths, the conflict codes, the residual risks (in particular
+  `process(..., submitToAeat: true)` inside your transaction) and worker mode with the kernel reset off.
+
 ## To 1.8.0
 
 From **1.7.0** — minor, strictly additive, no configuration change:

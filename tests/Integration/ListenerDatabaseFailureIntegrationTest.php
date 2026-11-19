@@ -1,0 +1,137 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Nowo\VerifactuBundle\Tests\Integration;
+
+use Doctrine\DBAL\Exception as DbalException;
+use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\Tools\SchemaTool;
+use Nowo\VerifactuBundle\Event\VerifactuEvents;
+use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
+use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
+use Nowo\VerifactuBundle\Tests\Kernel\DoctrineTestKernel;
+use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Throwable;
+
+/**
+ * REQ-RUNTIME-003 rule 8 on a real connection (SQLite): a database error raised by an AFTER_BILLING_RECORD_GENERATED
+ * listener inside the host's transaction is rethrown (the host rolls back, no chain head survives); outside a
+ * transaction the head is already committed and the failure stays contained in `event_errors`.
+ *
+ * @author Nowo.tech
+ * @copyright 2026 Nowo.tech
+ */
+final class ListenerDatabaseFailureIntegrationTest extends KernelTestCase
+{
+    protected static function getKernelClass(): string
+    {
+        return DoctrineTestKernel::class;
+    }
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        self::bootKernel();
+        $entityManager = $this->entityManager();
+        $schemaTool    = new SchemaTool($entityManager);
+        $metadata      = $entityManager->getMetadataFactory()->getAllMetadata();
+        $schemaTool->dropSchema($metadata);
+        $schemaTool->createSchema($metadata);
+
+        $connection = $entityManager->getConnection();
+        /** @var EventDispatcherInterface $dispatcher */
+        $dispatcher = self::getContainer()->get('event_dispatcher');
+        $dispatcher->addListener(VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, static function () use ($connection): void {
+            $connection->executeStatement('SELECT * FROM verifactu_table_that_does_not_exist');
+        });
+    }
+
+    public function testRepositoryReportsTheTransactionState(): void
+    {
+        $repository = $this->repository();
+        $connection = $this->entityManager()->getConnection();
+
+        self::assertFalse($repository->isInsideTransaction());
+        $connection->beginTransaction();
+        self::assertTrue($repository->isInsideTransaction());
+        $connection->rollBack();
+        self::assertFalse($repository->isInsideTransaction());
+    }
+
+    public function testDatabaseFailureInsideTheHostTransactionIsRethrownAndNothingIsChained(): void
+    {
+        $connection = $this->entityManager()->getConnection();
+        $connection->beginTransaction();
+
+        $failure = null;
+        try {
+            $this->processor()->process($this->record('FAC-2026-901'));
+        } catch (Throwable $exception) {
+            $failure = $exception;
+        }
+        $connection->rollBack();
+
+        self::assertInstanceOf(DbalException::class, $failure);
+        self::assertSame(0, $connection->getTransactionNestingLevel());
+        self::assertNull($this->repository()->getLastState('89890001K'), 'the host rolled back: no chain head survives');
+
+        // The connection is usable afterwards: the next unit (outside a transaction) chains from an empty head.
+        $result = $this->processor()->process($this->record('FAC-2026-902'));
+        self::assertNull($result['record']->previousHash);
+        self::assertSame($result['record']->hash, $this->repository()->getLastState('89890001K')?->hash);
+    }
+
+    public function testDatabaseFailureOutsideATransactionStaysContainedAndTheHeadIsKept(): void
+    {
+        $result = $this->processor()->process($this->record('FAC-2026-903'));
+
+        self::assertSame([], $result['errors']);
+        self::assertCount(1, $result['event_errors'] ?? []);
+        self::assertInstanceOf(DbalException::class, $result['event_errors'][0]['exception']);
+        self::assertSame($result['record']->hash, $this->repository()->getLastState('89890001K')?->hash);
+    }
+
+    private function record(string $seriesNumber): BillingRecord
+    {
+        return new BillingRecord(
+            RecordType::Alta,
+            '89890001K',
+            $seriesNumber,
+            '09-07-2026',
+            'F1',
+            '21.00',
+            '121.00',
+            '2026-07-09T16:00:00+02:00',
+            issuerName: 'Doctrine Test Issuer',
+            operationDescription: 'Invoice',
+        );
+    }
+
+    private function processor(): BillingRecordProcessor
+    {
+        /** @var BillingRecordProcessor $processor */
+        $processor = self::getContainer()->get(BillingRecordProcessor::class);
+
+        return $processor;
+    }
+
+    private function repository(): DoctrineHashChainRepository
+    {
+        /** @var DoctrineHashChainRepository $repository */
+        $repository = self::getContainer()->get(DoctrineHashChainRepository::class);
+
+        return $repository;
+    }
+
+    private function entityManager(): EntityManagerInterface
+    {
+        /** @var EntityManagerInterface $entityManager */
+        $entityManager = self::getContainer()->get(EntityManagerInterface::class);
+
+        return $entityManager;
+    }
+}

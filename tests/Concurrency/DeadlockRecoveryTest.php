@@ -8,6 +8,8 @@ use Doctrine\DBAL\Exception\RetryableException;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Doctrine\Persistence\ManagerRegistry;
+use Nowo\TransactionDoctrine\ConflictCode;
+use Nowo\TransactionDoctrine\TransientFailureClassifier;
 use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
 use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
@@ -77,6 +79,10 @@ final class DeadlockRecoveryTest extends TestCase
             self::fail('The deadlock must surface');
         } catch (ChainTransactionLostException $exception) {
             self::assertInstanceOf(RetryableException::class, $exception->getPrevious());
+            // A host on transaction-doctrine maps it to a lock conflict: 409 + Retry-After + CONFLICT_001 (the whole
+            // host transaction was rolled back, nothing of it committed).
+            self::assertTrue((new TransientFailureClassifier())->isTransient($exception));
+            self::assertSame(ConflictCode::RetrySafe, ConflictCode::forFailure($exception));
         } finally {
             $this->waitFor($holder);
         }

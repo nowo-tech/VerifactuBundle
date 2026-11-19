@@ -6,7 +6,10 @@ namespace Nowo\VerifactuBundle\Repository;
 
 use DateTimeImmutable;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\DeadlockException;
 use Doctrine\DBAL\LockMode;
+use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\Persistence\ManagerRegistry;
 use LogicException;
@@ -44,7 +47,7 @@ use Throwable;
  * @copyright 2026 Nowo.tech
  */
 #[AsAlias(id: self::SERVICE_NAME, public: true)]
-final class DoctrineHashChainRepository extends ServiceEntityRepository implements LockableHashChainRepositoryInterface
+final class DoctrineHashChainRepository extends ServiceEntityRepository implements LockableHashChainRepositoryInterface, TransactionStateAwareInterface
 {
     public const SERVICE_NAME = 'nowo_verifactu.repository.doctrine_hash_chain';
 
@@ -93,6 +96,15 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
 
             return $result;
         } catch (Throwable $exception) {
+            if ($nested && $this->endedTheWholeTransaction($connection, $exception)) {
+                // MySQL / MariaDB roll back the whole transaction of a deadlock victim. Detected from the error itself,
+                // not from a failing ROLLBACK TO SAVEPOINT: without savepoints (DBAL 3, use_savepoints off) the nested
+                // rollBack() succeeds, DBAL stays at the host's nesting level and the host's next statements (or a
+                // retried process()) would run in autocommit without the row lock.
+                $connection->close();
+
+                throw new ChainTransactionLostException($exception);
+            }
             if ($connection->isTransactionActive()) {
                 try {
                     $connection->rollBack();
@@ -112,6 +124,28 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
 
             throw $exception;
         }
+    }
+
+    /**
+     * Whether the connection of the chain entity is inside a transaction (the host's, or withChainLock()'s own).
+     */
+    public function isInsideTransaction(): bool
+    {
+        return $this->resolveEntityManager()->getConnection()->isTransactionActive();
+    }
+
+    /**
+     * Whether the failure is a MySQL / MariaDB deadlock, which ends the victim's whole transaction (InnoDB).
+     */
+    private function endedTheWholeTransaction(Connection $connection, Throwable $exception): bool
+    {
+        for ($current = $exception; $current instanceof Throwable; $current = $current->getPrevious()) {
+            if ($current instanceof DeadlockException) {
+                return $connection->getDatabasePlatform() instanceof AbstractMySQLPlatform;
+            }
+        }
+
+        return false;
     }
 
     /**

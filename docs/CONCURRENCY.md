@@ -1,0 +1,164 @@
+# Concurrency (REQ-RUNTIME-003)
+
+How the bundle stays correct when the same issuer's chain is written at the same time: two requests, two workers, a
+retried request or a replayed Messenger message. The AEAT invoice chain is legally binding, so the one outcome that must
+never happen is a **forked chain** (two records chained onto the same predecessor) or a record sent to the AEAT whose
+chain head never committed.
+
+## Table of contents
+
+- [Summary](#summary)
+- [Write paths](#write-paths)
+- [Conflict codes](#conflict-codes)
+- [Retries and replays](#retries-and-replays)
+- [Listener and store failures (rule 8)](#listener-and-store-failures-rule-8)
+- [Host options](#host-options)
+- [Worker mode](#worker-mode)
+- [Residual risks](#residual-risks)
+- [Tests and CI](#tests-and-ci)
+
+## Summary
+
+- The bundle has **no HTTP routes, controllers or API of its own**. It is called by the host (services, a console
+  command, a Messenger handler), so it never answers a conflict itself: lock conflicts reach the host as Doctrine DBAL
+  exceptions, and the host's conflict responder answers them (see [Conflict codes](#conflict-codes)).
+- Every write is a **DBAL statement** on the connection of the EntityManager that maps the bundle entities (usually the
+  host's default one). The bundle never calls `flush()`, `clear()`, `close()` or `resetManager()` on any EntityManager.
+- The chain is serialised **per issuer** with `SELECT … FOR UPDATE` on the issuer's chain row
+  (`DoctrineHashChainRepository::withChainLock()`), inside the host's transaction when one is open (DBAL savepoint) or in
+  a transaction of its own.
+- No connection is wrapped and no commit tracking is installed by the bundle (it does not need one: it answers no HTTP).
+  It does not use transaction-doctrine's `DoctrineTransactionRunner::forHostEntityManager()`.
+
+## Write paths
+
+| Path | Transaction | Concurrency control (rule 4) | Conflict answer |
+| --- | --- | --- | --- |
+| `BillingRecordProcessor::process()` / `processBatch()`: chain head + record log append | `withChainLock()`: its own transaction, or a savepoint inside the host's open transaction | Insert-if-absent of the issuer row (`ON CONFLICT DO NOTHING` / `ON DUPLICATE KEY UPDATE` no-op), then one `SELECT … FOR UPDATE` of the issuer row; the head passed to the chaining is the one read under the lock. The record position comes from a locking read; primary key (issuer, position) and unique (issuer, hash) are the last guard | Propagates the DBAL `RetryableException` (deadlock, lock-wait timeout, serialization failure). Inside a host transaction that the database ended (MySQL / MariaDB deadlock) the bundle closes the connection and throws `ChainTransactionLostException` (previous: the DBAL error) |
+| `HashChainRepositoryInterface::storeLastState()` / `storeLastHash()` called directly (deprecated hooks) | Caller's transaction, or autocommit | Keyed `UPDATE` of the issuer row (no read-modify-write unless `storeLastHash()`) | Propagates |
+| `nowo:verifactu:reset-chain` (`reset()`) | Autocommit, one `DELETE` | Single keyed statement | Propagates (command exits non-zero) |
+| `markSubmitted()` after `process(..., submitToAeat: true)` | Caller's transaction, or autocommit | Keyed `UPDATE` by (issuer, hash) | Contained in `store_errors` (the record is already at the AEAT; its answer is never lost) |
+| Batch submitter claim: `claimNext()`, `claimRecord()`, `failRecord()`, `requeueFailed()`, `scheduleWakeUp()` | Inside the issuer's `withChainLock()` (the submitter refuses to run inside a host transaction); with `flow_control_scope: global` a shared lock row is taken first (fixed order, no cycle) | Row lock on the issuer row; the claim `UPDATE` only takes rows still `pending` (or with an expired claim) | Propagates: Messenger retry strategy, or the command exits non-zero; the records stay pending |
+| `markTransmitted()`, `releaseClaim()`, `parkClaim()`, `confirmSuspects()`, `resolveUnconfirmed()` | Autocommit, one statement | Compare-and-set on the claim token and status; counters are atomic (`n = n + 1`) | Propagates; an abandoned claim expires after `submission.claim_timeout` and is claimed again |
+| `recordOutcomes()`, `failClaim()` (the AEAT answers of one batch) | One transaction of their own | Compare-and-set on the claim token; events are dispatched only after the commit | Propagates; the batch is sent again after the claim timeout and duplicates are resolved (see [Retries and replays](#retries-and-replays)) |
+| Flow control (`CacheFlowControl`) | PSR-6 cache, not the database | Read and reserved under the issuer (or global) chain lock | Not a database write |
+| `SubmitPendingBillingRecordsHandler` (Messenger) | Calls the batch submitter | As above | Exceptions propagate to Messenger's retry and failure transport |
+
+`grep -rn "flush()" src/` has no hit: there is no ORM write path.
+
+Business keys (rule 5): the issuer NIF is case-insensitive by definition, so every key is normalised (trimmed and
+upper-cased) before every statement; the column collation never decides a match. Hashes are stored and compared as
+upper-case hexadecimal.
+
+## Conflict codes
+
+The bundle has no `conflict_response` option because it renders no response. A host on
+[nowo-tech/transaction-doctrine](https://github.com/nowo-tech/TransactionDoctrine) ^1.6 gets the platform answer
+without any glue:
+
+- a DBAL `RetryableException` from the chain lock, and `ChainTransactionLostException` (its previous exception is the
+  DBAL error), are **transient failures** (`TransientFailureClassifier::isTransient()`), so the conflict responder answers
+  **409 + `Retry-After` + `CONFLICT_001`** (`X-Conflict-Code: CONFLICT_001`);
+- when anything of the same request committed earlier (the `CommitMark` taken at `kernel.request`, for example a
+  `process()` call that ran outside a host transaction and already committed its record), `ConflictCode::forRequest()`
+  gives **409 with no `Retry-After` + `CONFLICT_002`**: read again, do not repeat (a blind retry would add a second fiscal
+  record);
+- unique-constraint violations and connection loss are not transient and are never mapped to a conflict. The bundle maps
+  no unique violation to 409 either: the insert-if-absent of the issuer row never fails on a concurrent creation, and
+  a duplicate (issuer, position) or (issuer, hash) is a real error (it would mean a broken lock), never a domain answer.
+
+`tests/Unit/Exception/ChainTransactionLostConflictCodeTest.php` pins this contract (`CONFLICT_001`, `CONFLICT_002` with a
+committed watermark, unique violation and connection loss not transient), and
+`tests/Concurrency/DeadlockRecoveryTest.php` checks it on a real MySQL / MariaDB deadlock.
+
+## Retries and replays
+
+- **Retry the whole unit of work, never `process()` alone.** After a lock conflict inside your transaction, roll back
+  and run your transaction again (your writes and `process()`). After `ChainTransactionLostException` the server already
+  rolled back your transaction and the bundle closed the connection: run nothing more of the lost unit on it.
+- **`process()` is not idempotent**: each call chains a new record (the hash covers the generation time). Make your own
+  unit idempotent with a natural key (for example a unique invoice number stored in the same transaction), so a replay
+  of a unit that already committed is detected and answers the stored result. transaction-doctrine's
+  `#[AsWriteUnit]` / Messenger `WriteUnitMiddleware` replay a unit only when nothing committed (`CONFLICT_001`).
+- **No entity survives an attempt**: the bundle keeps no managed entity and no state between calls (array-hydrated
+  reads, DBAL writes); providers (`IssuerProviderInterface`, `SoftwareIdentityProviderInterface`,
+  `AeatEnvironmentProviderInterface`) are called again on every `process()` call.
+- **Batch submission replays safely**: a batch is claimed with a token under the issuer lock; the HTTP request runs
+  outside any transaction; if the process dies or the answer cannot be stored, the claim expires and the batch is sent
+  again. The AEAT then answers "duplicate" (RegistroDuplicado), which is mapped to a registered state only when a
+  `DuplicateConfirmationInterface` confirms the same Huella; otherwise the record is stored as `unconfirmed`, never
+  reported as accepted. Events are dispatched only after the answers are committed.
+
+## Listener and store failures (rule 8)
+
+Listeners of `AFTER_BILLING_RECORD_GENERATED`, `BEFORE_AEAT_SUBMISSION` and `AFTER_AEAT_SUBMISSION` are informational:
+once the chain head committed, a failing listener must not hide the record (a retry would chain a second record for the
+same invoice), so its exception is logged (class only) and returned in `event_errors`.
+
+**Exception (since the release after 1.8.0):** a **database error** (any `Doctrine\DBAL\Exception` in the chain of
+previous exceptions) thrown by an `AFTER_BILLING_RECORD_GENERATED` or `BEFORE_AEAT_SUBMISSION` listener **while a
+transaction is open on the chain's connection** is rethrown. In that case the new chain head is not committed yet, and
+the database may already have ended your transaction (MySQL / MariaDB deadlock) or aborted it (PostgreSQL: every later
+statement fails and `COMMIT` silently rolls everything back). Containing it would submit to the AEAT, or return as
+chained, a record whose head never commits, and your retry would then chain a second record onto the same predecessor.
+Nothing was sent to the AEAT at that point: roll back and replay your unit. The check needs a repository that implements
+`TransactionStateAwareInterface` (`DoctrineHashChainRepository` does).
+
+After the AEAT submission nothing is rethrown: an `AFTER_AEAT_SUBMISSION` listener error stays in `event_errors` and a
+failure to store the AEAT answer stays in `store_errors`, so the AEAT answer (CSV) is always returned.
+
+## Host options
+
+| Option | Effect on concurrency |
+| --- | --- |
+| `hash_chain.storage: doctrine` (or a persistent `hash_chain.repository` implementing `LockableHashChainRepositoryInterface`) | Required for a valid chain under concurrency: the in-memory storage is request-scoped |
+| `record_store.storage: doctrine` | Record log appended in the same lock and transaction as the chain head; enables the batch submitter |
+| `submission.claim_timeout` | How long a claim is trusted before the batch is claimed again (a process that died after sending) |
+| `submission.flow_control_scope: global` | One more lock row shared by every issuer, always taken before the issuer lock |
+| Database lock-wait bound (`innodb_lock_wait_timeout`, PostgreSQL `lock_timeout`) | The bundle uses the server's bound; keep it short (seconds) so a lock wait becomes a `CONFLICT_001` instead of a hung worker |
+| DBAL 3: `doctrine.dbal.use_savepoints: true` | Recommended. Without savepoints, a failure inside the chain lock marks your whole transaction rollback-only (DBAL 4 always uses savepoints). A MySQL / MariaDB deadlock is detected from the error either way, so `ChainTransactionLostException` is thrown with or without savepoints |
+
+There is no `conflict_response` option: configure the status (409, or 503) in transaction-doctrine's conflict responder.
+
+## Worker mode
+
+FrankenPHP worker mode with the kernel reset off is supported (see
+[FRANKENPHP-WORKER-AUDIT.md](FRANKENPHP-WORKER-AUDIT.md)). The bundle only uses the host's EntityManager for its metadata,
+DQL and connection, so it keeps working when the host's manager was closed by a failed flush of the host, and it never
+resets or replaces it. With the kernel reset off, **a closed host EntityManager is not replaced** for the host's own code
+unless something does it between requests: transaction-doctrine's worker hygiene (`WorkerConnectionHygiene`) or
+`services_resetter`. After `ChainTransactionLostException` the connection is closed and reconnects on the next statement,
+with DBAL's nesting level back to 0.
+
+## Residual risks
+
+1. **`process(..., submitToAeat: true)` inside your transaction.** The AEAT HTTP request runs while your transaction
+   holds the issuer's chain row (rule 9), and if your transaction rolls back after the AEAT accepted the record, the
+   AEAT holds a record whose chain head is gone: the next record would fork the chain at the AEAT. Prefer
+   `record_store.storage: doctrine` with the batch submitter (it refuses to run inside a transaction), or call
+   `process(..., submitToAeat: true)` outside any transaction. Accepted: it is the host's choice and documented in
+   [USAGE.md](USAGE.md).
+2. **Failures after the head committed are contained**, not rethrown (`event_errors`, `store_errors`): a deviation from
+   rule 8 by design, because a retry would add a second fiscal record. The host reads both keys.
+3. **SQLite** has no row locks: its database lock serialises writers, so it is a single-writer store for development and
+   tests only.
+4. **Custom chain repositories** that do not implement `TransactionStateAwareInterface` keep the 1.8 behaviour (listener
+   database errors contained), and those that do not implement `LockableHashChainRepositoryInterface` are not
+   serialised at all.
+
+## Tests and CI
+
+- `tests/Concurrency/ChainConcurrencyTest.php`: several PHP processes chain records for one issuer (and for many
+  issuers) at once, inside and outside a host transaction, with and without the record store: no fork, contiguous
+  chain, only retryable lock errors.
+- `tests/Concurrency/SubmissionConcurrencyTest.php`, `SubmissionQueueServerDatabaseTest.php`, `ManualFailLockTest.php`:
+  chainers and submitters racing on the same issuer; claims, manual fail and requeue under the lock.
+- `tests/Concurrency/DeadlockRecoveryTest.php`: a real deadlock inside the host transaction on MySQL / MariaDB closes the
+  connection, throws `ChainTransactionLostException` (a `CONFLICT_001` for transaction-doctrine), and the next request
+  chains with the lock again.
+- `tests/Concurrency/HostTransactionListenerFailureTest.php`: a listener database error inside the host transaction is
+  rethrown on MySQL, MariaDB and PostgreSQL; nothing commits, the connection stays usable and the replay chains once.
+- Every test session waits at most 15 seconds for a row lock (`ConcurrencyKernel::LOCK_WAIT_SECONDS`).
+- CI: the required "Chain concurrency" jobs run `tests/Concurrency` on MySQL 8.4, MariaDB 11.4 and PostgreSQL 17, on
+  DBAL 4 and DBAL 3; "Dependency floor" runs the suites with the lowest allowed nowo-tech/transaction-* versions and
+  checks the demo lock.

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Service;
 
+use Doctrine\DBAL\Exception as DbalException;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
 use Nowo\VerifactuBundle\Event\AfterAeatSubmissionEvent;
@@ -31,6 +32,7 @@ use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
 use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\LockableHashChainRepositoryInterface;
+use Nowo\VerifactuBundle\Repository\TransactionStateAwareInterface;
 use Nowo\VerifactuBundle\Signer\BillingRecordSignerInterface;
 use Nowo\VerifactuBundle\Validator\AeatBusinessRulesValidator;
 use Nowo\VerifactuBundle\Validator\XsdValidator;
@@ -107,7 +109,9 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
      * An exception thrown by an `AFTER_BILLING_RECORD_GENERATED`, `BEFORE_AEAT_SUBMISSION` or `AFTER_AEAT_SUBMISSION`
      * listener never stops the submission nor hides the record or its result: it is logged (event name and exception
      * class only) and returned in `event_errors`. A failure to record the submission outcome in the record store is
-     * contained the same way and returned in `store_errors`.
+     * contained the same way and returned in `store_errors`. Exception: a database error thrown by an
+     * `AFTER_BILLING_RECORD_GENERATED` or `BEFORE_AEAT_SUBMISSION` listener while your transaction is open on the chain's
+     * connection is rethrown (nothing was sent to the AEAT; roll back and replay your whole unit of work).
      *
      * @return array{record: BillingRecord, errors: list<string>, submission?: array<string, mixed>, event_errors?: list<array{event: string, exception: Throwable}>, store_errors?: list<Throwable>}
      */
@@ -163,12 +167,14 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
         // From here on the chain head already points at this record. Listeners receive copies (they cannot change the
         // hash, XML or signed XML that is submitted and returned), and a failing (informational) listener must neither
         // stop the submission nor hide the record or its result: either would lose a fiscal record or fork the chain
-        // on a retry. Use BEFORE_BILLING_RECORD_GENERATION to veto a record.
+        // on a retry. Use BEFORE_BILLING_RECORD_GENERATION to veto a record. Exception (REQ-RUNTIME-003 rule 8): before
+        // the AEAT submission, a database failure inside an open transaction is rethrown, see dispatchObserverEvent().
         $eventErrors = [];
         $this->dispatchObserverEvent(
             new AfterBillingRecordGeneratedEvent(clone $record),
             VerifactuEvents::AFTER_BILLING_RECORD_GENERATED,
             $eventErrors,
+            true,
         );
 
         $result = ['record' => $record, 'errors' => []];
@@ -178,6 +184,7 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
                 new BeforeAeatSubmissionEvent(clone $record),
                 VerifactuEvents::BEFORE_AEAT_SUBMISSION,
                 $eventErrors,
+                true,
             );
 
             $submission           = $this->submissionClient->submit($record);
@@ -293,7 +300,7 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
 
         $eventErrors = [];
         foreach ($result['records'] as $record) {
-            $this->dispatchObserverEvent(new AfterBillingRecordGeneratedEvent(clone $record), VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, $eventErrors);
+            $this->dispatchObserverEvent(new AfterBillingRecordGeneratedEvent(clone $record), VerifactuEvents::AFTER_BILLING_RECORD_GENERATED, $eventErrors, true);
         }
         if ($eventErrors !== []) {
             $result['event_errors'] = $eventErrors;
@@ -491,13 +498,29 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
      * Dispatches an event raised after the chain head moved (generated, before / after AEAT submission) and contains
      * any listener failure.
      *
+     * One exception (REQ-RUNTIME-003 rule 8): before anything is sent to the AEAT ($beforeSubmission), a database
+     * failure is rethrown while the chain repository's connection is inside a transaction (the host's own transaction
+     * around process()). The new chain head is not committed yet, and the database may already have ended the host's
+     * transaction (MySQL / MariaDB deadlock) or aborted it (PostgreSQL: every later statement fails and the COMMIT
+     * rolls back): containing it would submit, or return as chained, a record whose chain head never commits, and the
+     * host's retry would then chain a second record onto the same predecessor (a forked chain). Outside a transaction
+     * the head is already committed, so the failure stays contained (a retry would add a second fiscal record).
+     *
      * @param list<array{event: string, exception: Throwable}> $eventErrors
      */
-    private function dispatchObserverEvent(object $event, string $eventName, array &$eventErrors): void
+    private function dispatchObserverEvent(object $event, string $eventName, array &$eventErrors, bool $beforeSubmission = false): void
     {
         try {
             $this->eventDispatcher->dispatch($event, $eventName);
         } catch (Throwable $exception) {
+            if ($beforeSubmission && $this->isDatabaseFailure($exception) && $this->chainInsideTransaction()) {
+                $this->logger?->error('A {event} listener failed with a database error ({exception_class}) inside an open transaction; rethrown, the record is not chained until the transaction is replayed.', [
+                    'event'           => $eventName,
+                    'exception_class' => $exception::class,
+                ]);
+
+                throw $exception;
+            }
             // No record data and no exception message in the log: both may carry personal data (NIF, names).
             $this->logger?->error('A {event} listener failed ({exception_class}); the billing record, its submission and its result are kept.', [
                 'event'           => $eventName,
@@ -505,6 +528,29 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
             ]);
             $eventErrors[] = ['event' => $eventName, 'exception' => $exception];
         }
+    }
+
+    /**
+     * Whether the failure, or one of its previous exceptions, is a Doctrine DBAL error (DBAL 3 class or DBAL 4
+     * interface `Doctrine\DBAL\Exception`).
+     */
+    private function isDatabaseFailure(Throwable $exception): bool
+    {
+        for ($current = $exception; $current instanceof Throwable; $current = $current->getPrevious()) {
+            if ($current instanceof DbalException) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether the chain repository's connection is inside a transaction (only repositories that can tell).
+     */
+    private function chainInsideTransaction(): bool
+    {
+        return $this->hashChainRepository instanceof TransactionStateAwareInterface && $this->hashChainRepository->isInsideTransaction();
     }
 
     private function shouldSign(): bool
