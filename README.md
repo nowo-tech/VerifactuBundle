@@ -111,6 +111,7 @@ This bundle is **FrankenPHP worker mode friendly** when AEAT SOAP timeouts stay 
 - [Nowo integration guide](docs/INTEGRATION-NOWO.md)
 - [FrankenPHP demo](docs/DEMO-FRANKENPHP.md)
 - [FrankenPHP worker mode audit](docs/FRANKENPHP-WORKER-AUDIT.md)
+- [Concurrency (REQ-RUNTIME-003)](docs/CONCURRENCY.md)
 
 ## Tests and coverage
 

@@ -4,7 +4,7 @@
 **Package**: `nowo-tech/verifactu-bundle`  
 **Last audited**: 2026-11-16
 
-Every production artifact under `src/` is mapped below (116/116; audit: `git ls-files src | wc -l`).
+Every production artifact under `src/` is mapped below (118/118; audit: `git ls-files src | wc -l`).
 
 ## Bundle & DI
 
@@ -105,6 +105,7 @@ Every production artifact under `src/` is mapped below (116/116; audit: `git ls-
 | --- | --- | --- |
 | `Repository/HashChainRepositoryInterface.php` | Hash chain contract | FR-PROC-001 |
 | `Repository/LockableHashChainRepositoryInterface.php` | Per-issuer chain lock around read-then-write (`withChainLock()`) | FR-PROC-001, FR-WORKER-002 |
+| `Repository/TransactionStateAwareInterface.php` | Whether the chain's connection is inside a transaction (listener database errors rethrown before the AEAT submission, REQ-RUNTIME-003 rule 8) | FR-PROC-001 |
 | `Repository/InMemoryHashChainRepository.php` | In-memory storage | FR-PROC-001, FR-WORKER-001 |
 | `Repository/DoctrineHashChainRepository.php` | Doctrine storage | FR-STORE-001, FR-WORKER-002 |
 | `Entity/BillingRecordHashChain.php` | Doctrine entity | FR-STORE-001 |
@@ -211,6 +212,7 @@ Every production artifact under `src/` is mapped below (116/116; audit: `git ls-
 | `Exception/InvalidAeatEnvironmentException.php` | Environment other than exactly `sandbox` / `production` | FR-PROV-001 |
 | `Exception/ChainEnvironmentMismatchException.php` | Chain head belongs to another AEAT environment | FR-STORE-001, FR-PROV-001 |
 | `Exception/ChainTransactionLostException.php` | Database ended the host transaction while the chain lock ran | FR-STORE-001 |
+| `Exception/SubmittedRecordNotCommittedException.php` | AEAT received the record but its head will not commit with the host transaction (record + AEAT answer) | FR-PROC-001, FR-STORE-001 |
 
 ## Coverage summary
 
@@ -224,7 +226,7 @@ Every production artifact under `src/` is mapped below (116/116; audit: `git ls-
 | QR | 2 | 2 |
 | AEAT clients | 10 | 10 |
 | Signing & certificates | 7 | 7 |
-| Storage | 14 | 14 |
+| Storage | 15 | 15 |
 | Processing & events | 13 | 13 |
 | CLI | 6 | 6 |
 | Twig | 1 | 1 |
@@ -233,5 +235,5 @@ Every production artifact under `src/` is mapped below (116/116; audit: `git ls-
 | Runtime providers | 6 | 6 |
 | Batch submission & flow control | 6 | 6 |
 | Messenger | 2 | 2 |
-| Exceptions | 3 | 3 |
-| **Total production sources** | **116** | **116** |
+| Exceptions | 4 | 4 |
+| **Total production sources** | **118** | **118** |

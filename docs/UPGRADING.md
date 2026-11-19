@@ -36,6 +36,74 @@
 
 ## Unreleased
 
+From **1.8.0** — minor, no configuration change:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- **Behaviour change (BC note):** `process()` and `processBatch()` now **rethrow** a database error (any
+  `Doctrine\DBAL\Exception` in the chain of previous exceptions) thrown by an `AFTER_BILLING_RECORD_GENERATED` or
+  `BEFORE_AEAT_SUBMISSION` listener **while a transaction is open on the chain's connection** (your transaction around
+  `process()`). Before, it was returned in `event_errors` and the record was submitted and returned as chained although
+  the database had aborted (PostgreSQL) or ended (MySQL / MariaDB deadlock) your transaction. Nothing has been sent to the
+  AEAT when it is rethrown: roll back and replay your whole unit of work, as for a lock conflict. A host on
+  nowo-tech/transaction-doctrine answers a deadlock or lock-wait timeout with 409 + `CONFLICT_001`. Every other listener
+  error, every failure outside a transaction and every failure after the AEAT submission stays in `event_errors` /
+  `store_errors` as before.
+- **Behaviour change (BC note), `process(..., submitToAeat: true)` inside your transaction** (now logged as a
+  warning): the chain head is read again before the AEAT request (`ChainTransactionLostException` and nothing is sent
+  when it is gone) and after it. A database failure after the request (the record store, or an `AFTER_AEAT_SUBMISSION`
+  listener), or a head that is gone, now throws `SubmittedRecordNotCommittedException` instead of returning
+  `store_errors` / `event_errors`. The AEAT holds the record: roll back (if the connection is still open), then call
+  `BillingRecordProcessor::persistSubmittedRecord($e->record, $e->submission)` before chaining anything else for the
+  issuer, and never call `process()` again for that invoice. **Never retry it automatically**: it has no previous
+  exception on purpose (the database error is `$e->databaseError`, the head loss `$e->headLoss`), so transaction-doctrine
+  answers it as a 500, not a 409; in a Messenger handler wrap it in `UnrecoverableMessageHandlingException`. Better: use
+  the record store with the batch submitter.
+- **Catch-and-commit fails loudly:** when the bundle throws inside your still-open transaction it marks it rollback-only,
+  so a `commit()` after catching the exception throws `CommitFailedRollbackOnly` (DBAL 3: `ConnectionException`). Roll
+  back instead, always, in your own error handling: a transaction left open survives into the next request of a
+  kept-alive worker on every platform (the next request's autocommit-style writes join it and are lost), and neither
+  transaction-doctrine's `WorkerConnectionHygiene` (it does not recognise these exceptions) nor `services_resetter`
+  (it never rolls connections back) cleans it up for you.
+- `persistSubmittedRecord()` must run after the rollback, outside any transaction (`LogicException` otherwise).
+- `auto_commit: false` connections are supported: when the bundle closes a lost connection it clears the rollback-only
+  mark on the implicit transaction DBAL reopens.
+- `persistSubmittedRecord()` accepts only the unchanged record of that exception (not an import API): a record whose
+  hash is not its fingerprint, whose XML lacks it, or whose environment or issuer does not match is refused with
+  `InvalidArgumentException` and nothing is written.
+- **Exception change (BC note), MySQL / MariaDB:** every retryable error inside the chain lock while it runs in your
+  transaction (also a lock-wait timeout) now closes the connection and throws `ChainTransactionLostException`; before,
+  only a deadlock whose savepoint rollback failed did. When the bundle finds the head gone before an AEAT request
+  (`ChainTransactionLostException` without a previous exception) nothing was sent and restarting the unit is safe, but
+  transaction-doctrine does not see a transient failure in it and answers 500: map it to 409 yourself if you want a
+  retry. `BillingRecordBatchSubmitter::submitPending()` now throws the database error (a `RetryableException`) of a
+  lost transaction inside its own locks instead of `ChainTransactionLostException`.
+- **`process()` inside `Connection::transactional()` / `wrapInTransaction()`:** on MySQL / MariaDB, when the bundle
+  closes the connection (the transaction is already gone), Doctrine's `rollBack()` throws `NoActiveTransaction` with
+  the bundle's exception as its previous one. Catch `Throwable` and use `SubmittedRecordNotCommittedException::find()`
+  (or look along `getPrevious()` for `ChainTransactionLostException`). On PostgreSQL the bundle never closes the
+  connection for a lost head: the aborted transaction stays open and your rollback works
+  (`ChainTransactionLostException::$connectionClosed` tells which).
+- **Exception change (BC note), DBAL 3 without `use_savepoints`, MySQL / MariaDB:** a deadlock inside the chain lock
+  while it runs in your transaction now throws `ChainTransactionLostException` (the `DeadlockException` is its previous
+  exception) and closes the connection, as it already did on DBAL 4 or with savepoints. Before, the plain
+  `DeadlockException` came out with DBAL still believing your transaction was open. If you catch `RetryableException`
+  around a unit that calls `process()`, also catch `ChainTransactionLostException` (both mean: restart the whole unit).
+  transaction-doctrine classifies both as `CONFLICT_001`.
+- A custom `hash_chain.repository` can implement the new `Repository\TransactionStateAwareInterface`
+  (`isInsideTransaction()`, `verifyHeadInTransaction()`, `setRollbackOnly()`) to get the same behaviour; without it,
+  listener errors stay contained as in 1.8.
+- No new runtime dependency: nowo-tech/transaction-doctrine (`^1.7`, the first version with
+  `TransientFailureClassifier::findConflict()`) is only a dev dependency (it pins the host conflict contract
+  in the tests). The bundle wraps no connection and installs no commit tracking.
+- If you ran 1.1.0 – 1.8.0 on DBAL 3 without savepoints, or 1.4.1 – 1.8.0 with `process()` inside your transaction on
+  PostgreSQL (1.5.0 – 1.8.0 for record-store failures): run `nowo:verifactu:verify-chain` for each issuer and look for two records with the same previous hash
+  or a head missing from the record log.
+- Read [CONCURRENCY.md](CONCURRENCY.md) for the write paths, the conflict codes, the residual risks (in particular
+  `process(..., submitToAeat: true)` inside your transaction) and worker mode with the kernel reset off.
+
 ## To 1.8.0
 
 From **1.7.0** — minor, strictly additive, no configuration change:

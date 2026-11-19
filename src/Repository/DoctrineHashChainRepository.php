@@ -6,7 +6,11 @@ namespace Nowo\VerifactuBundle\Repository;
 
 use DateTimeImmutable;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\DeadlockException;
+use Doctrine\DBAL\Exception\RetryableException;
 use Doctrine\DBAL\LockMode;
+use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\Persistence\ManagerRegistry;
 use LogicException;
@@ -44,11 +48,21 @@ use Throwable;
  * @copyright 2026 Nowo.tech
  */
 #[AsAlias(id: self::SERVICE_NAME, public: true)]
-final class DoctrineHashChainRepository extends ServiceEntityRepository implements LockableHashChainRepositoryInterface
+final class DoctrineHashChainRepository extends ServiceEntityRepository implements LockableHashChainRepositoryInterface, TransactionStateAwareInterface
 {
     public const SERVICE_NAME = 'nowo_verifactu.repository.doctrine_hash_chain';
 
+    /** Most nesting levels closeLostConnection() rolls back after a reconnection (a fresh session has one or two). */
+    private const MAX_NESTING = 8;
+
     private readonly ManagerRegistry $managerRegistry;
+
+    /**
+     * Chain locks of this repository open right now (nested ones included): tells the host's transaction from the
+     * bundle's own outer lock. Back to 0 when every withChainLock() call returns or throws, so nothing is carried
+     * between requests (worker mode).
+     */
+    private int $ownLocks = 0;
 
     /**
      * Receives the Doctrine registry managing the BillingRecordHashChain entity.
@@ -72,7 +86,7 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
      * head read under that lock (null for an empty chain).
      *
      * The transaction nests into the host's transaction when one is open on the same connection. When the database
-     * ends the host's whole transaction meanwhile (MySQL / MariaDB deadlock), the connection is closed and
+     * ends the host's whole transaction meanwhile (MySQL / MariaDB deadlock or lock-wait timeout), the connection is closed and
      * ChainTransactionLostException is thrown: retry the host's whole unit of work.
      *
      * @throws ChainTransactionLostException
@@ -81,10 +95,17 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     {
         $entityManager = $this->resolveEntityManager();
         $connection    = $entityManager->getConnection();
-        $connection->beginTransaction();
-        $nested = $connection->getTransactionNestingLevel() > 1;
+        $levelBefore   = $connection->getTransactionNestingLevel();
+        // A transaction that is not one of this repository's own chain locks (the host's) is open around this one.
+        $hostTransaction = $levelBefore > $this->ownLocks;
+        $nested          = $levelBefore > 0;
+        // @igor-ignore - Depth of the chain locks open in this call stack; back to 0 when every withChainLock() returns.
+        ++$this->ownLocks;
 
         try {
+            // Inside the try: a failed BEGIN / SAVEPOINT (PostgreSQL: the host's transaction is already aborted) has
+            // counted a nesting level DBAL can never roll back; the catch below balances it (rollback, or close).
+            $connection->beginTransaction();
             $this->ensureRow($entityManager, $issuerNif);
             $locked = $this->toState($this->findRow($entityManager, $issuerNif, true));
 
@@ -93,6 +114,16 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
 
             return $result;
         } catch (Throwable $exception) {
+            if ($nested && $this->endedTheWholeTransaction($connection, $exception, $hostTransaction)) {
+                // MySQL / MariaDB roll back the whole transaction of a deadlock victim, and of a lock-wait timeout with
+                // innodb_rollback_on_timeout ON. Detected from the error itself, not from a failing ROLLBACK TO
+                // SAVEPOINT: without savepoints (DBAL 3, use_savepoints off) the nested rollBack() succeeds, DBAL stays
+                // at the host's nesting level and the host's next statements (or a retried process()) would run in
+                // autocommit without the row lock. Every retryable error counts: the host restarts its unit anyway.
+                $this->closeLostConnection($connection);
+
+                throw new ChainTransactionLostException($exception);
+            }
             if ($connection->isTransactionActive()) {
                 try {
                     $connection->rollBack();
@@ -102,7 +133,7 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
                         // savepoint is gone and DBAL's nesting level can never return to 0: every later statement on this
                         // (kept-alive) connection would run in autocommit without the row lock. Close it and tell the
                         // host to restart its unit of work.
-                        $connection->close();
+                        $this->closeLostConnection($connection);
 
                         throw new ChainTransactionLostException($exception);
                     }
@@ -111,7 +142,112 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
             }
 
             throw $exception;
+        } finally {
+            // @igor-ignore - Depth of the chain locks open in this call stack; back to 0 when every withChainLock() returns.
+            --$this->ownLocks;
         }
+    }
+
+    /**
+     * Whether the connection of the chain entity is inside a transaction (the host's, or withChainLock()'s own).
+     */
+    public function isInsideTransaction(): bool
+    {
+        return $this->resolveEntityManager()->getConnection()->isTransactionActive();
+    }
+
+    /**
+     * Reads the issuer's head again on the chain's connection, inside the host's transaction, and checks that it is
+     * $hash. When the read fails (PostgreSQL: the transaction is aborted) or returns another head (MySQL / MariaDB: the
+     * transaction is gone and the read ran in autocommit), ChainTransactionLostException is thrown: the head would
+     * never commit. The connection is closed only on MySQL / MariaDB, where the transaction is already gone; on
+     * PostgreSQL the aborted transaction stays open so the host's ROLLBACK (Connection::transactional() included) works.
+     *
+     * @throws ChainTransactionLostException
+     */
+    public function verifyHeadInTransaction(string $issuerNif, string $hash): void
+    {
+        $connection = $this->resolveEntityManager()->getConnection();
+        try {
+            $head = $this->getLastState($issuerNif)?->hash;
+        } catch (Throwable $exception) {
+            throw $this->headLost($connection, $exception);
+        }
+        if ($head !== strtoupper(trim($hash))) {
+            throw $this->headLost($connection, null);
+        }
+    }
+
+    /**
+     * The lost-head exception; closes the connection first on MySQL / MariaDB (the transaction is gone there and every
+     * later statement would autocommit).
+     */
+    private function headLost(Connection $connection, ?Throwable $cause): ChainTransactionLostException
+    {
+        $close = $connection->getDatabasePlatform() instanceof AbstractMySQLPlatform;
+        if ($close) {
+            $this->closeLostConnection($connection);
+        } else {
+            // PostgreSQL: a COMMIT of the aborted transaction would silently roll it back and report success; make a
+            // host that catches the exception and commits anyway fail loudly (CommitFailedRollbackOnly).
+            $this->setRollbackOnly();
+        }
+
+        return new ChainTransactionLostException($cause, $close);
+    }
+
+    /**
+     * Closes a connection whose transaction is lost (DBAL's nesting level back to 0) and clears a rollback-only mark
+     * DBAL would otherwise keep across the reconnection: close() resets the nesting level, not the mark, so the next
+     * request's first commit would fail. One empty BEGIN / ROLLBACK on the new session does it (with auto_commit off:
+     * down to level 1, then the level-1 rollback, after which DBAL begins its implicit transaction again); when the
+     * database is unreachable, the connection is simply left closed (the mark then fails a commit loudly, never
+     * silently).
+     */
+    private function closeLostConnection(Connection $connection): void
+    {
+        $connection->close();
+        try {
+            // With auto_commit off DBAL reopens a transaction on connect, so the new one is a savepoint: roll back
+            // down to level 1, then the level-1 rollBack() that clears the mark (and, auto_commit off, begins again).
+            $connection->beginTransaction();
+            for ($guard = 0; $guard < self::MAX_NESTING && $connection->getTransactionNestingLevel() > 1; ++$guard) {
+                $connection->rollBack();
+            }
+            $connection->rollBack();
+        } catch (Throwable) {
+            $connection->close();
+        }
+    }
+
+    /**
+     * Marks the transaction open on the chain's connection, if any, rollback-only: a later commit() of it, at any
+     * nesting level, throws CommitFailedRollbackOnly instead of committing (or, on PostgreSQL, silently rolling back).
+     */
+    public function setRollbackOnly(): void
+    {
+        $connection = $this->resolveEntityManager()->getConnection();
+        if ($connection->isTransactionActive()) {
+            // @igor-ignore - Marks the current database transaction (ended by its rollback), not service state.
+            $connection->setRollbackOnly();
+        }
+    }
+
+    /**
+     * Whether the failure ended the whole transaction on MySQL / MariaDB: a deadlock always; inside the host's
+     * transaction any retryable error (a lock-wait timeout ends it with innodb_rollback_on_timeout ON, and the host
+     * restarts its unit anyway). Inside the bundle's own outer lock only (the batch submitter's global flow-control
+     * lock), a lock-wait timeout rolls back to the savepoint as usual and is rethrown as it is.
+     */
+    private function endedTheWholeTransaction(Connection $connection, Throwable $exception, bool $hostTransaction): bool
+    {
+        for ($current = $exception; $current instanceof Throwable; $current = $current->getPrevious()) {
+            if ($current instanceof DeadlockException || ($hostTransaction && $current instanceof RetryableException)) {
+                return $connection->getDatabasePlatform() instanceof AbstractMySQLPlatform;
+            }
+        }
+
+        return false;
     }
 
     /**

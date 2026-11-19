@@ -178,18 +178,32 @@ jobs:
         run: composer cs-check
 
   concurrency:
-    name: Chain concurrency (${{ matrix.db }})
+    name: Chain concurrency (${{ matrix.db }}${{ matrix.dbal == '3' && ', DBAL 3' || '' }})
     runs-on: ubuntu-latest
 
+    # REQ-RUNTIME-003: MySQL 8.4, MariaDB 11.x and PostgreSQL 16+, on DBAL 4 (the lock) and DBAL 3 (hosts still on it).
+    # Every test session waits at most 15 s for a row lock (tests/Concurrency/ConcurrencyKernel.php).
     strategy:
       fail-fast: false
       matrix:
         include:
           - db: mysql-8.4
+            dbal: '4'
             url: 'mysql://root@127.0.0.1:3306/verifactu?serverVersion=8.4&charset=utf8mb4'
           - db: mariadb-11.4
+            dbal: '4'
             url: 'mysql://root@127.0.0.1:3307/verifactu?serverVersion=11.4.0-MariaDB&charset=utf8mb4'
           - db: postgresql-17
+            dbal: '4'
+            url: 'pgsql://postgres@127.0.0.1:5432/verifactu?serverVersion=17&charset=utf8'
+          - db: mysql-8.4
+            dbal: '3'
+            url: 'mysql://root@127.0.0.1:3306/verifactu?serverVersion=8.4&charset=utf8mb4'
+          - db: mariadb-11.4
+            dbal: '3'
+            url: 'mysql://root@127.0.0.1:3307/verifactu?serverVersion=11.4.0-MariaDB&charset=utf8mb4'
+          - db: postgresql-17
+            dbal: '3'
             url: 'pgsql://postgres@127.0.0.1:5432/verifactu?serverVersion=17&charset=utf8'
 
     # Throwaway service databases without credentials (no password in the repository).
@@ -234,10 +248,56 @@ jobs:
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress --no-interaction
 
+      - name: Downgrade to DBAL 3
+        if: matrix.dbal == '3'
+        run: |
+          composer require --dev 'doctrine/dbal:^3.10' --no-update --no-interaction
+          composer update 'doctrine/*' --with-all-dependencies --prefer-dist --no-progress --no-interaction
+          composer show doctrine/dbal | grep -E '^versions'
+
       - name: Run the multi-process chain tests
+        timeout-minutes: 20
         env:
           VERIFACTU_TEST_DATABASE_URL: ${{ matrix.url }}
         run: vendor/bin/phpunit --no-coverage tests/Concurrency
+
+  # Dependency floor: the code must work with the LOWEST nowo-tech/transaction-* versions composer.json allows (the
+  # host-side conflict contract in tests/Unit/Exception pins transaction-doctrine ^1.6), and the demo lock must install
+  # what the bundle requires (the demo installs from its lock, so a requirement added later is never installed and
+  # Demo smoke fails with "class not found").
+  deps-floor:
+    name: Dependency floor (nowo-tech/transaction-* lowest, demo lock)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Demo lock satisfies the bundle's nowo-tech requirements
+        run: python3 .scripts/check-demo-lock.py . --only 'nowo-tech/*'
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: |
+          composer config platform.php 8.4.1
+          composer update --prefer-dist --no-progress --no-interaction
+
+      - name: Downgrade nowo-tech/transaction-* to the lowest allowed versions
+        run: |
+          composer update 'nowo-tech/transaction-*' --prefer-lowest --prefer-dist --no-progress --no-interaction
+          composer show 'nowo-tech/transaction-*'
+
+      - name: PHPStan at the floor
+        run: composer phpstan
+
+      - name: Unit and integration suites at the floor
+        timeout-minutes: 10
+        run: vendor/bin/phpunit --no-coverage --testsuite unit,integration
 
   static-analysis:
     name: PHPStan & Rector

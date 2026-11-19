@@ -508,6 +508,16 @@ domain event when the AEAT answers, either map `$result['submission']` in the ad
   roll back and retry the whole unit of work; on `ChainTransactionLostException` (MySQL / MariaDB deadlock) your
   transaction is already gone and the connection was closed, so run nothing more of it and start the unit of work again
   ([CONFIGURATION](CONFIGURATION.md#hash-chain-persistence)).
+- `process(..., submitToAeat: true)` inside your transaction (logged as a warning): if your transaction rolls back after
+  the AEAT received the record, the AEAT holds a record whose chain head is gone, and the next record forks the chain at
+  the AEAT. The bundle throws `SubmittedRecordNotCommittedException` (with the record and the AEAT answer) when it
+  detects this; repair with `BillingRecordProcessor::persistSubmittedRecord()`. Prefer the record store with the batch
+  submitter, or submit outside any transaction. Inside `Connection::transactional()`, catch `Throwable` and use
+  `SubmittedRecordNotCommittedException::find()` (Doctrine may replace it with `NoActiveTransaction`).
+- A database error thrown by an `AFTER_BILLING_RECORD_GENERATED` or `BEFORE_AEAT_SUBMISSION` listener while your
+  transaction is open is rethrown (nothing was sent to the AEAT): roll back and replay your unit. Every other listener
+  error is returned in `event_errors`. Write paths, conflict codes and residual risks:
+  [CONCURRENCY.md](CONCURRENCY.md).
 
 ## Forms in Twig (REQ-TWIG-005)
 
