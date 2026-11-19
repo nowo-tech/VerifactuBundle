@@ -20,7 +20,9 @@ use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
 use Nowo\VerifactuBundle\Repository\DoctrineBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use PHPUnit\Framework\TestCase;
+use ReflectionProperty;
 use RuntimeException;
+use Throwable;
 
 /**
  * @author Nowo.tech
@@ -197,5 +199,37 @@ final class DoctrineHashChainRepositoryTest extends TestCase
         } catch (ChainTransactionLostException $exception) {
             self::assertSame($original, $exception->getPrevious());
         }
+    }
+
+    public function testALockWaitTimeoutInsideTheBundlesOwnOuterLockRollsBackToTheSavepoint(): void
+    {
+        // The batch submitter's global flow-control lock around the issuer lock: no host transaction, so a lock-wait
+        // timeout is not a lost transaction (UO2-5); a deadlock still is.
+        $original   = new LockWaitTimeoutException(new class('Lock wait timeout exceeded', 'HY000', 1205) extends AbstractException {}, null);
+        $connection = $this->createMock(Connection::class);
+        $connection->method('getTransactionNestingLevel')->willReturnOnConsecutiveCalls(1, 2);
+        $connection->method('isTransactionActive')->willReturn(true);
+        $connection->method('getDatabasePlatform')->willReturn(new MySQLPlatform());
+        $connection->expects(self::once())->method('rollBack');
+        $connection->expects(self::never())->method('close');
+
+        $entityManager = $this->createMock(EntityManagerInterface::class);
+        $entityManager->method('getConnection')->willReturn($connection);
+        $entityManager->method('getClassMetadata')->willThrowException($original);
+        $registry = $this->createMock(ManagerRegistry::class);
+        $registry->method('getManagerForClass')->willReturn($entityManager);
+
+        $repository = new DoctrineHashChainRepository($registry);
+        // One own chain lock is already open (the outer global lock).
+        (new ReflectionProperty(DoctrineHashChainRepository::class, 'ownLocks'))->setValue($repository, 1);
+
+        $caught = null;
+        try {
+            $repository->withChainLock('89890001K', static fn (): bool => true);
+        } catch (Throwable $exception) {
+            $caught = $exception;
+        }
+        self::assertSame($original, $caught, 'the lock-wait timeout is rethrown as it is');
+        self::assertSame(1, (new ReflectionProperty(DoctrineHashChainRepository::class, 'ownLocks'))->getValue($repository), 'back to the outer lock');
     }
 }

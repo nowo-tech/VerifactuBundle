@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Service;
 
 use Doctrine\DBAL\Exception as DbalException;
+use InvalidArgumentException;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
 use Nowo\VerifactuBundle\Event\AfterAeatSubmissionEvent;
@@ -425,33 +426,49 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
      * chain head (and in the record store, with its AEAT answer), in the chain lock. Run it after rolling back the failed
      * transaction, in a new transaction of yours or outside any, before chaining anything else for the issuer.
      *
-     * Returns true when the record is the head afterwards (stored now, or already the head), false when the head has
-     * moved to another record meanwhile: the chain is then forked at the AEAT, nothing is written, and the issuer needs
-     * a manual correction (`nowo:verifactu:verify-chain`, docs/CONCURRENCY.md). Not part of
-     * BillingRecordProcessorInterface (a minor version cannot add methods to it).
+     * Returns true when the record is the head afterwards (stored now, or already the head; the AEAT answer is recorded
+     * in both cases), false when the head has moved to another record meanwhile: the chain is then forked at the AEAT,
+     * nothing is written, and the issuer needs a manual correction (`nowo:verifactu:verify-chain`,
+     * docs/CONCURRENCY.md). Not part of BillingRecordProcessorInterface (a minor version cannot add methods to it).
+     *
+     * It accepts only the record of SubmittedRecordNotCommittedException, unchanged; it is not an import API. The
+     * record is refused (InvalidArgumentException, nothing written) when its hash is not the fingerprint of its fields
+     * and previous hash, its XML does not carry that fingerprint, its AEAT environment is not the configured one or the
+     * head's, or (with `providers.issuer` enforced) it belongs to another issuer.
      *
      * @param BillingRecord $record the record carried by SubmittedRecordNotCommittedException (hash set)
      * @param array<string, mixed> $submission the AEAT answer carried by the exception
+     *
+     * @throws InvalidArgumentException when the record is not a chained record of this configuration
      */
     public function persistSubmittedRecord(BillingRecord $record, array $submission): bool
     {
-        $hash      = strtoupper(trim((string) $record->hash));
+        $hash = strtoupper(trim((string) $record->hash));
+        $this->assertSubmittedRecord($record, $hash);
         $previous  = $record->previousHash === null ? null : strtoupper(trim($record->previousHash));
-        $operation = function (?HashChainState ...$locked) use ($record, $submission, $hash, $previous): bool {
+        $reference = $submission['reference'] ?? null;
+        $answer    = fn () => $this->recordStore?->markSubmitted($record->issuerNif, $hash, ($submission['success'] ?? false) === true, is_string($reference) ? $reference : null);
+        $operation = function (?HashChainState ...$locked) use ($record, $hash, $previous, $answer): bool {
             $head = $locked === [] ? $this->hashChainRepository->getLastState($record->issuerNif) : $locked[0];
-            $head = $head instanceof HashChainState ? strtoupper(trim($head->hash)) : null;
-            if ($head === $hash) {
+            if ($head?->environment instanceof AeatEnvironment && $head->environment !== $record->environment) {
+                throw new InvalidArgumentException('The record\'s AEAT environment is not the chain head\'s: it is not the record this chain sent.');
+            }
+            $headHash = $head instanceof HashChainState ? strtoupper(trim($head->hash)) : null;
+            if ($headHash === $hash) {
+                // Already the head (an earlier repair, or the transaction did commit): record the answer, idempotently,
+                // so the batch submitter does not send the record again.
+                $answer();
+
                 return true;
             }
-            if ($head !== $previous) {
+            if ($headHash !== $previous) {
                 return false;
             }
             $this->persistChained(
                 [$record],
                 new HashChainState($record->issuerNif, $record->invoiceSeriesNumber, $record->issueDate, $hash, $record->environment),
             );
-            $reference = $submission['reference'] ?? null;
-            $this->recordStore?->markSubmitted($record->issuerNif, $hash, ($submission['success'] ?? false) === true, is_string($reference) ? $reference : null);
+            $answer();
 
             return true;
         };
@@ -459,6 +476,27 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
         return $this->hashChainRepository instanceof LockableHashChainRepositoryInterface
             ? $this->hashChainRepository->withChainLock($record->issuerNif, $operation)
             : $operation();
+    }
+
+    /**
+     * persistSubmittedRecord() input checks: the record must be one this processor chained and sent, unchanged.
+     */
+    private function assertSubmittedRecord(BillingRecord $record, string $hash): void
+    {
+        if ($hash === '' || !hash_equals($this->hashChainGenerator->computeHash($record), $hash)) {
+            throw new InvalidArgumentException('The record\'s hash is not the fingerprint of its fields and previous hash: pass the unchanged record of SubmittedRecordNotCommittedException.');
+        }
+        if ($record->xml === null || !str_contains(strtoupper($record->xml), '>' . $hash . '<')) {
+            throw new InvalidArgumentException('The record\'s XML does not carry its fingerprint: pass the unchanged record of SubmittedRecordNotCommittedException.');
+        }
+        $environment = $this->environmentProvider?->getEnvironment() ?? AeatEnvironment::fromValue($this->defaultEnvironment);
+        if ($record->environment !== $environment) {
+            throw new InvalidArgumentException('The record\'s AEAT environment is not the configured one.');
+        }
+        $issuer = $this->resolveIssuer();
+        if ($this->enforceProviderIssuer && trim($issuer->nif) !== '' && strtoupper(trim($record->issuerNif)) !== strtoupper(trim($issuer->nif))) {
+            throw new InvalidArgumentException('The record belongs to another issuer than the issuer provider\'s.');
+        }
     }
 
     /**
@@ -640,29 +678,31 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
      */
     private function guardSubmittedRecord(TransactionStateAwareInterface $repository, BillingRecord $record, array $submission, array $failures): void
     {
-        $cause = null;
+        $databaseError = null;
         foreach ($failures as $failure) {
             if ($failure instanceof Throwable && $this->isDatabaseFailure($failure)) {
-                $cause = $failure;
+                $databaseError = $failure;
 
                 break;
             }
         }
+        $headLoss = null;
         try {
             $repository->verifyHeadInTransaction($record->issuerNif, (string) $record->hash);
         } catch (ChainTransactionLostException $lost) {
-            $cause = $lost;
+            $headLoss = $lost;
         }
-        if (!$cause instanceof Throwable) {
+        if (!$databaseError instanceof Throwable && !$headLoss instanceof ChainTransactionLostException) {
             return;
         }
 
         // Class names only: the record (NIF, names) and the messages may carry personal data.
-        $this->logger?->critical('A Veri*Factu record was sent to the AEAT but its chain head will not commit with the open transaction ({exception_class}); SubmittedRecordNotCommittedException carries the record and the AEAT answer to persist.', [
-            'exception_class' => $cause::class,
+        $this->logger?->critical('A Veri*Factu record was sent to the AEAT but its chain head will not commit with the open transaction (database error: {database_error}; head lost: {head_lost}); SubmittedRecordNotCommittedException carries the record and the AEAT answer to persist. Do not retry process().', [
+            'database_error' => $databaseError instanceof Throwable ? $databaseError::class : 'none',
+            'head_lost'      => $headLoss instanceof ChainTransactionLostException ? 'yes (' . ($headLoss->getPrevious() instanceof Throwable ? $headLoss->getPrevious()::class : 'other head') . ')' : 'no',
         ]);
 
-        throw new SubmittedRecordNotCommittedException($record, $submission, $cause);
+        throw new SubmittedRecordNotCommittedException($record, $submission, $databaseError, $headLoss);
     }
 
     private function shouldSign(): bool

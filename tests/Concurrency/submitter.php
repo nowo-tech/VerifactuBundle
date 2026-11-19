@@ -118,7 +118,7 @@ function submitPending(Psr\Container\ContainerInterface $container, ManagerRegis
     if (!$heads instanceof HashChainRepositoryInterface) {
         throw new RuntimeException('The chain head repository is not the Doctrine one.');
     }
-    $submitter = new BillingRecordBatchSubmitter($queue, $client, $heads, new EventDispatcher(), null, null, null, 7, 300, 0);
+    $submitter = new BillingRecordBatchSubmitter($queue, $client, $heads, new EventDispatcher(), null, null, null, 7, 60, 0);
     $deadline  = microtime(true) + 240;
     $chainers  = (int) getenv('VERIFACTU_TEST_CHAINERS');
 

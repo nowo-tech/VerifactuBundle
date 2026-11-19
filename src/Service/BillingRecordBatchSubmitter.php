@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Service;
 
 use DateTimeImmutable;
+use Doctrine\DBAL\Exception\RetryableException;
 use LogicException;
 use Nowo\VerifactuBundle\Client\BatchAeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Client\SoapEnvelopeBuilder;
@@ -13,6 +14,7 @@ use Nowo\VerifactuBundle\Event\IssuerSubmissionStalledEvent;
 use Nowo\VerifactuBundle\Event\RecordSubmissionFailedEvent;
 use Nowo\VerifactuBundle\Event\RecordSubmittedEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
+use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
 use Nowo\VerifactuBundle\Model\AeatBatchResponse;
 use Nowo\VerifactuBundle\Model\AeatRecordResponse;
 use Nowo\VerifactuBundle\Model\BatchSubmissionResult;
@@ -88,6 +90,9 @@ use const DATE_ATOM;
 final class BillingRecordBatchSubmitter
 {
     public const SERVICE_NAME = 'nowo_verifactu.service.batch_submitter';
+
+    /** Attempts to store the AEAT answers of one batch when the database reports a lock conflict. */
+    public const RECORD_OUTCOMES_ATTEMPTS = 3;
 
     /** Flow control key and lock key shared by every issuer (submission.flow_control_scope: global). */
     public const GLOBAL_FLOW_CONTROL_KEY = '*';
@@ -246,7 +251,7 @@ final class BillingRecordBatchSubmitter
 
         $this->clearNoAnswer($issuerNif, $now);
         $outcomes = array_map(fn (StoredBillingRecord $stored): RecordSubmissionOutcome => $this->outcome($stored, $response), $claimed);
-        $updated  = $this->queue->recordOutcomes($issuerNif, $token, $outcomes, $now);
+        $updated  = $this->recordOutcomes($issuerNif, $token, $outcomes, $now);
         if (in_array($mode, [self::MODE_PROBE, self::MODE_PROBE_NEWEST, self::MODE_LONE], true)) {
             // A probe, or a lone suspect, was answered: the AEAT accepts this issuer's requests. Each other suspect is
             // sent alone once more (LJD4-L1: an answered lone suspect confirms the others too).
@@ -417,9 +422,38 @@ final class BillingRecordBatchSubmitter
 
         // Global scope: every issuer's check-and-reserve runs under one more lock, always taken first (no lock cycle
         // with the chaining processes, which only take the issuer lock).
-        return $global
-            ? $repository->withChainLock(self::GLOBAL_FLOW_CONTROL_KEY, static fn (): BatchSubmissionResult|array => $issuer())
-            : $issuer();
+        try {
+            return $global
+                ? $repository->withChainLock(self::GLOBAL_FLOW_CONTROL_KEY, static fn (): BatchSubmissionResult|array => $issuer())
+                : $issuer();
+        } catch (ChainTransactionLostException $exception) {
+            // The submitter never runs inside a host transaction, so the lost transaction was only its own claim (a
+            // deadlock in the issuer lock nested in the global one): nothing was claimed, rethrow the database error
+            // itself (retryable) instead of the host-oriented "restart your unit of work" exception.
+            throw $exception->getPrevious() ?? $exception;
+        }
+    }
+
+    /**
+     * Stores the AEAT answers (one transaction of the queue), retried in-process on a lock conflict: the answers are
+     * already in hand, and the claim-token compare-and-set makes a replay harmless. Without it the batch would stay
+     * claimed until the claim timeout and be sent again.
+     *
+     * @param list<RecordSubmissionOutcome> $outcomes
+     *
+     * @return list<string>
+     */
+    private function recordOutcomes(string $issuerNif, string $token, array $outcomes, DateTimeImmutable $now): array
+    {
+        for ($attempt = 1;; ++$attempt) {
+            try {
+                return $this->queue->recordOutcomes($issuerNif, $token, $outcomes, $now);
+            } catch (RetryableException $exception) {
+                if ($attempt >= self::RECORD_OUTCOMES_ATTEMPTS) {
+                    throw $exception;
+                }
+            }
+        }
     }
 
     /**

@@ -7,13 +7,19 @@ namespace Nowo\VerifactuBundle\Tests\Unit\Service;
 use ArrayObject;
 use Doctrine\DBAL\Driver\AbstractException;
 use Doctrine\DBAL\Exception\DeadlockException;
+use InvalidArgumentException;
+use Nowo\TransactionDoctrine\TransientFailureClassifier;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
 use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
 use Nowo\VerifactuBundle\Exception\SubmittedRecordNotCommittedException;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
+use Nowo\VerifactuBundle\Model\AeatEnvironment;
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Model\HashChainState;
+use Nowo\VerifactuBundle\Model\IssuerIdentity;
 use Nowo\VerifactuBundle\Model\RecordType;
+use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
@@ -31,6 +37,8 @@ use RuntimeException;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 use Symfony\Contracts\Translation\TranslatorInterface;
 use Throwable;
+
+use function count;
 
 use const JSON_THROW_ON_ERROR;
 
@@ -99,9 +107,16 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
             // The record is at the AEAT: its answer and the exact record are never lost.
             self::assertSame(['success' => true, 'reference' => 'CSV-1'], $exception->submission);
             self::assertSame($client->sent[0]['hash'], $exception->record->hash);
-            self::assertSame($failure, $exception->getPrevious());
+            self::assertSame($failure, $exception->databaseError);
+            self::assertNull($exception->headLoss);
+            // Never a retryable conflict: the AEAT holds the record, a retry would send a second one (UO2-1).
+            self::assertNull($exception->getPrevious());
+            self::assertFalse((new TransientFailureClassifier())->isTransient($exception));
+            self::assertNull(TransientFailureClassifier::findConflict($exception));
         }
         self::assertSame(['warning', 'error', 'critical'], array_column($logger->records, 'level'));
+        self::assertSame(DeadlockException::class, $logger->records[2]['context']['database_error'] ?? null);
+        self::assertSame('no', $logger->records[2]['context']['head_lost'] ?? null);
         self::assertStringNotContainsString('89890001K', json_encode($logger->records, JSON_THROW_ON_ERROR));
     }
 
@@ -117,7 +132,7 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
             self::fail('SubmittedRecordNotCommittedException expected');
         } catch (SubmittedRecordNotCommittedException $exception) {
             self::assertSame('CSV-1', $exception->submission['reference'] ?? null);
-            self::assertSame($failure, $exception->getPrevious());
+            self::assertSame($failure, $exception->databaseError);
         }
     }
 
@@ -161,7 +176,8 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
             $processor->process($this->record('FAC-2026-712'), submitToAeat: true);
             self::fail('SubmittedRecordNotCommittedException expected');
         } catch (SubmittedRecordNotCommittedException $exception) {
-            self::assertInstanceOf(ChainTransactionLostException::class, $exception->getPrevious());
+            self::assertInstanceOf(ChainTransactionLostException::class, $exception->headLoss);
+            self::assertNull($exception->databaseError);
             self::assertSame('CSV-1', $exception->submission['reference'] ?? null);
         }
         self::assertCount(1, $client->sent);
@@ -224,7 +240,7 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
 
         $store = $this->createMock(BillingRecordStoreInterface::class);
         $store->expects(self::once())->method('append')->with($record);
-        $store->expects(self::once())->method('markSubmitted')->with('89890001K', (string) $record->hash, true, 'CSV-1');
+        $store->expects(self::exactly(2))->method('markSubmitted')->with('89890001K', (string) $record->hash, true, 'CSV-1');
         $repository = new TransactionStateHashChainRepository(false);
         $processor  = $this->processor(new EventDispatcher(), $repository, recordStore: $store);
 
@@ -233,6 +249,100 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
         self::assertSame($record->environment, $repository->getLastState('89890001K')?->environment);
         // Already the head: nothing is written again.
         self::assertTrue($processor->persistSubmittedRecord($record, ['success' => true, 'reference' => 'CSV-1']));
+    }
+
+    public function testDatabaseErrorAndHeadLossAfterTheSubmissionAreBothKept(): void
+    {
+        $failure   = self::deadlock();
+        $logger    = new RecordingLogger();
+        $processor = $this->processor($this->throwingOn(VerifactuEvents::AFTER_AEAT_SUBMISSION, $failure), new TransactionStateHashChainRepository(true, [2]), logger: $logger);
+
+        try {
+            $processor->process($this->record('FAC-2026-716'), submitToAeat: true);
+            self::fail('SubmittedRecordNotCommittedException expected');
+        } catch (SubmittedRecordNotCommittedException $exception) {
+            self::assertSame($failure, $exception->databaseError);
+            self::assertInstanceOf(ChainTransactionLostException::class, $exception->headLoss);
+        }
+        $critical = $logger->records[count($logger->records) - 1];
+        self::assertSame('critical', $critical['level']);
+        self::assertSame('yes (other head)', $critical['context']['head_lost']);
+    }
+
+    public function testPersistSubmittedRecordRecordsTheAnswerWhenTheRecordIsAlreadyTheHead(): void
+    {
+        $repository = new TransactionStateHashChainRepository(false);
+        $record     = $this->processor(new EventDispatcher(), $repository)->process($this->record('FAC-2026-717'))['record'];
+        $store      = $this->createMock(BillingRecordStoreInterface::class);
+        $store->expects(self::never())->method('append');
+        $store->expects(self::once())->method('markSubmitted')->with('89890001K', (string) $record->hash, true, 'CSV-9');
+
+        self::assertTrue($this->processor(new EventDispatcher(), $repository, recordStore: $store)->persistSubmittedRecord($record, ['success' => true, 'reference' => 'CSV-9']));
+    }
+
+    /**
+     * @return iterable<string, array{callable(BillingRecord): BillingRecord, string}>
+     */
+    public static function forgedRecords(): iterable
+    {
+        yield 'forged hash' => [static fn (BillingRecord $r): BillingRecord => $r->withHash(str_repeat('A', 64), $r->previousHash), 'fingerprint'];
+        yield 'no hash' => [static fn (BillingRecord $r): BillingRecord => $r->withHash('', $r->previousHash), 'fingerprint'];
+        yield 'altered amount' => [static fn (BillingRecord $r): BillingRecord => (new BillingRecord(RecordType::Alta, $r->issuerNif, $r->invoiceSeriesNumber, $r->issueDate, 'F1', '21.00', '999.00', $r->generatedAt, previousHash: $r->previousHash, operationDescription: 'x', environment: $r->environment))->withHash((string) $r->hash, $r->previousHash)->withXml((string) $r->xml), 'fingerprint'];
+        yield 'other XML' => [static fn (BillingRecord $r): BillingRecord => $r->withXml('<x/>'), 'XML'];
+        yield 'no XML' => [static fn (BillingRecord $r): BillingRecord => (new BillingRecord(RecordType::Alta, $r->issuerNif, $r->invoiceSeriesNumber, $r->issueDate, 'F1', $r->totalTaxAmount, $r->totalAmount, $r->generatedAt, previousHash: $r->previousHash, issuerName: $r->issuerName, operationDescription: $r->operationDescription, environment: $r->environment))->withHash((string) $r->hash, $r->previousHash), 'XML'];
+    }
+
+    /**
+     * @param callable(BillingRecord): BillingRecord $forge
+     */
+    #[DataProvider('forgedRecords')]
+    public function testPersistSubmittedRecordRefusesAForgedRecordAndWritesNothing(callable $forge, string $reason): void
+    {
+        $record     = $this->processor(new EventDispatcher(), new TransactionStateHashChainRepository(false))->process($this->record('FAC-2026-718'))['record'];
+        $repository = new TransactionStateHashChainRepository(false);
+        $store      = $this->createMock(BillingRecordStoreInterface::class);
+        $store->expects(self::never())->method('append');
+        $store->expects(self::never())->method('markSubmitted');
+
+        try {
+            $this->processor(new EventDispatcher(), $repository, recordStore: $store)->persistSubmittedRecord($forge($record), ['success' => true, 'reference' => 'X']);
+            self::fail('InvalidArgumentException expected');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString($reason, $exception->getMessage());
+        }
+        self::assertNull($repository->getLastState('89890001K'));
+    }
+
+    public function testPersistSubmittedRecordRefusesAnotherEnvironmentOrIssuer(): void
+    {
+        $record = $this->processor(new EventDispatcher(), new TransactionStateHashChainRepository(false))->process($this->record('FAC-2026-719'))['record'];
+
+        $production = $this->processor(new EventDispatcher(), new TransactionStateHashChainRepository(false), environment: 'production');
+        try {
+            $production->persistSubmittedRecord($record, []);
+            self::fail('InvalidArgumentException expected');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('configured', $exception->getMessage());
+        }
+
+        $issuer = $this->createMock(IssuerProviderInterface::class);
+        $issuer->method('getIssuer')->willReturn(new IssuerIdentity('B12345674', 'Other'));
+        try {
+            $this->processor(new EventDispatcher(), new TransactionStateHashChainRepository(false), issuerProvider: $issuer, enforceIssuer: true)->persistSubmittedRecord($record, []);
+            self::fail('InvalidArgumentException expected');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('issuer', $exception->getMessage());
+        }
+
+        // A head of another environment: not a record this chain sent.
+        $heads = new TransactionStateHashChainRepository(false);
+        $heads->storeLastState(new HashChainState('89890001K', 'X', '09-07-2026', (string) $record->previousHash ?: str_repeat('D', 64), AeatEnvironment::Production));
+        try {
+            $this->processor(new EventDispatcher(), $heads)->persistSubmittedRecord($record, []);
+            self::fail('InvalidArgumentException expected');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('head', $exception->getMessage());
+        }
     }
 
     public function testPersistSubmittedRecordRefusesWhenTheHeadMoved(): void
@@ -286,6 +396,9 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
         ?RecordingAeatSubmissionClient $client = null,
         ?RecordingLogger $logger = null,
         ?BillingRecordStoreInterface $recordStore = null,
+        string $environment = 'sandbox',
+        ?IssuerProviderInterface $issuerProvider = null,
+        bool $enforceIssuer = false,
     ): BillingRecordProcessor {
         $translator = $this->createMock(TranslatorInterface::class);
         $translator->method('trans')->willReturnCallback(TranslationHelper::createTranslatorCallback());
@@ -312,6 +425,12 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
             null,
             $logger,
             $recordStore,
+            $issuerProvider,
+            null,
+            null,
+            null,
+            $environment,
+            $enforceIssuer,
         );
     }
 }

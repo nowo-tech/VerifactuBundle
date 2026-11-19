@@ -7,6 +7,7 @@ namespace Nowo\VerifactuBundle\Repository;
 use DateTimeImmutable;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\DeadlockException;
 use Doctrine\DBAL\Exception\RetryableException;
 use Doctrine\DBAL\LockMode;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
@@ -54,6 +55,13 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     private readonly ManagerRegistry $managerRegistry;
 
     /**
+     * Chain locks of this repository open right now (nested ones included): tells the host's transaction from the
+     * bundle's own outer lock. Back to 0 when every withChainLock() call returns or throws, so nothing is carried
+     * between requests (worker mode).
+     */
+    private int $ownLocks = 0;
+
+    /**
      * Receives the Doctrine registry managing the BillingRecordHashChain entity.
      */
     public function __construct(ManagerRegistry $registry)
@@ -84,8 +92,12 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     {
         $entityManager = $this->resolveEntityManager();
         $connection    = $entityManager->getConnection();
+        // A transaction that is not one of this repository's own chain locks (the host's) is open around this one.
+        $hostTransaction = $connection->getTransactionNestingLevel() > $this->ownLocks;
         $connection->beginTransaction();
         $nested = $connection->getTransactionNestingLevel() > 1;
+        // @igor-ignore - Depth of the chain locks open in this call stack; back to 0 when every withChainLock() returns.
+        ++$this->ownLocks;
 
         try {
             $this->ensureRow($entityManager, $issuerNif);
@@ -96,7 +108,7 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
 
             return $result;
         } catch (Throwable $exception) {
-            if ($nested && $this->endedTheWholeTransaction($connection, $exception)) {
+            if ($nested && $this->endedTheWholeTransaction($connection, $exception, $hostTransaction)) {
                 // MySQL / MariaDB roll back the whole transaction of a deadlock victim, and of a lock-wait timeout with
                 // innodb_rollback_on_timeout ON. Detected from the error itself, not from a failing ROLLBACK TO
                 // SAVEPOINT: without savepoints (DBAL 3, use_savepoints off) the nested rollBack() succeeds, DBAL stays
@@ -124,6 +136,9 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
             }
 
             throw $exception;
+        } finally {
+            // @igor-ignore - Depth of the chain locks open in this call stack; back to 0 when every withChainLock() returns.
+            --$this->ownLocks;
         }
     }
 
@@ -161,13 +176,15 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     }
 
     /**
-     * Whether the failure is a MySQL / MariaDB retryable error (deadlock; lock-wait timeout, which ends the whole
-     * transaction with innodb_rollback_on_timeout ON).
+     * Whether the failure ended the whole transaction on MySQL / MariaDB: a deadlock always; inside the host's
+     * transaction any retryable error (a lock-wait timeout ends it with innodb_rollback_on_timeout ON, and the host
+     * restarts its unit anyway). Inside the bundle's own outer lock only (the batch submitter's global flow-control
+     * lock), a lock-wait timeout rolls back to the savepoint as usual and is rethrown as it is.
      */
-    private function endedTheWholeTransaction(Connection $connection, Throwable $exception): bool
+    private function endedTheWholeTransaction(Connection $connection, Throwable $exception, bool $hostTransaction): bool
     {
         for ($current = $exception; $current instanceof Throwable; $current = $current->getPrevious()) {
-            if ($current instanceof RetryableException) {
+            if ($current instanceof DeadlockException || ($hostTransaction && $current instanceof RetryableException)) {
                 return $connection->getDatabasePlatform() instanceof AbstractMySQLPlatform;
             }
         }

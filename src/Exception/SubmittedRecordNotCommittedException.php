@@ -15,10 +15,15 @@ use Throwable;
  * transaction. Committing would silently lose the head while the AEAT holds the record: the next record would chain
  * onto the previous head and fork the chain at the AEAT.
  *
+ * **Never retry it automatically.** It is not a lock conflict: calling process() again for the same invoice would send
+ * a second record to the AEAT. On purpose it has no previous exception, so conflict classifiers (transaction-doctrine's
+ * TransientFailureClassifier, a 409 / CONFLICT_001 responder, Messenger retry strategies keyed on the cause) never take
+ * it for a retryable failure: answer it as a 500, and in a Messenger handler wrap it in
+ * UnrecoverableMessageHandlingException. The database failure is in $databaseError, the head loss in $headLoss.
+ *
  * Roll back your transaction (if the connection is still open; a rollback error is expected when the database already
- * ended it), then persist exactly this record ($record, with its hash) and its AEAT answer ($submission, with the CSV)
- * in a new transaction before chaining anything else for the issuer. Never call process() for the same invoice again.
- * See docs/CONCURRENCY.md, "Submitted record not committed".
+ * ended it), then call BillingRecordProcessor::persistSubmittedRecord($e->record, $e->submission) before chaining
+ * anything else for the issuer. See docs/CONCURRENCY.md, "Submitted record not committed".
  *
  * @author Nowo.tech
  * @copyright 2026 Nowo.tech
@@ -28,13 +33,17 @@ final class SubmittedRecordNotCommittedException extends RuntimeException
     /**
      * @param BillingRecord $record the chained record the AEAT received (hash, XML and signed XML included)
      * @param array<string, mixed> $submission the AEAT submission result (success, reference / CSV, errors)
-     * @param Throwable|null $previous the database failure, or the ChainTransactionLostException of the head check
+     * @param Throwable|null $databaseError the database failure of the record store or of an AFTER_AEAT_SUBMISSION
+     *                                      listener, if any (deliberately not the previous exception)
+     * @param ChainTransactionLostException|null $headLoss set when the head was no longer in the transaction (the
+     *                                                     connection was closed)
      */
     public function __construct(
         public readonly BillingRecord $record,
         public readonly array $submission,
-        ?Throwable $previous = null,
+        public readonly ?Throwable $databaseError = null,
+        public readonly ?ChainTransactionLostException $headLoss = null,
     ) {
-        parent::__construct('The AEAT received the Veri*Factu record, but a database failure means its chain head will not commit with your transaction. Roll back, then persist this record and its AEAT answer before chaining anything else for the issuer (docs/CONCURRENCY.md).', 0, $previous);
+        parent::__construct('The AEAT received the Veri*Factu record, but a database failure means its chain head will not commit with your transaction. Do not retry: roll back, then persist this record and its AEAT answer with persistSubmittedRecord() before chaining anything else for the issuer (docs/CONCURRENCY.md).');
     }
 }
