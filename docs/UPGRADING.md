@@ -83,7 +83,8 @@ composer update nowo-tech/verifactu-bundle
   transaction-doctrine classifies both as `CONFLICT_001`.
 - A custom `hash_chain.repository` can implement the new `Repository\TransactionStateAwareInterface` to get the same
   behaviour; without it, listener errors stay contained as in 1.8.
-- No new runtime dependency: nowo-tech/transaction-doctrine is only a dev dependency (it pins the host conflict contract
+- No new runtime dependency: nowo-tech/transaction-doctrine (`^1.7`, the first version with
+  `TransientFailureClassifier::findConflict()`) is only a dev dependency (it pins the host conflict contract
   in the tests). The bundle wraps no connection and installs no commit tracking.
 - If you ran 1.1.0 – 1.8.0 on DBAL 3 without savepoints, or 1.4.1 – 1.8.0 with `process()` inside your transaction on
   PostgreSQL (1.5.0 – 1.8.0 for record-store failures): run `nowo:verifactu:verify-chain` for each issuer and look for two records with the same previous hash
