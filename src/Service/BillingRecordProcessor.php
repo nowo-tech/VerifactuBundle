@@ -13,6 +13,8 @@ use Nowo\VerifactuBundle\Event\BeforeAeatSubmissionEvent;
 use Nowo\VerifactuBundle\Event\BeforeBillingRecordGenerationEvent;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
 use Nowo\VerifactuBundle\Exception\ChainEnvironmentMismatchException;
+use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
+use Nowo\VerifactuBundle\Exception\SubmittedRecordNotCommittedException;
 use Nowo\VerifactuBundle\Generator\BillingRecordXmlGenerator;
 use Nowo\VerifactuBundle\Generator\HashChainGenerator;
 use Nowo\VerifactuBundle\Model\AeatEnvironment;
@@ -113,6 +115,13 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
      * `AFTER_BILLING_RECORD_GENERATED` or `BEFORE_AEAT_SUBMISSION` listener while your transaction is open on the chain's
      * connection is rethrown (nothing was sent to the AEAT; roll back and replay your whole unit of work).
      *
+     * With `submitToAeat: true` inside your transaction (logged as a warning), the chain head is read again before the
+     * AEAT request (ChainTransactionLostException when it is gone) and after it: a database failure after the request,
+     * or a head that is gone, throws SubmittedRecordNotCommittedException with the record and the AEAT answer.
+     *
+     * @throws ChainTransactionLostException
+     * @throws SubmittedRecordNotCommittedException
+     *
      * @return array{record: BillingRecord, errors: list<string>, submission?: array<string, mixed>, event_errors?: list<array{event: string, exception: Throwable}>, store_errors?: list<Throwable>}
      */
     public function process(BillingRecord $record, bool $submitToAeat = false, bool $persistChainState = true): array
@@ -187,6 +196,14 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
                 true,
             );
 
+            // Inside the host's transaction the head commits only with it: check it is still there before sending (a
+            // listener may have swallowed a database error), and again after (UO-VF-1 / UO-VF-2).
+            $transactional = $persistChainState ? $this->transactionalChainRepository() : null;
+            if ($transactional instanceof TransactionStateAwareInterface) {
+                $this->logger?->warning('A Veri*Factu record is submitted to the AEAT inside an open database transaction: the chain row stays locked during the AEAT request, and the record is at the AEAT even if the transaction rolls back. Prefer the record store with the batch submitter (docs/CONCURRENCY.md).');
+                $transactional->verifyHeadInTransaction($record->issuerNif, (string) $record->hash);
+            }
+
             $submission           = $this->submissionClient->submit($record);
             $result['submission'] = $submission;
             $storeError           = $this->recordSubmission($record, $submission, $persistChainState);
@@ -194,11 +211,16 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
                 $result['store_errors'] = [$storeError];
             }
 
+            $afterErrors = [];
             $this->dispatchObserverEvent(
                 new AfterAeatSubmissionEvent(clone $record, $submission),
                 VerifactuEvents::AFTER_AEAT_SUBMISSION,
-                $eventErrors,
+                $afterErrors,
             );
+            $eventErrors = [...$eventErrors, ...$afterErrors];
+            if ($transactional instanceof TransactionStateAwareInterface) {
+                $this->guardSubmittedRecord($transactional, $record, $submission, [$storeError, ...array_column($afterErrors, 'exception')]);
+            }
         }
 
         if ($eventErrors !== []) {
@@ -399,6 +421,47 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
     }
 
     /**
+     * Repairs after SubmittedRecordNotCommittedException: stores exactly the record the AEAT received as the issuer's
+     * chain head (and in the record store, with its AEAT answer), in the chain lock. Run it after rolling back the failed
+     * transaction, in a new transaction of yours or outside any, before chaining anything else for the issuer.
+     *
+     * Returns true when the record is the head afterwards (stored now, or already the head), false when the head has
+     * moved to another record meanwhile: the chain is then forked at the AEAT, nothing is written, and the issuer needs
+     * a manual correction (`nowo:verifactu:verify-chain`, docs/CONCURRENCY.md). Not part of
+     * BillingRecordProcessorInterface (a minor version cannot add methods to it).
+     *
+     * @param BillingRecord $record the record carried by SubmittedRecordNotCommittedException (hash set)
+     * @param array<string, mixed> $submission the AEAT answer carried by the exception
+     */
+    public function persistSubmittedRecord(BillingRecord $record, array $submission): bool
+    {
+        $hash      = strtoupper(trim((string) $record->hash));
+        $previous  = $record->previousHash === null ? null : strtoupper(trim($record->previousHash));
+        $operation = function (?HashChainState ...$locked) use ($record, $submission, $hash, $previous): bool {
+            $head = $locked === [] ? $this->hashChainRepository->getLastState($record->issuerNif) : $locked[0];
+            $head = $head instanceof HashChainState ? strtoupper(trim($head->hash)) : null;
+            if ($head === $hash) {
+                return true;
+            }
+            if ($head !== $previous) {
+                return false;
+            }
+            $this->persistChained(
+                [$record],
+                new HashChainState($record->issuerNif, $record->invoiceSeriesNumber, $record->issueDate, $hash, $record->environment),
+            );
+            $reference = $submission['reference'] ?? null;
+            $this->recordStore?->markSubmitted($record->issuerNif, $hash, ($submission['success'] ?? false) === true, is_string($reference) ? $reference : null);
+
+            return true;
+        };
+
+        return $this->hashChainRepository instanceof LockableHashChainRepositoryInterface
+            ? $this->hashChainRepository->withChainLock($record->issuerNif, $operation)
+            : $operation();
+    }
+
+    /**
      * Stores the new chain head and appends the records to the record store, in chain order (inside the chain lock).
      *
      * @param non-empty-list<BillingRecord> $records
@@ -550,7 +613,56 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
      */
     private function chainInsideTransaction(): bool
     {
-        return $this->hashChainRepository instanceof TransactionStateAwareInterface && $this->hashChainRepository->isInsideTransaction();
+        return $this->transactionalChainRepository() instanceof TransactionStateAwareInterface;
+    }
+
+    /**
+     * The chain repository when its connection is inside a transaction, null otherwise (or when it cannot tell).
+     */
+    private function transactionalChainRepository(): ?TransactionStateAwareInterface
+    {
+        $repository = $this->hashChainRepository;
+
+        return $repository instanceof TransactionStateAwareInterface && $repository->isInsideTransaction() ? $repository : null;
+    }
+
+    /**
+     * After an AEAT submission inside the host's transaction: a database failure of the record store or of an
+     * AFTER_AEAT_SUBMISSION listener, or a head no longer in the transaction, means the head will not commit while the
+     * AEAT holds the record. Committing would lose it silently (PostgreSQL aborted transaction, MySQL / MariaDB
+     * transaction ended by a deadlock: pdo_pgsql and mysqli commit without an error) and fork the chain at the AEAT, so
+     * the host gets the record and the AEAT answer in SubmittedRecordNotCommittedException.
+     *
+     * @param array<string, mixed> $submission
+     * @param list<Throwable|null> $failures contained failures after the submission
+     *
+     * @throws SubmittedRecordNotCommittedException
+     */
+    private function guardSubmittedRecord(TransactionStateAwareInterface $repository, BillingRecord $record, array $submission, array $failures): void
+    {
+        $cause = null;
+        foreach ($failures as $failure) {
+            if ($failure instanceof Throwable && $this->isDatabaseFailure($failure)) {
+                $cause = $failure;
+
+                break;
+            }
+        }
+        try {
+            $repository->verifyHeadInTransaction($record->issuerNif, (string) $record->hash);
+        } catch (ChainTransactionLostException $lost) {
+            $cause = $lost;
+        }
+        if (!$cause instanceof Throwable) {
+            return;
+        }
+
+        // Class names only: the record (NIF, names) and the messages may carry personal data.
+        $this->logger?->critical('A Veri*Factu record was sent to the AEAT but its chain head will not commit with the open transaction ({exception_class}); SubmittedRecordNotCommittedException carries the record and the AEAT answer to persist.', [
+            'exception_class' => $cause::class,
+        ]);
+
+        throw new SubmittedRecordNotCommittedException($record, $submission, $cause);
     }
 
     private function shouldSign(): bool

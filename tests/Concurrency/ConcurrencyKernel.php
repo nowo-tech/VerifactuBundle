@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Concurrency;
 
+use Nowo\VerifactuBundle\Client\NullAeatSubmissionClient;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\HttpKernel\Kernel;
@@ -22,12 +23,12 @@ final class ConcurrencyKernel extends Kernel
 {
     use MicroKernelTrait;
 
-    /**
-     * @param string $recordStore doctrine | none; '' reads VERIFACTU_TEST_RECORD_STORE (worker processes)
-     */
     /** Lock wait bound of every test session: a hang fails fast (lock-wait error) instead of holding the machine. */
     public const LOCK_WAIT_SECONDS = 15;
 
+    /**
+     * @param string $recordStore doctrine | none; '' reads VERIFACTU_TEST_RECORD_STORE (worker processes)
+     */
     public function __construct(string $environment, bool $debug, private readonly string $recordStore = '')
     {
         parent::__construct($environment, $debug);
@@ -88,6 +89,10 @@ final class ConcurrencyKernel extends Kernel
             $dbal['options'] = [1002 => 'SET SESSION innodb_lock_wait_timeout = ' . self::LOCK_WAIT_SECONDS];
         }
         $container->extension('doctrine', ['dbal' => $dbal]);
-        $container->extension('nowo_verifactu', ['record_store' => ['storage' => $this->recordStore()]]);
+        // Never the SOAP client of the test configuration: a submitToAeat test must not reach the network.
+        $container->extension('nowo_verifactu', [
+            'record_store' => ['storage' => $this->recordStore()],
+            'aeat'         => ['submission_client' => NullAeatSubmissionClient::class],
+        ]);
     }
 }

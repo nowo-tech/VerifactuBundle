@@ -51,6 +51,20 @@ composer update nowo-tech/verifactu-bundle
   nowo-tech/transaction-doctrine answers a deadlock or lock-wait timeout with 409 + `CONFLICT_001`. Every other listener
   error, every failure outside a transaction and every failure after the AEAT submission stays in `event_errors` /
   `store_errors` as before.
+- **Behaviour change (BC note), `process(..., submitToAeat: true)` inside your transaction** (now logged as a
+  warning): the chain head is read again before the AEAT request (`ChainTransactionLostException` and nothing is sent
+  when it is gone) and after it. A database failure after the request (the record store, or an `AFTER_AEAT_SUBMISSION`
+  listener), or a head that is gone, now throws `SubmittedRecordNotCommittedException` instead of returning
+  `store_errors` / `event_errors`. The AEAT holds the record: roll back (if the connection is still open), then call
+  `BillingRecordProcessor::persistSubmittedRecord($e->record, $e->submission)` before chaining anything else for the
+  issuer, and never call `process()` again for that invoice. Better: use the record store with the batch submitter.
+- **Exception change (BC note), MySQL / MariaDB:** every retryable error inside the chain lock while it runs in your
+  transaction (also a lock-wait timeout) now closes the connection and throws `ChainTransactionLostException`; before,
+  only a deadlock whose savepoint rollback failed did.
+- **Do not call `process()` inside `Connection::transactional()` / `wrapInTransaction()`:** after
+  `ChainTransactionLostException` (connection closed) its `rollBack()` throws a NoActiveTransaction /
+  ConnectionException that hides it. Use `beginTransaction()` / `commit()` / `rollBack()` (skip the rollback on that
+  exception) or transaction-doctrine's runner.
 - **Exception change (BC note), DBAL 3 without `use_savepoints`, MySQL / MariaDB:** a deadlock inside the chain lock
   while it runs in your transaction now throws `ChainTransactionLostException` (the `DeadlockException` is its previous
   exception) and closes the connection, as it already did on DBAL 4 or with savepoints. Before, the plain
@@ -61,6 +75,9 @@ composer update nowo-tech/verifactu-bundle
   behaviour; without it, listener errors stay contained as in 1.8.
 - No new runtime dependency: nowo-tech/transaction-doctrine is only a dev dependency (it pins the host conflict contract
   in the tests). The bundle wraps no connection and installs no commit tracking.
+- If you ran 1.1.0 – 1.8.0 on DBAL 3 without savepoints, or 1.4.1 – 1.8.0 with `process()` inside your transaction on
+  PostgreSQL: run `nowo:verifactu:verify-chain` for each issuer and look for two records with the same previous hash
+  or a head missing from the record log.
 - Read [CONCURRENCY.md](CONCURRENCY.md) for the write paths, the conflict codes, the residual risks (in particular
   `process(..., submitToAeat: true)` inside your transaction) and worker mode with the kernel reset off.
 

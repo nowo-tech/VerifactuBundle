@@ -7,7 +7,7 @@ namespace Nowo\VerifactuBundle\Repository;
 use DateTimeImmutable;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\Exception\DeadlockException;
+use Doctrine\DBAL\Exception\RetryableException;
 use Doctrine\DBAL\LockMode;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\ORM\EntityManagerInterface;
@@ -75,7 +75,7 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
      * head read under that lock (null for an empty chain).
      *
      * The transaction nests into the host's transaction when one is open on the same connection. When the database
-     * ends the host's whole transaction meanwhile (MySQL / MariaDB deadlock), the connection is closed and
+     * ends the host's whole transaction meanwhile (MySQL / MariaDB deadlock or lock-wait timeout), the connection is closed and
      * ChainTransactionLostException is thrown: retry the host's whole unit of work.
      *
      * @throws ChainTransactionLostException
@@ -97,10 +97,11 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
             return $result;
         } catch (Throwable $exception) {
             if ($nested && $this->endedTheWholeTransaction($connection, $exception)) {
-                // MySQL / MariaDB roll back the whole transaction of a deadlock victim. Detected from the error itself,
-                // not from a failing ROLLBACK TO SAVEPOINT: without savepoints (DBAL 3, use_savepoints off) the nested
-                // rollBack() succeeds, DBAL stays at the host's nesting level and the host's next statements (or a
-                // retried process()) would run in autocommit without the row lock.
+                // MySQL / MariaDB roll back the whole transaction of a deadlock victim, and of a lock-wait timeout with
+                // innodb_rollback_on_timeout ON. Detected from the error itself, not from a failing ROLLBACK TO
+                // SAVEPOINT: without savepoints (DBAL 3, use_savepoints off) the nested rollBack() succeeds, DBAL stays
+                // at the host's nesting level and the host's next statements (or a retried process()) would run in
+                // autocommit without the row lock. Every retryable error counts: the host restarts its unit anyway.
                 $connection->close();
 
                 throw new ChainTransactionLostException($exception);
@@ -135,12 +136,38 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     }
 
     /**
-     * Whether the failure is a MySQL / MariaDB deadlock, which ends the victim's whole transaction (InnoDB).
+     * Reads the issuer's head again on the chain's connection, inside the host's transaction, and checks that it is
+     * $hash. When the read fails (PostgreSQL: the transaction is aborted) or returns another head (MySQL / MariaDB: the
+     * transaction is gone and the read ran in autocommit), the connection is closed and ChainTransactionLostException is
+     * thrown: the head would never commit.
+     *
+     * @throws ChainTransactionLostException
+     */
+    public function verifyHeadInTransaction(string $issuerNif, string $hash): void
+    {
+        $connection = $this->resolveEntityManager()->getConnection();
+        try {
+            $head = $this->getLastState($issuerNif)?->hash;
+        } catch (Throwable $exception) {
+            $connection->close();
+
+            throw new ChainTransactionLostException($exception);
+        }
+        if ($head !== strtoupper(trim($hash))) {
+            $connection->close();
+
+            throw new ChainTransactionLostException();
+        }
+    }
+
+    /**
+     * Whether the failure is a MySQL / MariaDB retryable error (deadlock; lock-wait timeout, which ends the whole
+     * transaction with innodb_rollback_on_timeout ON).
      */
     private function endedTheWholeTransaction(Connection $connection, Throwable $exception): bool
     {
         for ($current = $exception; $current instanceof Throwable; $current = $current->getPrevious()) {
-            if ($current instanceof DeadlockException) {
+            if ($current instanceof RetryableException) {
                 return $connection->getDatabasePlatform() instanceof AbstractMySQLPlatform;
             }
         }

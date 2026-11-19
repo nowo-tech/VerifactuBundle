@@ -8,7 +8,9 @@ use Doctrine\DBAL\Exception as DbalException;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
+use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
 use Nowo\VerifactuBundle\Model\BillingRecord;
+use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
@@ -60,6 +62,25 @@ final class ListenerDatabaseFailureIntegrationTest extends KernelTestCase
         self::assertTrue($repository->isInsideTransaction());
         $connection->rollBack();
         self::assertFalse($repository->isInsideTransaction());
+    }
+
+    public function testHeadVerificationInsideTheTransaction(): void
+    {
+        $repository = $this->repository();
+        $connection = $this->entityManager()->getConnection();
+        $connection->beginTransaction();
+        $repository->storeLastState(new HashChainState('89890001K', 'FAC-2026-904', '09-07-2026', str_repeat('a', 64)));
+
+        $repository->verifyHeadInTransaction('89890001k', str_repeat('A', 64));
+        self::assertSame(1, $connection->getTransactionNestingLevel(), 'a head that is there leaves the transaction alone');
+
+        try {
+            $repository->verifyHeadInTransaction('89890001K', str_repeat('B', 64));
+            self::fail('ChainTransactionLostException expected');
+        } catch (ChainTransactionLostException $exception) {
+            self::assertNull($exception->getPrevious());
+        }
+        self::assertSame(0, $connection->getTransactionNestingLevel(), 'the connection was closed');
     }
 
     public function testDatabaseFailureInsideTheHostTransactionIsRethrownAndNothingIsChained(): void

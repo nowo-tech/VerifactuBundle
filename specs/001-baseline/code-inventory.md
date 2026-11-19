@@ -4,7 +4,7 @@
 **Package**: `nowo-tech/verifactu-bundle`  
 **Last audited**: 2026-11-16
 
-Every production artifact under `src/` is mapped below (117/117; audit: `git ls-files src | wc -l`).
+Every production artifact under `src/` is mapped below (118/118; audit: `git ls-files src | wc -l`).
 
 ## Bundle & DI
 
@@ -212,6 +212,7 @@ Every production artifact under `src/` is mapped below (117/117; audit: `git ls-
 | `Exception/InvalidAeatEnvironmentException.php` | Environment other than exactly `sandbox` / `production` | FR-PROV-001 |
 | `Exception/ChainEnvironmentMismatchException.php` | Chain head belongs to another AEAT environment | FR-STORE-001, FR-PROV-001 |
 | `Exception/ChainTransactionLostException.php` | Database ended the host transaction while the chain lock ran | FR-STORE-001 |
+| `Exception/SubmittedRecordNotCommittedException.php` | AEAT received the record but its head will not commit with the host transaction (record + AEAT answer) | FR-PROC-001, FR-STORE-001 |
 
 ## Coverage summary
 
@@ -234,5 +235,5 @@ Every production artifact under `src/` is mapped below (117/117; audit: `git ls-
 | Runtime providers | 6 | 6 |
 | Batch submission & flow control | 6 | 6 |
 | Messenger | 2 | 2 |
-| Exceptions | 3 | 3 |
-| **Total production sources** | **117** | **117** |
+| Exceptions | 4 | 4 |
+| **Total production sources** | **118** | **118** |

@@ -7,6 +7,8 @@ namespace Nowo\VerifactuBundle\Tests\Unit\Repository;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Driver\AbstractException;
 use Doctrine\DBAL\Exception\DeadlockException;
+use Doctrine\DBAL\Exception\LockWaitTimeoutException;
+use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\ORM\EntityManagerInterface;
@@ -150,5 +152,50 @@ final class DoctrineHashChainRepositoryTest extends TestCase
 
         $this->expectExceptionObject($original);
         (new DoctrineHashChainRepository($registry))->withChainLock('89890001K', static fn (): bool => true);
+    }
+
+    public function testANestedMysqlLockWaitTimeoutIsALostTransaction(): void
+    {
+        // innodb_rollback_on_timeout ON ends the whole transaction; every retryable error is treated as lost.
+        $original   = new LockWaitTimeoutException(new class('Lock wait timeout exceeded', 'HY000', 1205) extends AbstractException {}, null);
+        $connection = $this->createMock(Connection::class);
+        $connection->method('getTransactionNestingLevel')->willReturn(2);
+        $connection->method('isTransactionActive')->willReturn(true);
+        $connection->method('getDatabasePlatform')->willReturn(new MariaDBPlatform());
+        $connection->expects(self::never())->method('rollBack');
+        $connection->expects(self::once())->method('close');
+
+        $entityManager = $this->createMock(EntityManagerInterface::class);
+        $entityManager->method('getConnection')->willReturn($connection);
+        $entityManager->method('getClassMetadata')->willThrowException($original);
+        $registry = $this->createMock(ManagerRegistry::class);
+        $registry->method('getManagerForClass')->willReturn($entityManager);
+
+        try {
+            (new DoctrineHashChainRepository($registry))->withChainLock('89890001K', static fn (): bool => true);
+            self::fail('ChainTransactionLostException expected');
+        } catch (ChainTransactionLostException $exception) {
+            self::assertSame($original, $exception->getPrevious());
+        }
+    }
+
+    public function testAFailingHeadReadInsideTheTransactionClosesTheConnection(): void
+    {
+        $original   = new RuntimeException('current transaction is aborted');
+        $connection = $this->createMock(Connection::class);
+        $connection->expects(self::once())->method('close');
+
+        $entityManager = $this->createMock(EntityManagerInterface::class);
+        $entityManager->method('getConnection')->willReturn($connection);
+        $entityManager->method('createQueryBuilder')->willThrowException($original);
+        $registry = $this->createMock(ManagerRegistry::class);
+        $registry->method('getManagerForClass')->willReturn($entityManager);
+
+        try {
+            (new DoctrineHashChainRepository($registry))->verifyHeadInTransaction('89890001K', 'ABC');
+            self::fail('ChainTransactionLostException expected');
+        } catch (ChainTransactionLostException $exception) {
+            self::assertSame($original, $exception->getPrevious());
+        }
     }
 }

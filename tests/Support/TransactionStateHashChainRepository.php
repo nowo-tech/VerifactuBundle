@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Nowo\VerifactuBundle\Tests\Support;
 
+use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
 use Nowo\VerifactuBundle\Model\HashChainState;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
 use Nowo\VerifactuBundle\Repository\LockableHashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\TransactionStateAwareInterface;
+
+use function in_array;
 
 /**
  * In-memory lockable repository that reports a configurable transaction state (host transaction open or not).
@@ -19,7 +22,13 @@ final class TransactionStateHashChainRepository implements LockableHashChainRepo
 {
     private readonly InMemoryHashChainRepository $inner;
 
-    public function __construct(public bool $insideTransaction)
+    /** Number of verifyHeadInTransaction() calls so far. */
+    public int $verifications = 0;
+
+    /**
+     * @param list<int> $lostOnVerification the verifyHeadInTransaction() calls (1-based) that find the head gone
+     */
+    public function __construct(public bool $insideTransaction, public array $lostOnVerification = [])
     {
         $this->inner = new InMemoryHashChainRepository();
     }
@@ -27,6 +36,14 @@ final class TransactionStateHashChainRepository implements LockableHashChainRepo
     public function isInsideTransaction(): bool
     {
         return $this->insideTransaction;
+    }
+
+    public function verifyHeadInTransaction(string $issuerNif, string $hash): void
+    {
+        ++$this->verifications;
+        if (in_array($this->verifications, $this->lostOnVerification, true)) {
+            throw new ChainTransactionLostException();
+        }
     }
 
     public function withChainLock(string $issuerNif, callable $operation): mixed
