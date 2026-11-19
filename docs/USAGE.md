@@ -285,7 +285,7 @@ wait. Without any AEAT answer the message backs off (60 s, doubled, up to 1 h) a
 `SubmitPendingBillingRecordsHandler::MAX_FAILED_RUNS` runs in a row, logging an error; the records stay pending.
 
 **Records written before 1.6** have no AEAT environment and are **never sent** by the batch submitter: they could be
-sandbox records while the current environment is production. See [UPGRADING](UPGRADING.md#unreleased).
+sandbox records while the current environment is production. See [UPGRADING](UPGRADING.md#to-190).
 
 **Events after commit.** `VerifactuEvents::AFTER_RECORD_SUBMISSION` (`Event\RecordSubmittedEvent`) is dispatched once
 per answered record, after the submitter has committed the answers. The submitter refuses to run inside a transaction

@@ -79,7 +79,7 @@ Set `hash_chain.storage: doctrine` and install `doctrine/orm` + `doctrine/doctri
 
 The record store table follows the same rule (`verifactu_billing_record`, `uniq_verifactu_billing_record_hash`).
 
-Changing the prefix on an existing database requires renaming the table (see [UPGRADING.md](UPGRADING.md#unreleased)).
+Changing the prefix on an existing database requires renaming the table (see [UPGRADING.md](UPGRADING.md#to-190)).
 
 **Deprecated / reserved options.** `hash_chain.table_prefix` is deprecated and has no effect (use `doctrine.table_prefix`). `aeat_spec_version` is accepted for forward compatibility but has no effect today.
 
