@@ -61,6 +61,11 @@ composer update nowo-tech/verifactu-bundle
   exception on purpose (the database error is `$e->databaseError`, the head loss `$e->headLoss`), so transaction-doctrine
   answers it as a 500, not a 409; in a Messenger handler wrap it in `UnrecoverableMessageHandlingException`. Better: use
   the record store with the batch submitter.
+- **Catch-and-commit fails loudly:** when the bundle throws inside your still-open transaction it marks it rollback-only,
+  so a `commit()` after catching the exception throws `CommitFailedRollbackOnly` (DBAL 3: `ConnectionException`). Roll
+  back instead. On PostgreSQL, roll back in your error handling or run worker hygiene between requests: an aborted
+  transaction left open survives into the next worker request.
+- `persistSubmittedRecord()` must run after the rollback, outside any transaction (`LogicException` otherwise).
 - `persistSubmittedRecord()` accepts only the unchanged record of that exception (not an import API): a record whose
   hash is not its fingerprint, whose XML lacks it, or whose environment or issuer does not match is refused with
   `InvalidArgumentException` and nothing is written.

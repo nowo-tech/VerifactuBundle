@@ -22,6 +22,9 @@ final class TransactionStateHashChainRepository implements LockableHashChainRepo
 {
     private readonly InMemoryHashChainRepository $inner;
 
+    /** Number of setRollbackOnly() calls so far. */
+    public int $rollbackOnlyMarks = 0;
+
     /** Number of verifyHeadInTransaction() calls so far. */
     public int $verifications = 0;
 
@@ -36,6 +39,11 @@ final class TransactionStateHashChainRepository implements LockableHashChainRepo
     public function isInsideTransaction(): bool
     {
         return $this->insideTransaction;
+    }
+
+    public function setRollbackOnly(): void
+    {
+        ++$this->rollbackOnlyMarks;
     }
 
     public function verifyHeadInTransaction(string $issuerNif, string $hash): void

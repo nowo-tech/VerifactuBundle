@@ -8,6 +8,7 @@ use Doctrine\DBAL\Exception as DbalException;
 use DOMDocument;
 use DOMElement;
 use InvalidArgumentException;
+use LogicException;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
 use Nowo\VerifactuBundle\Event\AfterAeatSubmissionEvent;
@@ -49,6 +50,7 @@ use Throwable;
 
 use function array_key_first;
 use function array_values;
+use function count;
 use function is_bool;
 use function is_string;
 use function ksort;
@@ -429,7 +431,8 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
     /**
      * Repairs after SubmittedRecordNotCommittedException: stores exactly the record the AEAT received as the issuer's
      * chain head (and in the record store, with its AEAT answer), in the chain lock. Run it after rolling back the failed
-     * transaction, in a new transaction of yours or outside any, before chaining anything else for the issuer.
+     * transaction, outside any transaction (LogicException otherwise: a later rollback would undo the repair), before
+     * chaining anything else for the issuer.
      *
      * Returns true when the record is the head afterwards (stored now, or already the head; the AEAT answer is recorded
      * in both cases), false when the head has moved to another record meanwhile: the chain is then forked at the AEAT,
@@ -451,6 +454,9 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
      */
     public function persistSubmittedRecord(BillingRecord $record, array $submission): bool
     {
+        if ($this->transactionalChainRepository() instanceof TransactionStateAwareInterface) {
+            throw new LogicException('persistSubmittedRecord() must run after the failed transaction was rolled back, outside any transaction: inside it, a later rollback would undo the repair (MySQL / MariaDB) or the aborted transaction would refuse it (PostgreSQL).');
+        }
         $hash = strtoupper(trim((string) $record->hash));
         $this->assertSubmittedRecord($record, $hash);
         if (!is_bool($submission['success'] ?? null) || ($submission['reference'] ?? null) !== null && !is_string($submission['reference'])) {
@@ -511,45 +517,54 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
     }
 
     /**
-     * Whether the record's XML (RegistroAlta / RegistroAnulacion, as BillingRecordXmlGenerator renders it) carries the
-     * record's own Huella, its invoice id (issuer, series and number, issue date) and its link to the previous record
-     * (RegistroAnterior Huella, or PrimerRegistro when it has none). Checked on the parsed XML, never by text search.
+     * Whether the record's XML (RegistroAlta / RegistroAnulacion, as BillingRecordXmlGenerator renders it, in the
+     * SuministroInformacion namespace) carries the record's own Huella, its invoice id (issuer, series and number,
+     * issue date) and its link to the previous record (RegistroAnterior Huella, or no RegistroAnterior when it has
+     * none). Checked on the parsed XML, never by text search: no DOCTYPE (so no entities), and exactly one of each
+     * checked element, in that namespace.
      */
     private function xmlDescribesRecord(BillingRecord $record, string $hash): bool
     {
         $root      = $this->parseRecordXml((string) $record->xml);
         $anulacion = $record->recordType === RecordType::Anulacion;
-        if (!$root instanceof DOMElement || $root->localName !== ($anulacion ? 'RegistroAnulacion' : 'RegistroAlta')) {
+        if (!$root instanceof DOMElement || $root->localName !== ($anulacion ? 'RegistroAnulacion' : 'RegistroAlta') || $root->namespaceURI !== BillingRecordXmlGenerator::NS_SUMINISTRO) {
             return false;
         }
         $suffix = $anulacion ? 'Anulada' : '';
-        $id     = $this->childElement($root, 'IDFactura');
-        $chain  = $this->childElement($root, 'Encadenamiento');
+        $id     = $this->singleChild($root, 'IDFactura');
+        $chain  = $this->singleChild($root, 'Encadenamiento');
         if (!$id instanceof DOMElement || !$chain instanceof DOMElement) {
             return false;
         }
-        $previous = $this->childElement($chain, 'RegistroAnterior');
-        $linked   = $record->previousHash === null
-            ? !$previous instanceof DOMElement
-            : $previous instanceof DOMElement && strtoupper(trim((string) $this->childElement($previous, 'Huella')?->textContent)) === strtoupper(trim($record->previousHash));
+        if ($record->previousHash === null) {
+            $linked = $this->children($chain, 'RegistroAnterior') === [];
+        } else {
+            $previous = $this->singleChild($chain, 'RegistroAnterior');
+            $linked   = $previous instanceof DOMElement
+                && strtoupper(trim((string) $this->singleChild($previous, 'Huella')?->textContent)) === strtoupper(trim($record->previousHash));
+        }
 
         return $linked
-            && strtoupper(trim((string) $this->childElement($root, 'Huella')?->textContent)) === $hash
-            && $this->childElement($id, 'IDEmisorFactura' . $suffix)?->textContent === $record->issuerNif
-            && $this->childElement($id, 'NumSerieFactura' . $suffix)?->textContent === $record->invoiceSeriesNumber
-            && $this->childElement($id, 'FechaExpedicionFactura' . $suffix)?->textContent === $record->issueDate;
+            && strtoupper(trim((string) $this->singleChild($root, 'Huella')?->textContent)) === $hash
+            && $this->singleChild($id, 'IDEmisorFactura' . $suffix)?->textContent === $record->issuerNif
+            && $this->singleChild($id, 'NumSerieFactura' . $suffix)?->textContent === $record->invoiceSeriesNumber
+            && $this->singleChild($id, 'FechaExpedicionFactura' . $suffix)?->textContent === $record->issueDate;
     }
 
     /**
-     * Parses a record XML fragment without network access; null when it is not well-formed. The libxml error flag is
-     * restored afterwards (worker mode).
+     * Parses a record XML fragment without network access; null when it is not well-formed or declares a DOCTYPE (a
+     * record never has one; refusing it rules out entities and DTDs). The libxml error flag is restored afterwards
+     * (worker mode).
      */
     private function parseRecordXml(string $xml): ?DOMElement
     {
+        if ($xml === '' || stripos($xml, '<!DOCTYPE') !== false) {
+            return null;
+        }
         $document          = new DOMDocument();
         $previousUseErrors = libxml_use_internal_errors(true);
         try {
-            $loaded = $xml !== '' && $document->loadXML($xml, LIBXML_NONET);
+            $loaded = $document->loadXML($xml, LIBXML_NONET);
         } finally {
             libxml_clear_errors();
             libxml_use_internal_errors($previousUseErrors);
@@ -559,17 +574,31 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
     }
 
     /**
-     * The first direct child element with this local name (any namespace).
+     * The direct child elements with this local name, in any namespace.
+     *
+     * @return list<DOMElement>
      */
-    private function childElement(DOMElement $parent, string $localName): ?DOMElement
+    private function children(DOMElement $parent, string $localName): array
     {
+        $children = [];
         foreach ($parent->childNodes as $child) {
             if ($child instanceof DOMElement && $child->localName === $localName) {
-                return $child;
+                $children[] = $child;
             }
         }
 
-        return null;
+        return $children;
+    }
+
+    /**
+     * The only direct child element with this local name, when there is exactly one and it is in the
+     * SuministroInformacion namespace; null otherwise (missing, duplicated, or in another namespace).
+     */
+    private function singleChild(DOMElement $parent, string $localName): ?DOMElement
+    {
+        $children = $this->children($parent, $localName);
+
+        return count($children) === 1 && $children[0]->namespaceURI === BillingRecordXmlGenerator::NS_SUMINISTRO ? $children[0] : null;
     }
 
     /**
@@ -687,7 +716,10 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
         try {
             $this->eventDispatcher->dispatch($event, $eventName);
         } catch (Throwable $exception) {
-            if ($beforeSubmission && $this->isDatabaseFailure($exception) && $this->chainInsideTransaction()) {
+            $transactional = $beforeSubmission && $this->isDatabaseFailure($exception) ? $this->transactionalChainRepository() : null;
+            if ($transactional instanceof TransactionStateAwareInterface) {
+                // @igor-ignore - Marks the host's current database transaction rollback-only, not service state.
+                $transactional->setRollbackOnly();
                 $this->logger?->error('A {event} listener failed with a database error ({exception_class}) inside an open transaction; rethrown, the record is not chained until the transaction is replayed.', [
                     'event'           => $eventName,
                     'exception_class' => $exception::class,
@@ -717,14 +749,6 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
         }
 
         return false;
-    }
-
-    /**
-     * Whether the chain repository's connection is inside a transaction (only repositories that can tell).
-     */
-    private function chainInsideTransaction(): bool
-    {
-        return $this->transactionalChainRepository() instanceof TransactionStateAwareInterface;
     }
 
     /**
@@ -774,6 +798,10 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
             'database_error' => $databaseError instanceof Throwable ? $databaseError::class : 'none',
             'head_lost'      => $headLoss instanceof ChainTransactionLostException ? 'yes (' . ($headLoss->getPrevious() instanceof Throwable ? $headLoss->getPrevious()::class : 'other head') . ')' : 'no',
         ]);
+
+        // A host that catches it and commits anyway must fail loudly, never commit (MySQL) or silently roll back
+        // (PostgreSQL) without the record the AEAT holds.
+        $repository->setRollbackOnly();
 
         throw new SubmittedRecordNotCommittedException($record, $submission, $databaseError, $headLoss);
     }

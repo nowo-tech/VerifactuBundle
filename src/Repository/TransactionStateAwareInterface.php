@@ -32,4 +32,11 @@ interface TransactionStateAwareInterface
      * @throws ChainTransactionLostException
      */
     public function verifyHeadInTransaction(string $issuerNif, string $hash): void;
+
+    /**
+     * Marks the transaction open on the chain's connection, if any, rollback-only, so a host that catches the bundle's
+     * exception and commits anyway gets an error instead of a silent loss (PostgreSQL turns the COMMIT of an aborted
+     * transaction into a ROLLBACK and reports success).
+     */
+    public function setRollbackOnly(): void;
 }

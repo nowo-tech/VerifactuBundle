@@ -84,6 +84,7 @@ final class ListenerDatabaseFailureIntegrationTest extends KernelTestCase
             self::assertFalse($exception->connectionClosed, 'SQLite: only MySQL / MariaDB connections are closed');
         }
         self::assertSame(1, $connection->getTransactionNestingLevel(), 'the host rolls its transaction back itself');
+        self::assertTrue($connection->isRollbackOnly(), 'a host that commits anyway fails loudly');
         $connection->rollBack();
     }
 

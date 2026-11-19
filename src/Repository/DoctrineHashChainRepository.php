@@ -92,14 +92,17 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     {
         $entityManager = $this->resolveEntityManager();
         $connection    = $entityManager->getConnection();
+        $levelBefore   = $connection->getTransactionNestingLevel();
         // A transaction that is not one of this repository's own chain locks (the host's) is open around this one.
-        $hostTransaction = $connection->getTransactionNestingLevel() > $this->ownLocks;
-        $connection->beginTransaction();
-        $nested = $connection->getTransactionNestingLevel() > 1;
+        $hostTransaction = $levelBefore > $this->ownLocks;
+        $nested          = $levelBefore > 0;
         // @igor-ignore - Depth of the chain locks open in this call stack; back to 0 when every withChainLock() returns.
         ++$this->ownLocks;
 
         try {
+            // Inside the try: a failed BEGIN / SAVEPOINT (PostgreSQL: the host's transaction is already aborted) has
+            // counted a nesting level DBAL can never roll back; the catch below balances it (rollback, or close).
+            $connection->beginTransaction();
             $this->ensureRow($entityManager, $issuerNif);
             $locked = $this->toState($this->findRow($entityManager, $issuerNif, true));
 
@@ -114,7 +117,7 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
                 // SAVEPOINT: without savepoints (DBAL 3, use_savepoints off) the nested rollBack() succeeds, DBAL stays
                 // at the host's nesting level and the host's next statements (or a retried process()) would run in
                 // autocommit without the row lock. Every retryable error counts: the host restarts its unit anyway.
-                $connection->close();
+                $this->closeLostConnection($connection);
 
                 throw new ChainTransactionLostException($exception);
             }
@@ -127,7 +130,7 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
                         // savepoint is gone and DBAL's nesting level can never return to 0: every later statement on this
                         // (kept-alive) connection would run in autocommit without the row lock. Close it and tell the
                         // host to restart its unit of work.
-                        $connection->close();
+                        $this->closeLostConnection($connection);
 
                         throw new ChainTransactionLostException($exception);
                     }
@@ -180,10 +183,44 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     {
         $close = $connection->getDatabasePlatform() instanceof AbstractMySQLPlatform;
         if ($close) {
-            $connection->close();
+            $this->closeLostConnection($connection);
+        } else {
+            // PostgreSQL: a COMMIT of the aborted transaction would silently roll it back and report success; make a
+            // host that catches the exception and commits anyway fail loudly (CommitFailedRollbackOnly).
+            $this->setRollbackOnly();
         }
 
         return new ChainTransactionLostException($cause, $close);
+    }
+
+    /**
+     * Closes a connection whose transaction is lost (DBAL's nesting level back to 0) and clears a rollback-only mark
+     * DBAL would otherwise keep across the reconnection: close() resets the nesting level, not the mark, so the next
+     * request's first commit would fail. One empty BEGIN / ROLLBACK on the new session does it; when the database is
+     * unreachable, the connection is simply left closed (the mark then fails a commit loudly, never silently).
+     */
+    private function closeLostConnection(Connection $connection): void
+    {
+        $connection->close();
+        try {
+            $connection->beginTransaction();
+            $connection->rollBack();
+        } catch (Throwable) {
+            $connection->close();
+        }
+    }
+
+    /**
+     * Marks the transaction open on the chain's connection, if any, rollback-only: a later commit() of it, at any
+     * nesting level, throws CommitFailedRollbackOnly instead of committing (or, on PostgreSQL, silently rolling back).
+     */
+    public function setRollbackOnly(): void
+    {
+        $connection = $this->resolveEntityManager()->getConnection();
+        if ($connection->isTransactionActive()) {
+            // @igor-ignore - Marks the current database transaction (ended by its rollback), not service state.
+            $connection->setRollbackOnly();
+        }
     }
 
     /**

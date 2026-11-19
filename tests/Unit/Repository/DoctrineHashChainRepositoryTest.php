@@ -91,11 +91,14 @@ final class DoctrineHashChainRepositoryTest extends TestCase
     public function testALostHostTransactionClosesTheConnectionAndAsksToRestartTheUnitOfWork(): void
     {
         $original   = new RuntimeException('deadlock');
+        $calls      = [];
         $connection = $this->createMock(Connection::class);
         $connection->method('getTransactionNestingLevel')->willReturn(2);
         $connection->method('isTransactionActive')->willReturn(true);
         $connection->method('rollBack')->willThrowException(new RuntimeException('SAVEPOINT DOCTRINE_2 does not exist'));
-        $connection->expects(self::once())->method('close');
+        $connection->expects(self::atLeastOnce())->method('close')->willReturnCallback(static function () use (&$calls): void {
+            $calls[] = 'close';
+        });
 
         $entityManager = $this->createMock(EntityManagerInterface::class);
         $entityManager->method('getConnection')->willReturn($connection);
@@ -110,18 +113,25 @@ final class DoctrineHashChainRepositoryTest extends TestCase
             self::assertSame($original, $exception->getPrevious());
             self::assertStringContainsString('Restart your unit of work', $exception->getMessage());
         }
+        self::assertSame('close', $calls[0] ?? null, 'the lost connection is closed first');
     }
 
     public function testANestedMysqlDeadlockIsALostTransactionEvenWhenTheNestedRollbackSucceeds(): void
     {
         // DBAL 3 without savepoints: the nested rollBack() only marks the transaction rollback-only and succeeds.
         $original   = new RuntimeException('wrapped', 0, new DeadlockException(new class('Deadlock found', '40001', 1213) extends AbstractException {}, null));
+        $calls      = [];
         $connection = $this->createMock(Connection::class);
         $connection->method('getTransactionNestingLevel')->willReturn(2);
         $connection->method('isTransactionActive')->willReturn(true);
         $connection->method('getDatabasePlatform')->willReturn(new MySQLPlatform());
-        $connection->expects(self::never())->method('rollBack');
-        $connection->expects(self::once())->method('close');
+        // The savepoint is never rolled back: the only rollBack() is the empty one on the new session, after close().
+        $connection->method('rollBack')->willReturnCallback(static function () use (&$calls): void {
+            $calls[] = 'rollBack';
+        });
+        $connection->expects(self::atLeastOnce())->method('close')->willReturnCallback(static function () use (&$calls): void {
+            $calls[] = 'close';
+        });
 
         $entityManager = $this->createMock(EntityManagerInterface::class);
         $entityManager->method('getConnection')->willReturn($connection);
@@ -135,6 +145,7 @@ final class DoctrineHashChainRepositoryTest extends TestCase
         } catch (ChainTransactionLostException $exception) {
             self::assertSame($original, $exception->getPrevious());
         }
+        self::assertSame('close', $calls[0] ?? null, 'the lost connection is closed first');
     }
 
     public function testANestedPostgresqlDeadlockRollsBackToTheSavepoint(): void
@@ -162,12 +173,18 @@ final class DoctrineHashChainRepositoryTest extends TestCase
     {
         // innodb_rollback_on_timeout ON ends the whole transaction; every retryable error is treated as lost.
         $original   = new LockWaitTimeoutException(new class('Lock wait timeout exceeded', 'HY000', 1205) extends AbstractException {}, null);
+        $calls      = [];
         $connection = $this->createMock(Connection::class);
         $connection->method('getTransactionNestingLevel')->willReturn(2);
         $connection->method('isTransactionActive')->willReturn(true);
         $connection->method('getDatabasePlatform')->willReturn(new MariaDBPlatform());
-        $connection->expects(self::never())->method('rollBack');
-        $connection->expects(self::once())->method('close');
+        // The savepoint is never rolled back: the only rollBack() is the empty one on the new session, after close().
+        $connection->method('rollBack')->willReturnCallback(static function () use (&$calls): void {
+            $calls[] = 'rollBack';
+        });
+        $connection->expects(self::atLeastOnce())->method('close')->willReturnCallback(static function () use (&$calls): void {
+            $calls[] = 'close';
+        });
 
         $entityManager = $this->createMock(EntityManagerInterface::class);
         $entityManager->method('getConnection')->willReturn($connection);
@@ -181,6 +198,7 @@ final class DoctrineHashChainRepositoryTest extends TestCase
         } catch (ChainTransactionLostException $exception) {
             self::assertSame($original, $exception->getPrevious());
         }
+        self::assertSame('close', $calls[0] ?? null, 'the lost connection is closed first');
     }
 
     /**
@@ -199,7 +217,10 @@ final class DoctrineHashChainRepositoryTest extends TestCase
         $original   = new RuntimeException('current transaction is aborted');
         $connection = $this->createMock(Connection::class);
         $connection->method('getDatabasePlatform')->willReturn($platform);
+        $connection->method('isTransactionActive')->willReturn(true);
         $connection->expects($closed ? self::once() : self::never())->method('close');
+        // PostgreSQL: the open, aborted transaction is marked rollback-only (a catch-and-commit fails loudly).
+        $connection->expects($closed ? self::never() : self::once())->method('setRollbackOnly');
 
         $entityManager = $this->createMock(EntityManagerInterface::class);
         $entityManager->method('getConnection')->willReturn($connection);
@@ -247,5 +268,54 @@ final class DoctrineHashChainRepositoryTest extends TestCase
         }
         self::assertSame($original, $caught, 'the lock-wait timeout is rethrown as it is');
         self::assertSame(1, (new ReflectionProperty(DoctrineHashChainRepository::class, 'ownLocks'))->getValue($repository), 'back to the outer lock');
+    }
+
+    public function testAFailedSavepointIsBalancedByClosingTheConnection(): void
+    {
+        // PostgreSQL inside an aborted host transaction: SAVEPOINT fails after DBAL counted the level, and ROLLBACK TO
+        // SAVEPOINT fails too. The connection is closed (nesting level back to 0) instead of leaving it one level off.
+        $original   = new RuntimeException('current transaction is aborted, commands ignored until end of transaction block');
+        $calls      = [];
+        $connection = $this->createMock(Connection::class);
+        $connection->method('getTransactionNestingLevel')->willReturn(1);
+        $connection->method('beginTransaction')->willThrowException($original);
+        $connection->method('isTransactionActive')->willReturn(true);
+        $connection->method('getDatabasePlatform')->willReturn(new PostgreSQLPlatform());
+        $connection->method('rollBack')->willThrowException(new RuntimeException('savepoint "DOCTRINE_2" does not exist'));
+        $connection->expects(self::atLeastOnce())->method('close')->willReturnCallback(static function () use (&$calls): void {
+            $calls[] = 'close';
+        });
+
+        $entityManager = $this->createMock(EntityManagerInterface::class);
+        $entityManager->method('getConnection')->willReturn($connection);
+        $registry = $this->createMock(ManagerRegistry::class);
+        $registry->method('getManagerForClass')->willReturn($entityManager);
+        $repository = new DoctrineHashChainRepository($registry);
+
+        $caught = null;
+        try {
+            $repository->withChainLock('89890001K', static fn (): bool => true);
+        } catch (Throwable $exception) {
+            $caught = $exception;
+        }
+        self::assertInstanceOf(ChainTransactionLostException::class, $caught);
+        self::assertSame($original, $caught->getPrevious());
+        self::assertSame(0, (new ReflectionProperty(DoctrineHashChainRepository::class, 'ownLocks'))->getValue($repository));
+        self::assertSame('close', $calls[0] ?? null, 'the lost connection is closed first');
+    }
+
+    public function testSetRollbackOnlyMarksOnlyAnOpenTransaction(): void
+    {
+        foreach ([true, false] as $active) {
+            $connection = $this->createMock(Connection::class);
+            $connection->method('isTransactionActive')->willReturn($active);
+            $connection->expects($active ? self::once() : self::never())->method('setRollbackOnly');
+            $entityManager = $this->createMock(EntityManagerInterface::class);
+            $entityManager->method('getConnection')->willReturn($connection);
+            $registry = $this->createMock(ManagerRegistry::class);
+            $registry->method('getManagerForClass')->willReturn($entityManager);
+
+            (new DoctrineHashChainRepository($registry))->setRollbackOnly();
+        }
     }
 }

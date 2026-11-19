@@ -8,6 +8,7 @@ use ArrayObject;
 use Doctrine\DBAL\Driver\AbstractException;
 use Doctrine\DBAL\Exception\DeadlockException;
 use InvalidArgumentException;
+use LogicException;
 use Nowo\TransactionDoctrine\TransientFailureClassifier;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
 use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
@@ -79,6 +80,7 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
         }
 
         self::assertSame($failure, $thrown);
+        self::assertSame(1, $repository->rollbackOnlyMarks, 'a host that commits anyway fails loudly');
         self::assertSame([], $client->sent, 'nothing reaches the AEAT');
         self::assertStringContainsString('rethrown', $logger->records[0]['message'] ?? '');
         self::assertStringNotContainsString('89890001K', json_encode($logger->records, JSON_THROW_ON_ERROR));
@@ -253,9 +255,10 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
 
     public function testDatabaseErrorAndHeadLossAfterTheSubmissionAreBothKept(): void
     {
-        $failure   = self::deadlock();
-        $logger    = new RecordingLogger();
-        $processor = $this->processor($this->throwingOn(VerifactuEvents::AFTER_AEAT_SUBMISSION, $failure), new TransactionStateHashChainRepository(true, [2]), logger: $logger);
+        $failure    = self::deadlock();
+        $logger     = new RecordingLogger();
+        $repository = new TransactionStateHashChainRepository(true, [2]);
+        $processor  = $this->processor($this->throwingOn(VerifactuEvents::AFTER_AEAT_SUBMISSION, $failure), $repository, logger: $logger);
 
         try {
             $processor->process($this->record('FAC-2026-716'), submitToAeat: true);
@@ -264,6 +267,7 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
             self::assertSame($failure, $exception->databaseError);
             self::assertInstanceOf(ChainTransactionLostException::class, $exception->headLoss);
         }
+        self::assertSame(1, $repository->rollbackOnlyMarks);
         $critical = $logger->records[count($logger->records) - 1];
         self::assertSame('critical', $critical['level']);
         self::assertSame('yes (other head)', $critical['context']['head_lost']);
@@ -298,6 +302,13 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
         yield 'other issue date in the XML' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<FechaExpedicionFactura>' . $r->issueDate . '<', '<FechaExpedicionFactura>01-01-2026<', (string) $r->xml)), 'XML'];
         yield 'no Encadenamiento' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('Encadenamiento>', 'Otro>', (string) $r->xml)), 'XML'];
         yield 'no IDFactura' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('IDFactura>', 'Otro>', (string) $r->xml)), 'XML'];
+        yield 'duplicate own Huella' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<Huella>' . $r->hash . '</Huella>', '<Huella>' . $r->hash . '</Huella><Huella>' . str_repeat('B', 64) . '</Huella>', (string) $r->xml)), 'XML'];
+        yield 'duplicate IDFactura' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(preg_replace('#(</IDFactura>)#', '$1<IDFactura><IDEmisorFactura>B12345674</IDEmisorFactura><NumSerieFactura>OTHER</NumSerieFactura><FechaExpedicionFactura>01-01-2026</FechaExpedicionFactura></IDFactura>', (string) $r->xml, 1) ?? ''), 'XML'];
+        yield 'duplicate NumSerieFactura' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('</NumSerieFactura>', '</NumSerieFactura><NumSerieFactura>OTHER</NumSerieFactura>', (string) $r->xml)), 'XML'];
+        yield 'wrong namespace' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace(BillingRecordXmlGenerator::NS_SUMINISTRO, 'urn:other', (string) $r->xml)), 'XML'];
+        yield 'no namespace' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace(' xmlns="' . BillingRecordXmlGenerator::NS_SUMINISTRO . '"', '', (string) $r->xml)), 'XML'];
+        yield 'Huella in another namespace' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<Huella>' . $r->hash . '</Huella>', '<o:Huella xmlns:o="urn:other">' . $r->hash . '</o:Huella>', (string) $r->xml)), 'XML'];
+        yield 'internal DTD entity' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace(['<RegistroAlta', '<Huella>' . $r->hash . '<'], ['<!DOCTYPE RegistroAlta [<!ENTITY h "' . $r->hash . '">]><RegistroAlta', '<Huella>&h;<'], (string) $r->xml)), 'XML'];
         yield 'a previous record on a first record' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<Encadenamiento>', '<Encadenamiento><RegistroAnterior><Huella>' . str_repeat('C', 64) . '</Huella></RegistroAnterior>', (string) $r->xml)), 'XML'];
         yield 'no XML' => [static fn (BillingRecord $r): BillingRecord => (new BillingRecord(RecordType::Alta, $r->issuerNif, $r->invoiceSeriesNumber, $r->issueDate, 'F1', $r->totalTaxAmount, $r->totalAmount, $r->generatedAt, previousHash: $r->previousHash, issuerName: $r->issuerName, operationDescription: $r->operationDescription, environment: $r->environment))->withHash((string) $r->hash, $r->previousHash), 'XML'];
     }
@@ -422,6 +433,20 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
             $deep = new RuntimeException('wrapper ' . $i, 0, $deep);
         }
         self::assertNull(SubmittedRecordNotCommittedException::find($deep));
+    }
+
+    public function testPersistSubmittedRecordRefusesToRunInsideATransaction(): void
+    {
+        $record     = $this->processor(new EventDispatcher(), new TransactionStateHashChainRepository(false))->process($this->record('FAC-2026-723'))['record'];
+        $repository = new TransactionStateHashChainRepository(true);
+
+        try {
+            $this->processor(new EventDispatcher(), $repository)->persistSubmittedRecord($record, ['success' => true]);
+            self::fail('LogicException expected');
+        } catch (LogicException $exception) {
+            self::assertStringContainsString('rolled back', $exception->getMessage());
+        }
+        self::assertNull($repository->getLastState('89890001K'));
     }
 
     public function testPersistSubmittedRecordRefusesWhenTheHeadMoved(): void

@@ -123,6 +123,13 @@ before your transaction commits. The bundle therefore reads the chain head again
   silently (pdo_pgsql and mysqli commit without an error) while the AEAT holds the record, and the next record would fork
   the chain at the AEAT.
 
+Whenever the bundle throws for a lost head or a submitted record not committed while your transaction is still open
+(PostgreSQL, or MySQL / MariaDB when the database kept it), it first marks that transaction **rollback-only**: a host
+that catches the exception and calls `commit()` anyway gets `CommitFailedRollbackOnly` (DBAL 3:
+`ConnectionException`), never a silent loss. PostgreSQL would otherwise turn that COMMIT into a ROLLBACK and report
+success; MySQL would commit your rows without the record the AEAT holds. The same applies to an outer commit after an
+inner `transactional()` savepoint was rolled back. `transactional()` itself still rolls back cleanly.
+
 **Never retry `SubmittedRecordNotCommittedException` automatically.** It is not a lock conflict: a retried `process()`
 would send a second record for the same invoice. It carries no previous exception on purpose (the database error is in
 `$e->databaseError`, the head loss in `$e->headLoss`), so transaction-doctrine's classifier never sees a transient
@@ -158,10 +165,13 @@ try {
     if ($connection->isTransactionActive()) {
         $connection->rollBack();             // only with your own beginTransaction(); transactional() already did
     }
+    // Outside any transaction now: persistSubmittedRecord() refuses to run inside one (LogicException), because a
+    // later rollback would undo the repair (MySQL / MariaDB) or the aborted transaction would refuse it (PostgreSQL).
     // $e->record is the exact record the AEAT received (hash, XML), $e->submission its answer (CSV). Pass them
     // unchanged: persistSubmittedRecord() is not an import API. It refuses (InvalidArgumentException, nothing written)
-    // a record whose fingerprint, parsed XML (own Huella, invoice id, previous Huella), environment or issuer does not
-    // match, and an answer without a boolean success. It also records the answer when the record is already the head,
+    // a record whose fingerprint, parsed XML (no DOCTYPE; SuministroInformacion namespace; exactly one own Huella,
+    // IDFactura and invoice-id fields, RegistroAnterior Huella), environment or issuer does not match, and an answer
+    // without a boolean success. It also records the answer when the record is already the head,
     // so the batch submitter does not send it again.
     if (!$processor->persistSubmittedRecord($e->record, $e->submission)) {
         // The head moved to another record meanwhile: the chain is forked at the AEAT. Stop chaining for this issuer and
@@ -195,7 +205,12 @@ FrankenPHP worker mode with the kernel reset off is supported (see
 DQL and connection, so it keeps working when the host's manager was closed by a failed flush of the host, and it never
 resets or replaces it. With the kernel reset off, **a closed host EntityManager is not replaced** for the host's own code
 unless something does it between requests: transaction-doctrine's worker hygiene (`WorkerConnectionHygiene`) or
-`services_resetter`. After `ChainTransactionLostException` on MySQL / MariaDB the connection is closed and reconnects on the next statement,
+`services_resetter`. **PostgreSQL:** when the bundle throws inside your transaction it leaves the aborted transaction
+open (rollback-only) for your rollback. If your code lets the exception escape without rolling back, that aborted
+transaction survives into the next request of the worker: roll back in your exception handling, or run
+transaction-doctrine's `WorkerConnectionHygiene` (or `services_resetter`) between requests. The bundle never leaves the
+nesting level off by one: a chain lock whose SAVEPOINT fails in such a transaction closes the connection and throws
+`ChainTransactionLostException`. After `ChainTransactionLostException` on MySQL / MariaDB the connection is closed and reconnects on the next statement,
 with DBAL's nesting level back to 0.
 
 ## Residual risks

@@ -9,6 +9,7 @@ use Doctrine\DBAL\Exception as DbalException;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Doctrine\Persistence\ManagerRegistry;
+use LogicException;
 use Nowo\VerifactuBundle\Event\VerifactuEvents;
 use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
 use Nowo\VerifactuBundle\Exception\SubmittedRecordNotCommittedException;
@@ -224,6 +225,166 @@ final class HostTransactionListenerFailureTest extends TestCase
         self::assertTrue($verifier->verify('89890001K')->isValid());
         self::assertSame(2, $verifier->verify('89890001K')->checkedRecords);
         $kernel->shutdown();
+    }
+
+    /** UO4-1: a host that catches the lost-head exception before the submission and commits anyway fails loudly. */
+    public function testCatchingTheLostHeadAndCommittingFailsLoudly(): void
+    {
+        [$kernel, $connection, $processor, $dispatcher, $seed] = $this->bootWithSeed();
+        $dispatcher->addListener(VerifactuEvents::BEFORE_AEAT_SUBMISSION, $this->headBreaker($connection));
+        $connection->beginTransaction();
+        $connection->insert('host_invoice', ['number' => 'HOST-CC1']);
+        $lost = null;
+        try {
+            $processor->process($this->record('FAC-CC1'), submitToAeat: true);
+        } catch (ChainTransactionLostException $exception) {
+            $lost = $exception;
+        }
+        self::assertInstanceOf(ChainTransactionLostException::class, $lost);
+        $commit = $this->commitFailure($connection);
+        // PostgreSQL keeps the aborted transaction open and marks it rollback-only; MySQL / MariaDB closed it.
+        if ($lost->connectionClosed) {
+            self::assertInstanceOf(DbalException::class, $commit, 'no transaction left to commit');
+        } else {
+            $this->assertRollbackOnly($commit);
+        }
+        if ($connection->isTransactionActive()) {
+            $connection->rollBack();
+        }
+        self::assertSame(0, $connection->getTransactionNestingLevel());
+        self::assertSame(0, (int) $connection->fetchOne("SELECT COUNT(*) FROM host_invoice WHERE number = 'HOST-CC1'"));
+        self::assertSame($seed['record']->hash, $connection->fetchOne("SELECT hash FROM verifactu_hash_chain WHERE issuer_nif = '89890001K'"));
+        $kernel->shutdown();
+    }
+
+    /** UO4-1: after the submission, catch-and-commit fails loudly, also from an inner transactional() savepoint. */
+    #[DataProvider('innerTransactional')]
+    public function testCatchingTheSubmittedRecordAndCommittingFailsLoudly(bool $innerTransactional): void
+    {
+        [$kernel, $connection, $processor, $dispatcher, $seed] = $this->bootWithSeed();
+        $dispatcher->addListener(VerifactuEvents::AFTER_AEAT_SUBMISSION, static function () use ($connection): void {
+            $connection->executeStatement('SELECT * FROM verifactu_table_that_does_not_exist');
+        });
+        $connection->beginTransaction();
+        $connection->insert('host_invoice', ['number' => 'HOST-CC2']);
+        $caught = null;
+        try {
+            $unit = function () use ($processor): void {
+                $processor->process($this->record('FAC-CC2'), submitToAeat: true);
+            };
+            $innerTransactional ? $connection->transactional(static fn () => $unit()) : $unit();
+        } catch (Throwable $exception) {
+            $caught = $exception;
+        }
+        $failure = $caught instanceof Throwable ? SubmittedRecordNotCommittedException::find($caught) : null;
+        self::assertInstanceOf(SubmittedRecordNotCommittedException::class, $failure);
+        self::assertTrue($connection->isTransactionActive(), 'the host transaction is still open');
+        $this->assertRollbackOnly($this->commitFailure($connection));
+        $connection->rollBack();
+        self::assertSame(0, $connection->getTransactionNestingLevel());
+        self::assertSame(0, (int) $connection->fetchOne("SELECT COUNT(*) FROM host_invoice WHERE number = 'HOST-CC2'"));
+
+        self::assertTrue($processor->persistSubmittedRecord($failure->record, $failure->submission));
+        self::assertSame($failure->record->hash, $connection->fetchOne("SELECT hash FROM verifactu_hash_chain WHERE issuer_nif = '89890001K'"));
+        self::assertSame($seed['record']->hash, $failure->record->previousHash);
+        $kernel->shutdown();
+    }
+
+    /**
+     * @return iterable<string, array{bool}>
+     */
+    public static function innerTransactional(): iterable
+    {
+        yield 'directly in the host transaction' => [false];
+        yield 'in an inner transactional() savepoint' => [true];
+    }
+
+    /** UO4-2 / UO4-3: an exception that escapes without a rollback, then the next request (kernel reset off). */
+    public function testTheNextRequestRecoversWhenTheHostDidNotRollBack(): void
+    {
+        [$kernel, $connection, $processor, $dispatcher] = $this->bootWithSeed();
+        $breaker                                        = $this->headBreaker($connection);
+        $dispatcher->addListener(VerifactuEvents::BEFORE_AEAT_SUBMISSION, $breaker);
+        $connection->beginTransaction();
+        try {
+            $processor->process($this->record('FAC-LEAK'), submitToAeat: true);
+        } catch (ChainTransactionLostException) {
+            // The host lets it escape: no rollback.
+        }
+        $dispatcher->removeListener(VerifactuEvents::BEFORE_AEAT_SUBMISSION, $breaker);
+
+        // A repair inside a still-open transaction is refused (UO4-3).
+        if ($connection->isTransactionActive()) {
+            try {
+                $processor->persistSubmittedRecord($this->record('FAC-LEAK'), ['success' => true]);
+                self::fail('LogicException expected');
+            } catch (LogicException) {
+            }
+        }
+
+        // Next request. MySQL / MariaDB: the bundle closed the connection, nothing is left. PostgreSQL: the aborted,
+        // rollback-only transaction is still there (the host must roll back, or run worker hygiene); the bundle's chain
+        // lock fails inside it but always leaves the nesting level where it found it, never one level off (UO4-2).
+        $level = $connection->getTransactionNestingLevel();
+        if ($level > 0) {
+            $caught = null;
+            try {
+                $processor->process($this->record('FAC-NEXT-1'));
+            } catch (Throwable $exception) {
+                $caught = $exception;
+            }
+            self::assertInstanceOf(Throwable::class, $caught, 'nothing chains inside the aborted transaction');
+            $closed = $caught instanceof ChainTransactionLostException && $caught->connectionClosed;
+            self::assertSame($closed ? 0 : $level, $connection->getTransactionNestingLevel(), 'balanced nesting level');
+            // Worker hygiene (or the host's own error handling) rolls the leftover transaction back.
+            if ($connection->isTransactionActive()) {
+                $connection->rollBack();
+            }
+        }
+        self::assertSame(0, $connection->getTransactionNestingLevel());
+        $next = $processor->process($this->record('FAC-NEXT-2'));
+        self::assertSame([], $next['errors']);
+        self::assertSame($next['record']->hash, $connection->fetchOne("SELECT hash FROM verifactu_hash_chain WHERE issuer_nif = '89890001K'"));
+        $kernel->shutdown();
+    }
+
+    /**
+     * A BEFORE_AEAT_SUBMISSION listener that breaks the host transaction and hides it: on PostgreSQL a swallowed error
+     * (the transaction is aborted), on MySQL / MariaDB a moved head (the head check then finds another head).
+     */
+    private function headBreaker(Connection $connection): callable
+    {
+        $postgreSql = str_contains($connection->getDatabasePlatform()::class, 'PostgreSQL');
+
+        return static function () use ($connection, $postgreSql): void {
+            try {
+                $connection->executeStatement($postgreSql
+                    ? 'SELECT * FROM verifactu_table_that_does_not_exist'
+                    : "UPDATE verifactu_hash_chain SET hash = '" . str_repeat('F', 64) . "' WHERE issuer_nif = '89890001K'");
+            } catch (DbalException) {
+                // Hidden from the bundle.
+            }
+        };
+    }
+
+    /**
+     * DBAL 4 CommitFailedRollbackOnly / DBAL 3 ConnectionException::commitFailedRollbackOnly().
+     */
+    private function assertRollbackOnly(?Throwable $failure): void
+    {
+        self::assertInstanceOf(DbalException::class, $failure);
+        self::assertStringContainsStringIgnoringCase('rollback only', $failure->getMessage());
+    }
+
+    private function commitFailure(Connection $connection): ?Throwable
+    {
+        try {
+            $connection->commit();
+        } catch (Throwable $exception) {
+            return $exception;
+        }
+
+        return null;
     }
 
     /**
