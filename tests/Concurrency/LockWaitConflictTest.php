@@ -110,6 +110,7 @@ final class LockWaitConflictTest extends TestCase
             $connection->executeStatement("UPDATE host_invoice SET number = 'LOCKED-2' WHERE id = ?", [$id]);
         });
 
+        $session = $this->sessionId();
         $this->connection->beginTransaction();
         $this->connection->insert('host_invoice', ['number' => 'HOST-LW']);
         $caught = null;
@@ -124,6 +125,7 @@ final class LockWaitConflictTest extends TestCase
         }
 
         self::assertInstanceOf(SubmittedRecordNotCommittedException::class, $caught);
+        self::assertSame($session, $this->sessionId(), 'the connection was not closed (the transaction was still there to roll back)');
         self::assertTrue((new TransientFailureClassifier())->isTransient($caught->databaseError ?? new RuntimeException()), 'the cause is a lock-wait timeout');
         $this->assertLockWaitTimeout($caught->databaseError);
         self::assertNull($caught->getPrevious());
@@ -143,6 +145,7 @@ final class LockWaitConflictTest extends TestCase
         $this->holder->beginTransaction();
         $this->holder->fetchAllAssociative("SELECT * FROM verifactu_hash_chain WHERE issuer_nif = '89890001K' FOR UPDATE");
 
+        $session = $this->sessionId();
         $this->connection->beginTransaction();
         $this->connection->insert('host_invoice', ['number' => 'HOST-VF3']);
         $caught = null;
@@ -159,6 +162,7 @@ final class LockWaitConflictTest extends TestCase
         if ($this->isPostgreSql()) {
             // The savepoint rollback keeps the host's transaction usable: the lock-wait error comes out as it is.
             $this->assertLockWaitTimeout($caught);
+            self::assertSame($session, $this->sessionId(), 'PostgreSQL: the connection was not closed');
         } else {
             self::assertInstanceOf(ChainTransactionLostException::class, $caught);
             self::assertInstanceOf(LockWaitTimeoutException::class, $caught->getPrevious());
@@ -183,6 +187,7 @@ final class LockWaitConflictTest extends TestCase
         self::assertSame(BatchSubmissionResult::STATE_SENT, $submitter->submitPending('89890001K')->state);
         self::assertSame([], $this->processor->process($this->record('PENDING'))['errors']);
 
+        $session = $this->sessionId();
         $this->holder->beginTransaction();
         $this->holder->fetchAllAssociative("SELECT * FROM verifactu_hash_chain WHERE issuer_nif = '89890001K' FOR UPDATE");
         $caught = null;
@@ -197,6 +202,7 @@ final class LockWaitConflictTest extends TestCase
         // DriverException that transaction-doctrine classifies by its SQLSTATE), never ChainTransactionLostException.
         $this->assertLockWaitTimeout($caught);
         self::assertSame(0, $this->connection->getTransactionNestingLevel());
+        self::assertSame($session, $this->sessionId(), 'a lock wait in its own nested lock never closes the connection');
         // The record is still waiting and goes with the next run.
         self::assertSame(BatchSubmissionResult::STATE_SENT, $submitter->submitPending('89890001K')->state);
     }
@@ -210,6 +216,14 @@ final class LockWaitConflictTest extends TestCase
             self::assertInstanceOf(LockWaitTimeoutException::class, $failure, 'a DBAL RetryableException');
         }
         self::assertTrue((new TransientFailureClassifier())->isTransient($failure));
+    }
+
+    /**
+     * The database session of the connection under test (a closed and reconnected connection gets another one).
+     */
+    private function sessionId(): string
+    {
+        return (string) $this->connection->fetchOne($this->isPostgreSql() ? 'SELECT pg_backend_pid()' : 'SELECT CONNECTION_ID()');
     }
 
     private function isPostgreSql(): bool

@@ -15,6 +15,8 @@ use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Tests\Kernel\DoctrineTestKernel;
+use ReflectionProperty;
+use RuntimeException;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Throwable;
@@ -79,8 +81,36 @@ final class ListenerDatabaseFailureIntegrationTest extends KernelTestCase
             self::fail('ChainTransactionLostException expected');
         } catch (ChainTransactionLostException $exception) {
             self::assertNull($exception->getPrevious());
+            self::assertFalse($exception->connectionClosed, 'SQLite: only MySQL / MariaDB connections are closed');
         }
-        self::assertSame(0, $connection->getTransactionNestingLevel(), 'the connection was closed');
+        self::assertSame(1, $connection->getTransactionNestingLevel(), 'the host rolls its transaction back itself');
+        $connection->rollBack();
+    }
+
+    public function testNestedChainLocksThatThrowLeaveNoOwnLockAndNoTransaction(): void
+    {
+        $repository = $this->repository();
+        $ownLocks   = new ReflectionProperty(DoctrineHashChainRepository::class, 'ownLocks');
+        $failure    = new RuntimeException('inner failure');
+
+        $caught = null;
+        try {
+            $repository->withChainLock('*', static fn (): mixed => $repository->withChainLock('89890001K', static function () use ($failure): never {
+                throw $failure;
+            }));
+        } catch (Throwable $exception) {
+            $caught = $exception;
+        }
+        self::assertSame($failure, $caught, 'the inner failure comes out as it is');
+        self::assertSame(0, $ownLocks->getValue($repository));
+        self::assertSame(0, $this->entityManager()->getConnection()->getTransactionNestingLevel());
+
+        // A host transaction afterwards is seen as the host's again, and a normal record chains.
+        $this->entityManager()->getConnection()->beginTransaction();
+        $result = $repository->withChainLock('89890001K', static fn (?HashChainState $head = null): ?HashChainState => $head);
+        self::assertNull($result);
+        $this->entityManager()->getConnection()->commit();
+        self::assertSame(0, $ownLocks->getValue($repository));
     }
 
     public function testDatabaseFailureInsideTheHostTransactionIsRethrownAndNothingIsChained(): void

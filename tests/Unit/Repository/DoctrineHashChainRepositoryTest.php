@@ -8,6 +8,7 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Driver\AbstractException;
 use Doctrine\DBAL\Exception\DeadlockException;
 use Doctrine\DBAL\Exception\LockWaitTimeoutException;
+use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
@@ -19,6 +20,7 @@ use Nowo\VerifactuBundle\Entity\BillingRecordHashChain;
 use Nowo\VerifactuBundle\Exception\ChainTransactionLostException;
 use Nowo\VerifactuBundle\Repository\DoctrineBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionProperty;
 use RuntimeException;
@@ -181,11 +183,23 @@ final class DoctrineHashChainRepositoryTest extends TestCase
         }
     }
 
-    public function testAFailingHeadReadInsideTheTransactionClosesTheConnection(): void
+    /**
+     * @return iterable<string, array{AbstractPlatform, bool}>
+     */
+    public static function headReadPlatforms(): iterable
+    {
+        yield 'MySQL: the transaction is gone, close' => [new MySQLPlatform(), true];
+        yield 'MariaDB: the transaction is gone, close' => [new MariaDBPlatform(), true];
+        yield 'PostgreSQL: the aborted transaction stays open for the host rollback' => [new PostgreSQLPlatform(), false];
+    }
+
+    #[DataProvider('headReadPlatforms')]
+    public function testAFailingHeadReadInsideTheTransactionClosesOnlyAGoneTransaction(AbstractPlatform $platform, bool $closed): void
     {
         $original   = new RuntimeException('current transaction is aborted');
         $connection = $this->createMock(Connection::class);
-        $connection->expects(self::once())->method('close');
+        $connection->method('getDatabasePlatform')->willReturn($platform);
+        $connection->expects($closed ? self::once() : self::never())->method('close');
 
         $entityManager = $this->createMock(EntityManagerInterface::class);
         $entityManager->method('getConnection')->willReturn($connection);
@@ -198,6 +212,8 @@ final class DoctrineHashChainRepositoryTest extends TestCase
             self::fail('ChainTransactionLostException expected');
         } catch (ChainTransactionLostException $exception) {
             self::assertSame($original, $exception->getPrevious());
+            self::assertSame($closed, $exception->connectionClosed);
+            self::assertStringContainsString($closed ? 'connection was closed' : 'Roll it back', $exception->getMessage());
         }
     }
 

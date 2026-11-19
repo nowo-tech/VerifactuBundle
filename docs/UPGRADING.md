@@ -71,10 +71,12 @@ composer update nowo-tech/verifactu-bundle
   transaction-doctrine does not see a transient failure in it and answers 500: map it to 409 yourself if you want a
   retry. `BillingRecordBatchSubmitter::submitPending()` now throws the database error (a `RetryableException`) of a
   lost transaction inside its own locks instead of `ChainTransactionLostException`.
-- **Do not call `process()` inside `Connection::transactional()` / `wrapInTransaction()`:** after
-  `ChainTransactionLostException` (connection closed) its `rollBack()` throws a NoActiveTransaction /
-  ConnectionException that hides it. Use `beginTransaction()` / `commit()` / `rollBack()` (skip the rollback on that
-  exception) or transaction-doctrine's runner.
+- **`process()` inside `Connection::transactional()` / `wrapInTransaction()`:** on MySQL / MariaDB, when the bundle
+  closes the connection (the transaction is already gone), Doctrine's `rollBack()` throws `NoActiveTransaction` with
+  the bundle's exception as its previous one. Catch `Throwable` and use `SubmittedRecordNotCommittedException::find()`
+  (or look along `getPrevious()` for `ChainTransactionLostException`). On PostgreSQL the bundle never closes the
+  connection for a lost head: the aborted transaction stays open and your rollback works
+  (`ChainTransactionLostException::$connectionClosed` tells which).
 - **Exception change (BC note), DBAL 3 without `use_savepoints`, MySQL / MariaDB:** a deadlock inside the chain lock
   while it runs in your transaction now throws `ChainTransactionLostException` (the `DeadlockException` is its previous
   exception) and closes the connection, as it already did on DBAL 4 or with savepoints. Before, the plain

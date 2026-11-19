@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Nowo\VerifactuBundle\Service;
 
 use Doctrine\DBAL\Exception as DbalException;
+use DOMDocument;
+use DOMElement;
 use InvalidArgumentException;
 use Nowo\VerifactuBundle\Client\AeatSubmissionClientInterface;
 use Nowo\VerifactuBundle\Clock\GenerationTimestamp;
@@ -47,8 +49,11 @@ use Throwable;
 
 use function array_key_first;
 use function array_values;
+use function is_bool;
 use function is_string;
 use function ksort;
+
+use const LIBXML_NONET;
 
 /**
  * Orchestrates validation, hash chaining, XML generation, XSD validation, signing, and AEAT submission.
@@ -433,8 +438,11 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
      *
      * It accepts only the record of SubmittedRecordNotCommittedException, unchanged; it is not an import API. The
      * record is refused (InvalidArgumentException, nothing written) when its hash is not the fingerprint of its fields
-     * and previous hash, its XML does not carry that fingerprint, its AEAT environment is not the configured one or the
-     * head's, or (with `providers.issuer` enforced) it belongs to another issuer.
+     * and previous hash, its parsed XML does not carry that fingerprint as its own Huella with the same invoice id and
+     * previous Huella, its AEAT environment is not the configured one or the head's, (with `providers.issuer` enforced)
+     * it belongs to another issuer, or the answer has no boolean `success` or a non-string `reference`. These checks
+     * catch a forged or altered record; they do not prove the AEAT holds it, nor that fields outside the fingerprint and
+     * the invoice id (lines, recipients, description) were not changed after the exception: pass it unchanged.
      *
      * @param BillingRecord $record the record carried by SubmittedRecordNotCommittedException (hash set)
      * @param array<string, mixed> $submission the AEAT answer carried by the exception
@@ -445,9 +453,12 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
     {
         $hash = strtoupper(trim((string) $record->hash));
         $this->assertSubmittedRecord($record, $hash);
+        if (!is_bool($submission['success'] ?? null) || ($submission['reference'] ?? null) !== null && !is_string($submission['reference'])) {
+            throw new InvalidArgumentException('The AEAT answer must have a boolean "success" and a string or null "reference": pass the unchanged submission of SubmittedRecordNotCommittedException.');
+        }
         $previous  = $record->previousHash === null ? null : strtoupper(trim($record->previousHash));
         $reference = $submission['reference'] ?? null;
-        $answer    = fn () => $this->recordStore?->markSubmitted($record->issuerNif, $hash, ($submission['success'] ?? false) === true, is_string($reference) ? $reference : null);
+        $answer    = fn () => $this->recordStore?->markSubmitted($record->issuerNif, $hash, $submission['success'], is_string($reference) ? $reference : null);
         $operation = function (?HashChainState ...$locked) use ($record, $hash, $previous, $answer): bool {
             $head = $locked === [] ? $this->hashChainRepository->getLastState($record->issuerNif) : $locked[0];
             if ($head?->environment instanceof AeatEnvironment && $head->environment !== $record->environment) {
@@ -486,8 +497,8 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
         if ($hash === '' || !hash_equals($this->hashChainGenerator->computeHash($record), $hash)) {
             throw new InvalidArgumentException('The record\'s hash is not the fingerprint of its fields and previous hash: pass the unchanged record of SubmittedRecordNotCommittedException.');
         }
-        if ($record->xml === null || !str_contains(strtoupper($record->xml), '>' . $hash . '<')) {
-            throw new InvalidArgumentException('The record\'s XML does not carry its fingerprint: pass the unchanged record of SubmittedRecordNotCommittedException.');
+        if (!$this->xmlDescribesRecord($record, $hash)) {
+            throw new InvalidArgumentException('The record\'s XML does not describe this record (its own Huella, invoice id and previous Huella): pass the unchanged record of SubmittedRecordNotCommittedException.');
         }
         $environment = $this->environmentProvider?->getEnvironment() ?? AeatEnvironment::fromValue($this->defaultEnvironment);
         if ($record->environment !== $environment) {
@@ -497,6 +508,68 @@ final class BillingRecordProcessor implements BillingRecordProcessorInterface
         if ($this->enforceProviderIssuer && trim($issuer->nif) !== '' && strtoupper(trim($record->issuerNif)) !== strtoupper(trim($issuer->nif))) {
             throw new InvalidArgumentException('The record belongs to another issuer than the issuer provider\'s.');
         }
+    }
+
+    /**
+     * Whether the record's XML (RegistroAlta / RegistroAnulacion, as BillingRecordXmlGenerator renders it) carries the
+     * record's own Huella, its invoice id (issuer, series and number, issue date) and its link to the previous record
+     * (RegistroAnterior Huella, or PrimerRegistro when it has none). Checked on the parsed XML, never by text search.
+     */
+    private function xmlDescribesRecord(BillingRecord $record, string $hash): bool
+    {
+        $root      = $this->parseRecordXml((string) $record->xml);
+        $anulacion = $record->recordType === RecordType::Anulacion;
+        if (!$root instanceof DOMElement || $root->localName !== ($anulacion ? 'RegistroAnulacion' : 'RegistroAlta')) {
+            return false;
+        }
+        $suffix = $anulacion ? 'Anulada' : '';
+        $id     = $this->childElement($root, 'IDFactura');
+        $chain  = $this->childElement($root, 'Encadenamiento');
+        if (!$id instanceof DOMElement || !$chain instanceof DOMElement) {
+            return false;
+        }
+        $previous = $this->childElement($chain, 'RegistroAnterior');
+        $linked   = $record->previousHash === null
+            ? !$previous instanceof DOMElement
+            : $previous instanceof DOMElement && strtoupper(trim((string) $this->childElement($previous, 'Huella')?->textContent)) === strtoupper(trim($record->previousHash));
+
+        return $linked
+            && strtoupper(trim((string) $this->childElement($root, 'Huella')?->textContent)) === $hash
+            && $this->childElement($id, 'IDEmisorFactura' . $suffix)?->textContent === $record->issuerNif
+            && $this->childElement($id, 'NumSerieFactura' . $suffix)?->textContent === $record->invoiceSeriesNumber
+            && $this->childElement($id, 'FechaExpedicionFactura' . $suffix)?->textContent === $record->issueDate;
+    }
+
+    /**
+     * Parses a record XML fragment without network access; null when it is not well-formed. The libxml error flag is
+     * restored afterwards (worker mode).
+     */
+    private function parseRecordXml(string $xml): ?DOMElement
+    {
+        $document          = new DOMDocument();
+        $previousUseErrors = libxml_use_internal_errors(true);
+        try {
+            $loaded = $xml !== '' && $document->loadXML($xml, LIBXML_NONET);
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($previousUseErrors);
+        }
+
+        return $loaded ? $document->documentElement : null;
+    }
+
+    /**
+     * The first direct child element with this local name (any namespace).
+     */
+    private function childElement(DOMElement $parent, string $localName): ?DOMElement
+    {
+        foreach ($parent->childNodes as $child) {
+            if ($child instanceof DOMElement && $child->localName === $localName) {
+                return $child;
+            }
+        }
+
+        return null;
     }
 
     /**

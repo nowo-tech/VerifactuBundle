@@ -289,6 +289,16 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
         yield 'no hash' => [static fn (BillingRecord $r): BillingRecord => $r->withHash('', $r->previousHash), 'fingerprint'];
         yield 'altered amount' => [static fn (BillingRecord $r): BillingRecord => (new BillingRecord(RecordType::Alta, $r->issuerNif, $r->invoiceSeriesNumber, $r->issueDate, 'F1', '21.00', '999.00', $r->generatedAt, previousHash: $r->previousHash, operationDescription: 'x', environment: $r->environment))->withHash((string) $r->hash, $r->previousHash)->withXml((string) $r->xml), 'fingerprint'];
         yield 'other XML' => [static fn (BillingRecord $r): BillingRecord => $r->withXml('<x/>'), 'XML'];
+        yield 'hash only in a foreign element' => [static fn (BillingRecord $r): BillingRecord => $r->withXml('<x>' . $r->hash . '</x>'), 'XML'];
+        yield 'malformed XML' => [static fn (BillingRecord $r): BillingRecord => $r->withXml('<RegistroAlta><Huella>' . $r->hash . '</Huella>'), 'XML'];
+        yield 'annulment XML for an Alta' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('RegistroAlta', 'RegistroAnulacion', (string) $r->xml)), 'XML'];
+        yield 'other own Huella' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<Huella>' . $r->hash . '</Huella>', '<Huella>' . str_repeat('B', 64) . '</Huella>', (string) $r->xml)), 'XML'];
+        yield 'other invoice number in the XML' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<NumSerieFactura>' . $r->invoiceSeriesNumber . '<', '<NumSerieFactura>OTHER<', (string) $r->xml)), 'XML'];
+        yield 'other issuer in the XML' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<IDEmisorFactura>' . $r->issuerNif . '<', '<IDEmisorFactura>B12345674<', (string) $r->xml)), 'XML'];
+        yield 'other issue date in the XML' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<FechaExpedicionFactura>' . $r->issueDate . '<', '<FechaExpedicionFactura>01-01-2026<', (string) $r->xml)), 'XML'];
+        yield 'no Encadenamiento' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('Encadenamiento>', 'Otro>', (string) $r->xml)), 'XML'];
+        yield 'no IDFactura' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('IDFactura>', 'Otro>', (string) $r->xml)), 'XML'];
+        yield 'a previous record on a first record' => [static fn (BillingRecord $r): BillingRecord => $r->withXml(str_replace('<Encadenamiento>', '<Encadenamiento><RegistroAnterior><Huella>' . str_repeat('C', 64) . '</Huella></RegistroAnterior>', (string) $r->xml)), 'XML'];
         yield 'no XML' => [static fn (BillingRecord $r): BillingRecord => (new BillingRecord(RecordType::Alta, $r->issuerNif, $r->invoiceSeriesNumber, $r->issueDate, 'F1', $r->totalTaxAmount, $r->totalAmount, $r->generatedAt, previousHash: $r->previousHash, issuerName: $r->issuerName, operationDescription: $r->operationDescription, environment: $r->environment))->withHash((string) $r->hash, $r->previousHash), 'XML'];
     }
 
@@ -338,11 +348,80 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
         $heads = new TransactionStateHashChainRepository(false);
         $heads->storeLastState(new HashChainState('89890001K', 'X', '09-07-2026', (string) $record->previousHash ?: str_repeat('D', 64), AeatEnvironment::Production));
         try {
-            $this->processor(new EventDispatcher(), $heads)->persistSubmittedRecord($record, []);
+            $this->processor(new EventDispatcher(), $heads)->persistSubmittedRecord($record, ['success' => true]);
             self::fail('InvalidArgumentException expected');
         } catch (InvalidArgumentException $exception) {
             self::assertStringContainsString('head', $exception->getMessage());
         }
+    }
+
+    public function testPersistSubmittedRecordChecksThePreviousHuellaAndAnnulments(): void
+    {
+        $chain     = new TransactionStateHashChainRepository(false);
+        $processor = $this->processor(new EventDispatcher(), $chain);
+        $alta      = $processor->process($this->record('FAC-2026-720'))['record'];
+        $annulment = $processor->process(new BillingRecord(RecordType::Anulacion, '89890001K', 'FAC-2026-720', '09-07-2026', 'F1', '21.00', '121.00', '2026-07-09T16:00:00+02:00'))['record'];
+        self::assertSame($alta->hash, $annulment->previousHash);
+        self::assertStringContainsString('<RegistroAnulacion', (string) $annulment->xml);
+
+        $heads = new TransactionStateHashChainRepository(false);
+        $heads->storeLastState(new HashChainState('89890001K', 'FAC-2026-720', '09-07-2026', (string) $alta->hash, $alta->environment));
+        $altered = $annulment->withXml(str_replace('<Huella>' . $alta->hash . '</Huella>', '<Huella>' . str_repeat('E', 64) . '</Huella>', (string) $annulment->xml));
+        try {
+            $this->processor(new EventDispatcher(), $heads)->persistSubmittedRecord($altered, ['success' => true, 'reference' => 'X']);
+            self::fail('InvalidArgumentException expected');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('XML', $exception->getMessage());
+        }
+        self::assertSame($alta->hash, $heads->getLastState('89890001K')?->hash);
+
+        self::assertTrue($this->processor(new EventDispatcher(), $heads)->persistSubmittedRecord($annulment, ['success' => true, 'reference' => 'X']));
+        self::assertSame($annulment->hash, $heads->getLastState('89890001K')?->hash);
+    }
+
+    /**
+     * @return iterable<string, array{array<string, mixed>}>
+     */
+    public static function invalidAnswers(): iterable
+    {
+        yield 'no success' => [['reference' => 'X']];
+        yield 'success not a bool' => [['success' => 'yes', 'reference' => 'X']];
+        yield 'reference not a string' => [['success' => true, 'reference' => 7]];
+    }
+
+    /**
+     * @param array<string, mixed> $submission
+     */
+    #[DataProvider('invalidAnswers')]
+    public function testPersistSubmittedRecordRefusesAnInvalidAnswer(array $submission): void
+    {
+        $record     = $this->processor(new EventDispatcher(), new TransactionStateHashChainRepository(false))->process($this->record('FAC-2026-721'))['record'];
+        $repository = new TransactionStateHashChainRepository(false);
+
+        try {
+            $this->processor(new EventDispatcher(), $repository)->persistSubmittedRecord($record, $submission);
+            self::fail('InvalidArgumentException expected');
+        } catch (InvalidArgumentException $exception) {
+            self::assertStringContainsString('answer', $exception->getMessage());
+        }
+        self::assertNull($repository->getLastState('89890001K'));
+    }
+
+    public function testFindLooksAlongThePreviousExceptions(): void
+    {
+        $record   = $this->processor(new EventDispatcher(), new TransactionStateHashChainRepository(false))->process($this->record('FAC-2026-722'))['record'];
+        $original = new SubmittedRecordNotCommittedException($record, ['success' => true]);
+
+        self::assertSame($original, SubmittedRecordNotCommittedException::find($original));
+        self::assertSame($original, SubmittedRecordNotCommittedException::find(new RuntimeException('no active transaction', 0, $original)));
+        self::assertNull(SubmittedRecordNotCommittedException::find(new RuntimeException('other')));
+
+        // Bounded: a cause deeper than the walk limit is not found (a cycle-safe, constant-cost walk).
+        $deep = $original;
+        for ($i = 0; $i < 40; ++$i) {
+            $deep = new RuntimeException('wrapper ' . $i, 0, $deep);
+        }
+        self::assertNull(SubmittedRecordNotCommittedException::find($deep));
     }
 
     public function testPersistSubmittedRecordRefusesWhenTheHeadMoved(): void
@@ -351,7 +430,7 @@ final class BillingRecordProcessorListenerDatabaseFailureTest extends TestCase
         $repository = new InMemoryHashChainRepository();
         $repository->storeLastHash('89890001K', str_repeat('C', 64));
 
-        self::assertFalse($this->processor(new EventDispatcher(), $repository)->persistSubmittedRecord($record, ['success' => false, 'reference' => 7]));
+        self::assertFalse($this->processor(new EventDispatcher(), $repository)->persistSubmittedRecord($record, ['success' => false, 'reference' => null]));
         self::assertSame(str_repeat('C', 64), $repository->getLastHash('89890001K'));
 
         $empty = new InMemoryHashChainRepository();

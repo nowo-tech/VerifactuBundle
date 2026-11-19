@@ -21,8 +21,8 @@ use Throwable;
  * it for a retryable failure: answer it as a 500, and in a Messenger handler wrap it in
  * UnrecoverableMessageHandlingException. The database failure is in $databaseError, the head loss in $headLoss.
  *
- * Roll back your transaction (if the connection is still open; a rollback error is expected when the database already
- * ended it), then call BillingRecordProcessor::persistSubmittedRecord($e->record, $e->submission) before chaining
+ * Catch Throwable and use find(): wrapped in Connection::transactional(), it may come out as the previous exception of
+ * NoActiveTransaction. Roll back your transaction if it is still active, then call BillingRecordProcessor::persistSubmittedRecord($e->record, $e->submission) before chaining
  * anything else for the issuer. See docs/CONCURRENCY.md, "Submitted record not committed".
  *
  * @author Nowo.tech
@@ -30,6 +30,9 @@ use Throwable;
  */
 final class SubmittedRecordNotCommittedException extends RuntimeException
 {
+    /** Most exceptions walked along getPrevious() by find() (a cycle cannot hang a worker). */
+    private const MAX_DEPTH = 32;
+
     /**
      * @param BillingRecord $record the chained record the AEAT received (hash, XML and signed XML included)
      * @param array<string, mixed> $submission the AEAT submission result (success, reference / CSV, errors)
@@ -45,5 +48,24 @@ final class SubmittedRecordNotCommittedException extends RuntimeException
         public readonly ?ChainTransactionLostException $headLoss = null,
     ) {
         parent::__construct('The AEAT received the Veri*Factu record, but a database failure means its chain head will not commit with your transaction. Do not retry: roll back, then persist this record and its AEAT answer with persistSubmittedRecord() before chaining anything else for the issuer (docs/CONCURRENCY.md).');
+    }
+
+    /**
+     * Finds this exception in a failure and its previous exceptions (at most MAX_DEPTH of them). Use it instead of
+     * `catch (SubmittedRecordNotCommittedException)`: Doctrine's Connection::transactional() / wrapInTransaction() can
+     * replace it with NoActiveTransaction (its rollBack() after the bundle closed a MySQL / MariaDB connection), and
+     * keep it only as a previous exception.
+     */
+    public static function find(Throwable $failure): ?self
+    {
+        $current = $failure;
+        for ($depth = 0; $current instanceof Throwable && $depth < self::MAX_DEPTH; ++$depth) {
+            if ($current instanceof self) {
+                return $current;
+            }
+            $current = $current->getPrevious();
+        }
+
+        return null;
     }
 }

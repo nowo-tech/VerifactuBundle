@@ -16,6 +16,7 @@ use Nowo\VerifactuBundle\Model\BillingRecord;
 use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Service\BillingRecordProcessor;
 use Nowo\VerifactuBundle\Service\ChainVerifier;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
@@ -116,8 +117,8 @@ final class HostTransactionListenerFailureTest extends TestCase
         } catch (SubmittedRecordNotCommittedException $exception) {
             $failure = $exception;
         }
-        // PostgreSQL: the head check found the transaction aborted and closed the connection; MySQL / MariaDB: the
-        // transaction is still open and the host rolls it back.
+        // The transaction is still open on every platform here (PostgreSQL: aborted, the head check does not close
+        // it; MySQL / MariaDB: the failed statement did not end it): the host rolls it back.
         if ($connection->isTransactionActive()) {
             $connection->rollBack();
         }
@@ -166,10 +167,62 @@ final class HostTransactionListenerFailureTest extends TestCase
         } catch (ChainTransactionLostException $exception) {
             self::assertTrue($isPostgreSql);
             self::assertInstanceOf(DbalException::class, $exception->getPrevious());
-            self::assertSame(0, $connection->getTransactionNestingLevel(), 'the connection was closed');
+            // PostgreSQL: the aborted transaction stays open, the host rolls it back (UO3-1).
+            self::assertFalse($exception->connectionClosed);
+            self::assertTrue($connection->isTransactionActive());
+            $connection->rollBack();
             self::assertSame($seed['record']->hash, $connection->fetchOne("SELECT hash FROM verifactu_hash_chain WHERE issuer_nif = '89890001K'"));
             self::assertSame(0, (int) $connection->fetchOne("SELECT COUNT(*) FROM host_invoice WHERE number = 'HOST-3'"));
         }
+        $kernel->shutdown();
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function afterSubmissionFailures(): iterable
+    {
+        // A database error in the listener (PostgreSQL aborts the transaction; MySQL / MariaDB keep it).
+        yield 'database error' => ['SELECT * FROM verifactu_table_that_does_not_exist'];
+        // The head moved inside the transaction (MySQL / MariaDB close the connection: transactional()'s rollBack() then
+        // throws NoActiveTransaction with the bundle's exception as its previous one).
+        yield 'head gone' => ["UPDATE verifactu_hash_chain SET hash = '" . str_repeat('F', 64) . "' WHERE issuer_nif = '89890001K'"];
+    }
+
+    /** UO3-1: the host wraps process() in Connection::transactional() and still finds and repairs the record. */
+    #[DataProvider('afterSubmissionFailures')]
+    public function testInsideTransactionalTheHostFindsTheSubmittedRecordAndRepairsTheChain(string $listenerStatement): void
+    {
+        [$kernel, $connection, $processor, $dispatcher, $seed] = $this->bootWithSeed();
+        $listener                                              = static function () use ($connection, $listenerStatement): void {
+            $connection->executeStatement($listenerStatement);
+        };
+        $dispatcher->addListener(VerifactuEvents::AFTER_AEAT_SUBMISSION, $listener);
+
+        $caught = null;
+        try {
+            $connection->transactional(function (Connection $connection) use ($processor): void {
+                $connection->insert('host_invoice', ['number' => 'HOST-TX']);
+                $processor->process($this->record('FAC-TX'), submitToAeat: true);
+            });
+        } catch (Throwable $exception) {
+            $caught = $exception;
+        }
+        $dispatcher->removeListener(VerifactuEvents::AFTER_AEAT_SUBMISSION, $listener);
+
+        self::assertInstanceOf(Throwable::class, $caught);
+        $failure = SubmittedRecordNotCommittedException::find($caught);
+        self::assertInstanceOf(SubmittedRecordNotCommittedException::class, $failure, 'the documented find() reaches it through ' . $caught::class);
+        self::assertFalse($connection->isTransactionActive(), 'transactional() ended the transaction');
+        self::assertSame(0, (int) $connection->fetchOne("SELECT COUNT(*) FROM host_invoice WHERE number = 'HOST-TX'"));
+        self::assertSame($seed['record']->hash, $connection->fetchOne("SELECT hash FROM verifactu_hash_chain WHERE issuer_nif = '89890001K'"));
+
+        self::assertTrue($processor->persistSubmittedRecord($failure->record, $failure->submission));
+        self::assertSame($failure->record->hash, $connection->fetchOne("SELECT hash FROM verifactu_hash_chain WHERE issuer_nif = '89890001K'"));
+        /** @var ChainVerifier $verifier */
+        $verifier = $kernel->getContainer()->get(ChainVerifier::SERVICE_NAME);
+        self::assertTrue($verifier->verify('89890001K')->isValid());
+        self::assertSame(2, $verifier->verify('89890001K')->checkedRecords);
         $kernel->shutdown();
     }
 

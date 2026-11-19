@@ -41,7 +41,7 @@ chain head never committed.
 | `markSubmitted()` after `process(..., submitToAeat: true)` | Caller's transaction, or autocommit | Keyed `UPDATE` by (issuer, hash) | Outside a transaction: contained in `store_errors`. Inside your transaction: a database failure throws `SubmittedRecordNotCommittedException` with the record and the AEAT answer (see [below](#submitted-record-not-committed)) |
 | Batch submitter claim: `claimNext()`, `claimRecord()`, `failRecord()`, `requeueFailed()`, `scheduleWakeUp()` | Inside the issuer's `withChainLock()` (the submitter refuses to run inside a host transaction); with `flow_control_scope: global` a shared lock row is taken first (fixed order, no cycle) | Row lock on the issuer row; the claim `UPDATE` only takes rows still `pending` (or with an expired claim) | Propagates the DBAL `RetryableException`: Messenger retry strategy, or the command exits non-zero; the records stay pending. A deadlock in the issuer lock nested in the global one closes the connection and comes out as the DBAL error itself (never `ChainTransactionLostException`: there is no host transaction); a lock-wait timeout there rolls back to the savepoint |
 | `markTransmitted()`, `releaseClaim()`, `parkClaim()`, `confirmSuspects()`, `resolveUnconfirmed()` | Autocommit, one statement | Compare-and-set on the claim token and status; counters are atomic (`n = n + 1`) | Propagates; an abandoned claim expires after `submission.claim_timeout` and is claimed again |
-| `recordOutcomes()`, `failClaim()` (the AEAT answers of one batch) | One transaction of their own | Compare-and-set on the claim token; events are dispatched only after the commit | Retried in-process up to 3 times on a lock conflict (the answers are in hand, the claim token makes the replay harmless); then propagates, and the batch is sent again after the claim timeout with duplicates resolved (see [Retries and replays](#retries-and-replays)) |
+| `recordOutcomes()`, `failClaim()` (the AEAT answers of one batch) | One transaction of their own | Compare-and-set on the claim token; events are dispatched only after the commit | Retried in-process up to 3 times on a lock conflict (the answers are in hand, the claim token makes the replay harmless); then propagates, and the batch is sent again after the claim timeout with duplicates resolved (see [Retries and replays](#retries-and-replays)). That last `RetryableException` comes **after** the AEAT submission: never expose it as a 409 / `CONFLICT_001` on an HTTP route (a client retry would trigger another submission); run the submitter from Messenger or a command |
 | Flow control (`CacheFlowControl`) | PSR-6 cache, not the database | Read and reserved under the issuer (or global) chain lock | Not a database write |
 | `SubmitPendingBillingRecordsHandler` (Messenger) | Calls the batch submitter | As above | Exceptions propagate to Messenger's retry and failure transport |
 
@@ -115,8 +115,9 @@ before your transaction commits. The bundle therefore reads the chain head again
 
 - **before the AEAT request:** when the read fails (PostgreSQL: the transaction is aborted, for example because a
   listener swallowed a database error) or returns another head (MySQL / MariaDB: the transaction is gone and the read ran
-  in autocommit), the connection is closed and `ChainTransactionLostException` is thrown. Nothing was sent: restart the
-  unit;
+  in autocommit), `ChainTransactionLostException` is thrown. The connection is closed only on MySQL / MariaDB, where
+  the transaction is already gone (`$e->connectionClosed`); on PostgreSQL the aborted transaction stays open for your
+  rollback. Nothing was sent: roll back if `$connection->isTransactionActive()` and restart the unit;
 - **after the AEAT request:** a database failure of the record store or of an `AFTER_AEAT_SUBMISSION` listener, or a
   head that is gone, throws `SubmittedRecordNotCommittedException` (logged as critical). Committing would lose the head
   silently (pdo_pgsql and mysqli commit without an error) while the AEAT holds the record, and the next record would fork
@@ -138,21 +139,36 @@ A listener that chains another record for the **same issuer** in the same transa
 the head, so the head check after it reports the first record's head as gone: chain the second record after
 `process()` returns.
 
-What to do with `SubmittedRecordNotCommittedException $e`:
+What to do with it. Catch `Throwable` and use `SubmittedRecordNotCommittedException::find()`: inside
+`Connection::transactional()` / `wrapInTransaction()` on MySQL / MariaDB the bundle may have closed the connection, so
+Doctrine's own `rollBack()` throws `NoActiveTransaction`, which keeps the bundle's exception only as its previous one. A
+plain `catch (SubmittedRecordNotCommittedException $e)` would miss it there.
 
 ```php
-if ($connection->isTransactionActive()) {
-    $connection->rollBack();                 // the head check may already have closed the connection
+try {
+    $connection->transactional(function () use ($processor, $record): void {
+        // ... your writes ...
+        $processor->process($record, submitToAeat: true);
+    });
+} catch (Throwable $failure) {
+    $e = SubmittedRecordNotCommittedException::find($failure);
+    if ($e === null) {
+        throw $failure;
+    }
+    if ($connection->isTransactionActive()) {
+        $connection->rollBack();             // only with your own beginTransaction(); transactional() already did
+    }
+    // $e->record is the exact record the AEAT received (hash, XML), $e->submission its answer (CSV). Pass them
+    // unchanged: persistSubmittedRecord() is not an import API. It refuses (InvalidArgumentException, nothing written)
+    // a record whose fingerprint, parsed XML (own Huella, invoice id, previous Huella), environment or issuer does not
+    // match, and an answer without a boolean success. It also records the answer when the record is already the head,
+    // so the batch submitter does not send it again.
+    if (!$processor->persistSubmittedRecord($e->record, $e->submission)) {
+        // The head moved to another record meanwhile: the chain is forked at the AEAT. Stop chaining for this issuer and
+        // correct it by hand (nowo:verifactu:verify-chain).
+    }
+    // Then store your own invoice data again; never call process() again for the same invoice.
 }
-// $e->record is the exact record the AEAT received (hash, XML), $e->submission its answer (CSV). Pass them unchanged:
-// persistSubmittedRecord() is not an import API and refuses a record whose fingerprint, XML, environment or issuer
-// does not match (InvalidArgumentException, nothing written). It also records the AEAT answer when the record is already
-// the head, so the batch submitter does not send it again.
-if (!$processor->persistSubmittedRecord($e->record, $e->submission)) {
-    // The head moved to another record meanwhile: the chain is forked at the AEAT. Stop chaining for this issuer and
-    // correct it by hand (nowo:verifactu:verify-chain).
-}
-// Then store your own invoice data again; never call process() again for the same invoice.
 ```
 
 Outside any transaction the head committed before the AEAT request, so failures after it stay contained:
@@ -179,7 +195,7 @@ FrankenPHP worker mode with the kernel reset off is supported (see
 DQL and connection, so it keeps working when the host's manager was closed by a failed flush of the host, and it never
 resets or replaces it. With the kernel reset off, **a closed host EntityManager is not replaced** for the host's own code
 unless something does it between requests: transaction-doctrine's worker hygiene (`WorkerConnectionHygiene`) or
-`services_resetter`. After `ChainTransactionLostException` the connection is closed and reconnects on the next statement,
+`services_resetter`. After `ChainTransactionLostException` on MySQL / MariaDB the connection is closed and reconnects on the next statement,
 with DBAL's nesting level back to 0.
 
 ## Residual risks
@@ -193,10 +209,11 @@ with DBAL's nesting level back to 0.
 2. **Outside a transaction, failures after the head committed are contained**, not rethrown (`event_errors`,
    `store_errors`): a deviation from rule 8 by design, because the head and the record are already committed and a retry
    would add a second fiscal record. The host reads both keys.
-3. **`Connection::transactional()` / `wrapInTransaction()`** around `process()`: after `ChainTransactionLostException`
-   (connection closed) their `rollBack()` throws a NoActiveTransaction / ConnectionException that hides it. Use
-   `beginTransaction()` / `commit()` / `rollBack()` yourself (skip the rollback on that exception) or
-   transaction-doctrine's runner. `ChainTransactionLostException` does not implement DBAL's `RetryableException`
+3. **`Connection::transactional()` / `wrapInTransaction()`** around `process()`: on MySQL / MariaDB, after the bundle
+   closed the connection (`ChainTransactionLostException`, or `SubmittedRecordNotCommittedException` with a head loss),
+   their `rollBack()` throws `NoActiveTransaction`, which keeps the bundle's exception only as its previous one. Catch
+   `Throwable` and look along `getPrevious()` (`SubmittedRecordNotCommittedException::find()`). On PostgreSQL the
+   connection is never closed for this, so their rollback works. `ChainTransactionLostException` does not implement DBAL's `RetryableException`
    marker, because doctrine/dbal is not a hard dependency of the bundle; transaction-doctrine finds the DBAL error
    through `getPrevious()`.
 4. **SQLite** has no row locks: its database lock serialises writers, so it is a single-writer store for development and

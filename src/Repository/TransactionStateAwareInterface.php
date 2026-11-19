@@ -26,7 +26,8 @@ interface TransactionStateAwareInterface
 
     /**
      * Inside a transaction, reads the issuer's chain head again and checks it is $hash; throws
-     * ChainTransactionLostException (after closing the connection) when the read fails or returns another head.
+     * ChainTransactionLostException when the read fails or returns another head (closing the connection first only
+     * where the database already ended the transaction: MySQL / MariaDB).
      *
      * @throws ChainTransactionLostException
      */

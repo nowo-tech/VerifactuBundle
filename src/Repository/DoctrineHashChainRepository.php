@@ -153,8 +153,9 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
     /**
      * Reads the issuer's head again on the chain's connection, inside the host's transaction, and checks that it is
      * $hash. When the read fails (PostgreSQL: the transaction is aborted) or returns another head (MySQL / MariaDB: the
-     * transaction is gone and the read ran in autocommit), the connection is closed and ChainTransactionLostException is
-     * thrown: the head would never commit.
+     * transaction is gone and the read ran in autocommit), ChainTransactionLostException is thrown: the head would
+     * never commit. The connection is closed only on MySQL / MariaDB, where the transaction is already gone; on
+     * PostgreSQL the aborted transaction stays open so the host's ROLLBACK (Connection::transactional() included) works.
      *
      * @throws ChainTransactionLostException
      */
@@ -164,15 +165,25 @@ final class DoctrineHashChainRepository extends ServiceEntityRepository implemen
         try {
             $head = $this->getLastState($issuerNif)?->hash;
         } catch (Throwable $exception) {
-            $connection->close();
-
-            throw new ChainTransactionLostException($exception);
+            throw $this->headLost($connection, $exception);
         }
         if ($head !== strtoupper(trim($hash))) {
-            $connection->close();
-
-            throw new ChainTransactionLostException();
+            throw $this->headLost($connection, null);
         }
+    }
+
+    /**
+     * The lost-head exception; closes the connection first on MySQL / MariaDB (the transaction is gone there and every
+     * later statement would autocommit).
+     */
+    private function headLost(Connection $connection, ?Throwable $cause): ChainTransactionLostException
+    {
+        $close = $connection->getDatabasePlatform() instanceof AbstractMySQLPlatform;
+        if ($close) {
+            $connection->close();
+        }
+
+        return new ChainTransactionLostException($cause, $close);
     }
 
     /**
