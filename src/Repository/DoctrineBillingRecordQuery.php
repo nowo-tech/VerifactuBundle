@@ -105,7 +105,8 @@ final class DoctrineBillingRecordQuery implements BillingRecordQueryInterface
 
     public function findByInvoice(string $issuerNif, string $invoiceSeriesNumber): ?BillingRecordView
     {
-        $key = BillingRecordCriteria::normalizeIssuer($issuerNif);
+        $invoiceSeriesNumber = trim($invoiceSeriesNumber);
+        $key                 = BillingRecordCriteria::normalizeIssuer($issuerNif);
         if ($key === '') {
             return null;
         }

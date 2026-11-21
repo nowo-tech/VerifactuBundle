@@ -35,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Invoice-number lookups (`findByInvoice()`, `findLatestByInvoices()`, `BillingRecordCriteria::$invoiceSeriesNumber`) trim
+  their input like the hash and the store do, and the store-backed views trim the stored number, so the in-memory and
+  the Doctrine query agree (audit YA-1).
+
+### Documentation
+
+- CONFIGURATION: `doctrine.register_mapping` is read at prepend time (no `%env(bool:…)%`); `record_store.query` is
+  ignored without a record store.
+- USAGE: offset pages are not a snapshot; the query example gets its missing `use` line.
+
 ## [1.10.0] - 2026-11-21
 
 ### Added

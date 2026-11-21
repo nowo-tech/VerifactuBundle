@@ -68,7 +68,7 @@ final class BillingRecordView
             strtoupper(trim($record->issuerNif)),
             $stored->position,
             $record->recordType,
-            $record->invoiceSeriesNumber,
+            trim($record->invoiceSeriesNumber),
             $record->issueDate,
             $record->invoiceType,
             $record->totalTaxAmount,

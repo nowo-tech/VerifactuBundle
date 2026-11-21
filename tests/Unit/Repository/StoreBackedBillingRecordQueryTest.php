@@ -62,4 +62,16 @@ final class StoreBackedBillingRecordQueryTest extends TestCase
         self::assertNull($query->findByPosition('89890001K', 1));
         self::assertNull($query->findByInvoice('89890001K', 'FAC-001'));
     }
+
+    public function testAPaddedStoredInvoiceNumberIsFoundByTheTrimmedOneAndViewedTrimmed(): void
+    {
+        $record = new BillingRecord(RecordType::Alta, '89890001K', ' FAC-009 ', '15-01-2026', 'F1', '2.10', '12.10', '2026-01-15T10:00:00+01:00', previousHash: '', hash: 'AB');
+        $store  = $this->createStub(BillingRecordStoreInterface::class);
+        $store->method('findByIssuer')->willReturn([new StoredBillingRecord(1, $record)]);
+
+        $query = new StoreBackedBillingRecordQuery($store);
+        self::assertSame('FAC-009', $query->findByInvoice('89890001K', 'FAC-009 ')?->invoiceSeriesNumber);
+        self::assertCount(1, $query->findLatestByInvoices('89890001K', [' FAC-009']));
+        self::assertSame(1, $query->count(new BillingRecordCriteria('89890001K', invoiceSeriesNumber: ' FAC-009 ')));
+    }
 }

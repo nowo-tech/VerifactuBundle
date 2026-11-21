@@ -7,6 +7,7 @@ namespace Nowo\VerifactuBundle\Repository;
 use InvalidArgumentException;
 
 use function sprintf;
+use function trim;
 
 /**
  * Shared argument checks of the BillingRecordQueryInterface implementations.
@@ -32,7 +33,7 @@ final class BillingRecordQueryPaging
     }
 
     /**
-     * Distinct invoice numbers, in the given order (exact strings, nothing trimmed).
+     * Distinct invoice numbers, in the given order (trimmed like the hash and the store do, otherwise exact strings).
      *
      * @param list<string> $invoiceSeriesNumbers
      *
@@ -43,6 +44,7 @@ final class BillingRecordQueryPaging
         $seen     = [];
         $distinct = [];
         foreach ($invoiceSeriesNumbers as $number) {
+            $number = trim($number);
             if (!isset($seen[$number])) {
                 $seen[$number] = true;
                 $distinct[]    = $number;

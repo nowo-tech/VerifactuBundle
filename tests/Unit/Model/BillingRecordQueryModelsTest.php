@@ -47,7 +47,7 @@ final class BillingRecordQueryModelsTest extends TestCase
         self::assertSame([StoredBillingRecord::STATUS_PENDING, StoredBillingRecord::STATUS_HELD], $filtered->statuses);
         self::assertSame([RecordType::Alta, RecordType::Anulacion], $filtered->recordTypes);
         self::assertSame(['F1', 'R2'], $filtered->invoiceTypes);
-        self::assertSame(' FAC-1', $filtered->invoiceSeriesNumber);
+        self::assertSame('FAC-1', $filtered->invoiceSeriesNumber);
         self::assertSame(['20260131', '20260201'], [$filtered->issuedFrom, $filtered->issuedTo]);
     }
 
@@ -94,8 +94,8 @@ final class BillingRecordQueryModelsTest extends TestCase
         self::assertSame(['', ''], [$unhashed->previousHash, $unhashed->hash]);
     }
 
-    public function testDistinctInvoicesKeepTheFirstOccurrenceAndExactStrings(): void
+    public function testDistinctInvoicesKeepTheFirstOccurrenceTrimmed(): void
     {
-        self::assertSame(['B', 'A', '10', 'a', 'A '], BillingRecordQueryPaging::distinctInvoices(['B', 'A', '10', 'B', 'a', 'A ', '10']));
+        self::assertSame(['B', 'A', '10', 'a'], BillingRecordQueryPaging::distinctInvoices(['B', 'A', '10', 'B', 'a', 'A ', '10', ' B']));
     }
 }
