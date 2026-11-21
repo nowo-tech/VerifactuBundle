@@ -3,6 +3,8 @@
 ## Table of contents
 
 - [Unreleased](#unreleased)
+- [To 1.10.1](#to-1101)
+- [To 1.10.0](#to-1100)
 - [To 1.9.0](#to-190)
 - [To 1.8.0](#to-180)
 - [To 1.7.0](#to-170)
@@ -36,6 +38,54 @@
 - [From 1.0.7 to 1.0.8](#from-107-to-108)
 
 ## Unreleased
+
+## To 1.10.1
+
+From **1.10.0**:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+## To 1.10.0
+
+From **1.9.0**:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+From **1.9.0** — minor, no configuration change required:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
+
+- **New index on the record store** (`record_store.storage: doctrine` only): `idx_verifactu_billing_record_invoice`
+  on `verifactu_billing_record (issuer_nif, invoice_series_number)`, used by the new invoice lookups. Generate a
+  migration (`php bin/console doctrine:migrations:diff`) or run it yourself (prefix the names with your
+  `doctrine.table_prefix`):
+
+  ```sql
+  CREATE INDEX idx_verifactu_billing_record_invoice ON verifactu_billing_record (issuer_nif, invoice_series_number);
+  ```
+
+  Without it everything works, the lookups just scan the issuer's rows.
+- **Read the record log through `Repository\BillingRecordQueryInterface`** (service `nowo_verifactu.billing_record_query`,
+  available whenever a record store is) instead of querying `verifactu_billing_record` or `BillingRecordEntry` yourself:
+
+  ```php
+  $page  = $query->page(new BillingRecordCriteria($issuerNif), offset: 0, limit: 50); // newest first
+  $total = $query->count(new BillingRecordCriteria($issuerNif));
+  $hash  = $query->findByInvoice($issuerNif, 'FAC-2026-001')?->hash;
+  ```
+
+  With your own `record_store.service`, the default query walks your store's `findByIssuer()` on every call; for a
+  large log implement the interface in your persistence and set `record_store.query`.
+- **Mapping the bundle entities yourself** (optional): set `nowo_verifactu.doctrine.register_mapping: false` and map
+  `Nowo\VerifactuBundle\Entity` from `vendor/nowo-tech/verifactu-bundle/src/Resources/config/doctrine` on the manager
+  of your choice ([CONFIGURATION](CONFIGURATION.md#doctrine-mapping-standard-and-ddd-hosts)). The default (`true`)
+  registers the mapping on the default manager, as before.
 
 ## To 1.9.0
 

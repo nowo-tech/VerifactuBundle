@@ -47,6 +47,10 @@ chain head never committed.
 
 `grep -rn "flush()" src/` has no hit: there is no ORM write path.
 
+The record read port (`BillingRecordQueryInterface`, 1.10) is not a write path: plain reads on the store's connection,
+no lock, no transaction of its own, so it never waits on the chain lock nor makes a writer wait. Invoice numbers are
+matched byte for byte in PHP on top of the SQL filter, so a case- or pad-insensitive collation never mixes two invoices.
+
 Business keys (rule 5): the issuer NIF is case-insensitive by definition, so every key is normalised (trimmed and
 upper-cased) before every statement; the column collation never decides a match. Hashes are stored and compared as
 upper-case hexadecimal.

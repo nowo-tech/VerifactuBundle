@@ -25,12 +25,15 @@ use Nowo\VerifactuBundle\Provider\ConfigIssuerProvider;
 use Nowo\VerifactuBundle\Provider\ConfigSoftwareIdentityProvider;
 use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
+use Nowo\VerifactuBundle\Repository\BillingRecordQueryInterface;
 use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
+use Nowo\VerifactuBundle\Repository\DoctrineBillingRecordQuery;
 use Nowo\VerifactuBundle\Repository\DoctrineBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
+use Nowo\VerifactuBundle\Repository\StoreBackedBillingRecordQuery;
 use Nowo\VerifactuBundle\Repository\SubmissionQueueInterface;
 use Nowo\VerifactuBundle\Service\BillingRecordBatchSubmitter;
 use Nowo\VerifactuBundle\Service\ChainVerifier;
@@ -576,6 +579,82 @@ final class NowoVerifactuExtensionTest extends TestCase
         self::assertSame('xml', $loaded->getParameter('nowo_verifactu.doctrine.mapping'));
     }
 
+    public function testWithoutRecordStoreThereIsNoRecordQuery(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[]], $container);
+
+        self::assertFalse($container->hasAlias(BillingRecordQueryInterface::class));
+        self::assertFalse($container->hasAlias('nowo_verifactu.billing_record_query'));
+        self::assertFalse($this->isRegistered($container, DoctrineBillingRecordQuery::class));
+        self::assertFalse($this->isRegistered($container, StoreBackedBillingRecordQuery::class));
+    }
+
+    public function testTheDoctrineRecordStoreGetsTheDoctrineRecordQuery(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'doctrine']]], $container);
+
+        self::assertSame(DoctrineBillingRecordQuery::class, (string) $container->getAlias(BillingRecordQueryInterface::class));
+        self::assertSame(DoctrineBillingRecordQuery::class, (string) $container->getAlias(DoctrineBillingRecordQuery::SERVICE_NAME));
+        self::assertTrue($container->getAlias('nowo_verifactu.billing_record_query')->isPublic());
+        self::assertSame('doctrine', (string) $container->getDefinition(DoctrineBillingRecordQuery::class)->getArgument('$managerRegistry'));
+    }
+
+    public function testOtherRecordStoresGetAQueryThatWalksTheStore(): void
+    {
+        $memory = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'memory']]], $memory);
+        self::assertSame(StoreBackedBillingRecordQuery::class, (string) $memory->getAlias(BillingRecordQueryInterface::class));
+        self::assertSame(InMemoryBillingRecordStore::class, (string) $memory->getDefinition(StoreBackedBillingRecordQuery::class)->getArgument(0));
+
+        $custom = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['record_store' => ['service' => 'app.record_store']]], $custom);
+        self::assertSame(StoreBackedBillingRecordQuery::class, (string) $custom->getAlias('nowo_verifactu.billing_record_query'));
+        self::assertSame('app.record_store', (string) $custom->getDefinition(StoreBackedBillingRecordQuery::class)->getArgument(0));
+    }
+
+    public function testACustomRecordQueryWins(): void
+    {
+        $container = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['record_store' => ['storage' => 'doctrine', 'query' => 'app.record_query']]], $container);
+
+        self::assertSame('app.record_query', (string) $container->getAlias(BillingRecordQueryInterface::class));
+        self::assertSame('app.record_query', (string) $container->getAlias('nowo_verifactu.billing_record_query'));
+        self::assertFalse($this->isRegistered($container, DoctrineBillingRecordQuery::class));
+        self::assertFalse($this->isRegistered($container, StoreBackedBillingRecordQuery::class));
+    }
+
+    public function testRegisterMappingFalseLeavesTheMappingToTheHost(): void
+    {
+        $container = $this->containerWithDoctrineExtension();
+        $container->prependExtensionConfig('nowo_verifactu', ['doctrine' => ['register_mapping' => false]]);
+
+        (new NowoVerifactuExtension())->prepend($container);
+
+        self::assertSame([], $container->getExtensionConfig('doctrine'));
+
+        $loaded = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([['doctrine' => ['register_mapping' => false]]], $loaded);
+        self::assertFalse($loaded->getParameter('nowo_verifactu.doctrine.register_mapping'));
+    }
+
+    public function testRegisterMappingDefaultsToTrueAndTheLastValueWins(): void
+    {
+        $default = new ContainerBuilder();
+        (new NowoVerifactuExtension())->load([[]], $default);
+        self::assertTrue($default->getParameter('nowo_verifactu.doctrine.register_mapping'));
+
+        $container = $this->containerWithDoctrineExtension();
+        // prependExtensionConfig() puts each config first: the "false" one is read first, the "true" one last
+        $container->prependExtensionConfig('nowo_verifactu', ['doctrine' => ['register_mapping' => true]]);
+        $container->prependExtensionConfig('nowo_verifactu', ['doctrine' => ['register_mapping' => 'false']]);
+
+        (new NowoVerifactuExtension())->prepend($container);
+
+        self::assertNotSame([], $container->getExtensionConfig('doctrine'));
+    }
+
     public function testCompletenessAndRuntimeProviderOptions(): void
     {
         $defaults = new ContainerBuilder();
@@ -609,5 +688,31 @@ final class NowoVerifactuExtensionTest extends TestCase
         (new NowoVerifactuExtension())->load([[
             'providers' => ['aeat_environment' => 'app.environment', 'certificate' => 'app.certificates'],
         ]], new ContainerBuilder());
+    }
+
+    private function containerWithDoctrineExtension(): ContainerBuilder
+    {
+        $container = new ContainerBuilder();
+        $container->registerExtension(new class extends Extension {
+            public function load(array $configs, ContainerBuilder $container): void
+            {
+            }
+
+            public function getAlias(): string
+            {
+                return 'doctrine';
+            }
+        });
+        $container->registerExtension(new NowoVerifactuExtension());
+
+        return $container;
+    }
+
+    /**
+     * A service the container will build (the resource scan also registers excluded classes, tagged container.excluded).
+     */
+    private function isRegistered(ContainerBuilder $container, string $id): bool
+    {
+        return $container->hasDefinition($id) && !$container->getDefinition($id)->hasTag('container.excluded');
     }
 }

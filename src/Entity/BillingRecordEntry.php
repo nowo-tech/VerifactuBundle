@@ -23,6 +23,7 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Table(name: 'verifactu_billing_record')]
 #[ORM\UniqueConstraint(name: 'uniq_verifactu_billing_record_hash', columns: ['issuer_nif', 'hash'])]
 #[ORM\Index(name: 'idx_verifactu_billing_record_submission', columns: ['issuer_nif', 'submission_status', 'position'])]
+#[ORM\Index(name: 'idx_verifactu_billing_record_invoice', columns: ['issuer_nif', 'invoice_series_number'])]
 class BillingRecordEntry
 {
     #[ORM\Id]
