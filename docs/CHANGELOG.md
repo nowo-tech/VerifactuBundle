@@ -34,6 +34,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Record read port (`Repository\BillingRecordQueryInterface`).** Lists, counts and looks up the record log without
+  touching the bundle's tables or entities: `page(BillingRecordCriteria, offset, limit)` (filters: submission status,
+  record type, invoice type, exact invoice number, issue-date range; orders: position or issue date, either way;
+  newest first by default; at most `MAX_LIMIT` = 500 per page), `count(BillingRecordCriteria)`,
+  `findByPosition(issuerNif, position)`, `findByInvoice(issuerNif, invoiceSeriesNumber)` (the invoice's latest record,
+  with its hash) and `findLatestByInvoices(issuerNif, list)` (one call for a whole list, e.g. an export). Results are
+  read-only `Model\BillingRecordView` objects (hashed fields, hash, previous hash, submission state, write and answer
+  time; no XML, no entity). The issuer is a mandatory scope: an empty or malformed NIF returns nothing. Invoice numbers
+  match byte for byte on every database, whatever its collation. Registered with every record store
+  (`nowo_verifactu.billing_record_query`): `Repository\DoctrineBillingRecordQuery` on the bundle's Doctrine store
+  (array-hydrated DQL on the manager that maps the entities; never writes, locks or flushes), and
+  `Repository\StoreBackedBillingRecordQuery`, which walks any other store (in-memory, or your
+  `record_store.service`). Replace it with `record_store.query`.
+- **`doctrine.register_mapping`** (default `true`). With `false` the bundle registers no Doctrine mapping, so you map
+  `Nowo\VerifactuBundle\Entity` yourself, e.g. the shipped `Resources/config/doctrine/*.orm.xml` on another entity
+  manager. The chain head, the record store and the record query follow whichever manager maps the entities.
+- Index `idx_verifactu_billing_record_invoice` on `verifactu_billing_record (issuer_nif, invoice_series_number)`, for the
+  invoice lookups (see UPGRADING).
+
+### Documentation
+
+- USAGE — Events: which events fire after the bundle's commit, and that `AFTER_BILLING_RECORD_GENERATED` and
+  `AFTER_AEAT_SUBMISSION` fire inside your transaction when you wrap `process()` / `processBatch()` in one, so the record
+  can still roll back: defer side effects until your commit.
+
 ## [1.9.0] - 2026-11-19
 
 ### Added

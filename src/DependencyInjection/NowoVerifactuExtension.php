@@ -19,12 +19,15 @@ use Nowo\VerifactuBundle\Messenger\SubmitPendingBillingRecordsHandler;
 use Nowo\VerifactuBundle\Provider\AeatEnvironmentProviderInterface;
 use Nowo\VerifactuBundle\Provider\IssuerProviderInterface;
 use Nowo\VerifactuBundle\Provider\SoftwareIdentityProviderInterface;
+use Nowo\VerifactuBundle\Repository\BillingRecordQueryInterface;
 use Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface;
+use Nowo\VerifactuBundle\Repository\DoctrineBillingRecordQuery;
 use Nowo\VerifactuBundle\Repository\DoctrineBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\DoctrineHashChainRepository;
 use Nowo\VerifactuBundle\Repository\HashChainRepositoryInterface;
 use Nowo\VerifactuBundle\Repository\InMemoryBillingRecordStore;
 use Nowo\VerifactuBundle\Repository\InMemoryHashChainRepository;
+use Nowo\VerifactuBundle\Repository\StoreBackedBillingRecordQuery;
 use Nowo\VerifactuBundle\Repository\SubmissionQueueInterface;
 use Nowo\VerifactuBundle\Service\BillingRecordBatchSubmitter;
 use Nowo\VerifactuBundle\Service\ChainVerifier;
@@ -46,6 +49,9 @@ use Symfony\Component\Messenger\MessageBusInterface;
 
 use function interface_exists;
 use function is_string;
+
+use const FILTER_NULL_ON_FAILURE;
+use const FILTER_VALIDATE_BOOL;
 
 /**
  * Loads Veri*Factu bundle services and publishes configuration parameters.
@@ -94,6 +100,7 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
         $container->setParameter('nowo_verifactu.aeat.sign_xades', $config['aeat']['sign_xades']);
         $container->setParameter('nowo_verifactu.doctrine.table_prefix', $config['doctrine']['table_prefix']);
         $container->setParameter('nowo_verifactu.doctrine.mapping', $config['doctrine']['mapping']);
+        $container->setParameter('nowo_verifactu.doctrine.register_mapping', $config['doctrine']['register_mapping']);
         $container->setParameter('nowo_verifactu.validation.strict', $config['validation']['strict']);
         // A host issuer provider is the authority on the issuer NIF: records for another NIF are refused (opt-out:
         // providers.issuer_enforced false, for multi-NIF hosts whose provider returns a single issuer).
@@ -112,11 +119,13 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
 
     /**
      * Registers the Doctrine mapping of the bundle entities when DoctrineBundle is enabled: attributes by default, or
-     * the XML files of Resources/config/doctrine with `nowo_verifactu.doctrine.mapping: xml`.
+     * the XML files of Resources/config/doctrine with `nowo_verifactu.doctrine.mapping: xml`. With
+     * `nowo_verifactu.doctrine.register_mapping: false` nothing is registered: the host maps the entities itself (on
+     * the entity manager of its choice); the stores and the query follow whichever manager maps them.
      */
     public function prepend(ContainerBuilder $container): void
     {
-        if (!$container->hasExtension('doctrine')) {
+        if (!$container->hasExtension('doctrine') || !$this->registersMapping($container)) {
             return;
         }
 
@@ -210,6 +219,22 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
     }
 
     /**
+     * The last `doctrine.register_mapping` value of the raw `nowo_verifactu` configs (true unless one says false).
+     */
+    private function registersMapping(ContainerBuilder $container): bool
+    {
+        $register = true;
+        foreach ($container->getExtensionConfig(Configuration::ALIAS) as $config) {
+            $value = $config['doctrine']['register_mapping'] ?? null;
+            if ($value !== null) {
+                $register = filter_var($value, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true;
+            }
+        }
+
+        return $register;
+    }
+
+    /**
      * Points the provider interfaces at the host's services when configured (the defaults read the static config).
      *
      * @param array<string, mixed> $config
@@ -269,8 +294,33 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
 
         $container->setAlias(BillingRecordStoreInterface::class, $service);
         $container->setAlias('nowo_verifactu.billing_record_store', $service)->setPublic(true);
+        $this->configureRecordQuery($container, $config, $service);
 
         return $service;
+    }
+
+    /**
+     * Wires the record read port (1.10) next to the record store: the host's record_store.query, the Doctrine query
+     * for the bundle's Doctrine store, or a query that walks any other store.
+     *
+     * @param array<string, mixed> $config
+     */
+    private function configureRecordQuery(ContainerBuilder $container, array $config, string $store): void
+    {
+        $query = $config['record_store']['query'];
+
+        if ($query === null && $store === DoctrineBillingRecordStore::class) {
+            $container->setDefinition(DoctrineBillingRecordQuery::class, (new Definition(DoctrineBillingRecordQuery::class))
+                ->setArgument('$managerRegistry', new Reference('doctrine')));
+            $container->setAlias(DoctrineBillingRecordQuery::SERVICE_NAME, DoctrineBillingRecordQuery::class)->setPublic(true);
+            $query = DoctrineBillingRecordQuery::class;
+        } elseif ($query === null) {
+            $container->setDefinition(StoreBackedBillingRecordQuery::class, new Definition(StoreBackedBillingRecordQuery::class, [new Reference($store)]));
+            $query = StoreBackedBillingRecordQuery::class;
+        }
+
+        $container->setAlias(BillingRecordQueryInterface::class, $query);
+        $container->setAlias('nowo_verifactu.billing_record_query', $query)->setPublic(true);
     }
 
     /**

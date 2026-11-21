@@ -781,7 +781,7 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *             options?: array<string, mixed>,
  *             mapping_types?: array<string, scalar|Param|null>,
  *             default_table_options?: array<string, scalar|Param|null>,
- *             schema_manager_factory?: scalar|Param|null, // Default: "doctrine.dbal.default_schema_manager_factory"
+ *             schema_manager_factory?: scalar|Param|null, // Default: "doctrine.dbal.legacy_schema_manager_factory"
  *             result_cache?: scalar|Param|null,
  *             slaves?: array<string, array{ // Default: []
  *                 url?: scalar|Param|null, // A URL with connection information; any parameter value parsed from this string will override explicitly set parameters
@@ -999,6 +999,7 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *     record_store?: array{ // Optional log of every chained record (hash, XML, submission state) and the nowo:verifactu:verify-chain command
  *         storage?: "none"|"memory"|"doctrine"|Param, // Default: "none"
  *         service?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Repository\BillingRecordStoreInterface (overrides storage) // Default: null
+ *         query?: scalar|Param|null, // Service id implementing Nowo\VerifactuBundle\Repository\BillingRecordQueryInterface (1.10; null = the Doctrine query for storage doctrine, otherwise a query that walks the store) // Default: null
  *     },
  *     submission?: array{ // Batch submission of the stored records (BillingRecordBatchSubmitter, nowo:verifactu:submit-pending, SubmitPendingBillingRecords message); needs a record store
  *         batch_size?: int|Param, // Records per AEAT request; the AEAT limit is 1000 (Servicios web v1.0.3 p. 10) // Default: 1000
@@ -1016,6 +1017,7 @@ use Symfony\Component\Config\Loader\ParamConfigurator as Param;
  *     },
  *     doctrine?: array{ // Doctrine storage options (REQ-ORM-002)
  *         mapping?: "attribute"|"xml"|Param, // Mapping of the bundle entities: attribute (default) or xml (Resources/config/doctrine/*.orm.xml, for hosts that only load XML mappings) // Default: "attribute"
+ *         register_mapping?: bool|Param, // Register the bundle entity mapping on the default entity manager (1.10). false = the host maps Nowo\VerifactuBundle\Entity itself (e.g. the shipped Resources/config/doctrine/*.orm.xml on another entity manager) // Default: true
  *         table_prefix?: scalar|Param|null, // Prefix prepended to every bundle table, index and unique constraint name (e.g. "app_" yields app_verifactu_hash_chain). Empty = historical verifactu_hash_chain name. // Default: ""
  *     },
  *     aeat?: array{

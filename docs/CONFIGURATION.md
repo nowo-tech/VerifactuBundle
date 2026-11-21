@@ -35,9 +35,11 @@ nowo_verifactu:
     record_store:
         storage: none            # none | memory | doctrine
         service: null            # custom BillingRecordStoreInterface service id (optional, wins over storage)
+        query: null              # custom BillingRecordQueryInterface service id (optional; 1.10)
     doctrine:
         table_prefix: ''         # prepended to the bundle table names (REQ-ORM-002)
         mapping: attribute       # attribute | xml (bundle entities from Resources/config/doctrine/*.orm.xml)
+        register_mapping: true   # false = you map Nowo\VerifactuBundle\Entity yourself (1.10)
     aeat:
         environment: sandbox     # sandbox | production
         submission_client: null  # custom client service id (optional)
@@ -94,12 +96,48 @@ plugs your own `Repository\BillingRecordStoreInterface`. With a store, `Service\
 `nowo:verifactu:verify-chain` are available ([COMMANDS](COMMANDS.md#verify-a-stored-chain)); without one they are not
 registered.
 
+With a store, the read port `Repository\BillingRecordQueryInterface` (`nowo_verifactu.billing_record_query`, 1.10) lists,
+counts and looks up records ([USAGE](USAGE.md#list-count-and-look-up-records)). On `storage: doctrine` it is
+`DoctrineBillingRecordQuery` (SQL on the bundle's table); on any other store it walks `findByIssuer()` and filters in
+PHP. `record_store.query` plugs your own implementation (for example over your own persistence).
+
 ### Doctrine mapping (standard and DDD hosts)
 
 The bundle entities (`BillingRecordHashChain`, `BillingRecordEntry`) are bundle-owned and referenced by IDs (issuer NIF,
 position, hash), never by a relation to your entities. `doctrine.mapping: attribute` (default) maps them with PHP
 attributes; `doctrine.mapping: xml` maps them from `src/Resources/config/doctrine/*.orm.xml`, for hosts whose ORM
 configuration only loads XML mappings.
+
+Both register the mapping on the **default** entity manager. To keep the bundle tables off your domain manager, set
+`doctrine.register_mapping: false` (1.10) and map the shipped XML yourself on the manager of your choice:
+
+```yaml
+nowo_verifactu:
+    doctrine:
+        register_mapping: false
+doctrine:
+    orm:
+        entity_managers:
+            default:
+                connection: default
+                mappings: { App: { type: xml, dir: '%kernel.project_dir%/config/doctrine', prefix: 'App\Domain', is_bundle: false } }
+            verifactu:
+                connection: default          # or another connection (see below)
+                mappings:
+                    NowoVerifactu:
+                        type: xml
+                        is_bundle: false
+                        dir: '%kernel.project_dir%/vendor/nowo-tech/verifactu-bundle/src/Resources/config/doctrine'
+                        prefix: 'Nowo\VerifactuBundle\Entity'
+```
+
+The chain head repository, the record store and the record query resolve the manager that maps the entities
+(`ManagerRegistry::getManagerForClass()`) and write with DBAL on its connection, never through a flush. Keep that
+manager on **the connection of your invoices** if you need the record and the invoice in one transaction (the default
+and recommended setup): with a separate connection, your transaction and the bundle's writes commit independently, and
+a rollback of your invoice no longer undoes its record. `doctrine.table_prefix` still applies (the prefix listener runs
+on every connection). Keep the default (`true`) unless you map the entities yourself: with `false` and no mapping of
+your own, the Doctrine storages fail at their first call (no entity manager maps the bundle entities).
 
 ### Runtime issuer and software identity
 

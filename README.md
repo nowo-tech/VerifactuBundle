@@ -20,6 +20,7 @@ This bundle is **FrankenPHP worker mode friendly**, including when the kernel is
 - ✅ **Console commands**: Validate records and verify hashes from CLI
 - ✅ **Twig helpers**: `verifactu_qr_data_uri`, `verifactu_qr_url`, `verifactu_legend`
 - ✅ **Pluggable storage**: `HashChainRepositoryInterface` with in-memory and Doctrine backends
+- ✅ **Record log and read port**: optional record store plus `BillingRecordQueryInterface` (paged, filtered lists, counts, lookup by invoice) returning read-only views; bundle entities mapped by attributes, the shipped XML, or by your own mapping on any entity manager (`doctrine.register_mapping: false`)
 - ✅ **AEAT SOAP client**: mTLS submission to sandbox/production with client certificate
 - ✅ **Batch submission**: up to 1000 stored records per AEAT request in chain order, per-record answers, AEAT wait time (TiempoEsperaEnvio), idempotent retries, after-commit events, Messenger message and `nowo:verifactu:submit-pending`
 - ⚠️ **Record signing**: No-Veri*Factu modalidad with PKCS#12/PEM certificates — currently a plain enveloped XML-DSig signature, **not full XAdES** (see [CONFIGURATION.md](docs/CONFIGURATION.md#xades-signing-no-verifactu))

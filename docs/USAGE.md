@@ -8,6 +8,7 @@
 - [Dates in Europe/Madrid](#dates-in-europemadrid)
 - [Issuer and software identity at runtime](#issuer-and-software-identity-at-runtime)
 - [Record store and chain verification](#record-store-and-chain-verification)
+- [List, count and look up records](#list-count-and-look-up-records)
 - [Batch submission to the AEAT](#batch-submission-to-the-aeat)
 - [Complete records: recipients, rectifications, tax qualification](#complete-records-recipients-rectifications-tax-qualification)
 - [Hash only](#hash-only)
@@ -158,6 +159,54 @@ exact starting hash. The Doctrine store reads the log in pages, so long chains v
 `process(..., submitToAeat: true)` marks the record `accepted` (with the AEAT CSV) or `failed`. If that update fails,
 the submission result is still returned and the exception is in `$result['store_errors']`. Your invoice references the
 record by issuer NIF and hash (or position); there is no Doctrine relation to your entities.
+
+## List, count and look up records
+
+With a record store, `Repository\BillingRecordQueryInterface` (service `nowo_verifactu.billing_record_query`, 1.10) is
+the read port for record lists, counters and invoice lookups. Use it instead of querying the bundle's table or entities:
+
+```php
+use Nowo\VerifactuBundle\Model\BillingRecordCriteria;
+use Nowo\VerifactuBundle\Model\BillingRecordSort;
+use Nowo\VerifactuBundle\Model\StoredBillingRecord;
+
+$criteria = new BillingRecordCriteria(
+    issuerNif: '89890001K',                                  // mandatory scope
+    statuses: [StoredBillingRecord::STATUS_PENDING],         // optional filters (AND); [] = any
+    recordTypes: [RecordType::Alta],
+    invoiceTypes: ['F1', 'R1'],
+    invoiceSeriesNumber: null,                               // exact NumSerieFactura
+    issuedFrom: new DateTimeImmutable('2026-01-01'),         // FechaExpedicionFactura, by calendar day, inclusive
+    issuedTo: new DateTimeImmutable('2026-03-31'),
+    sort: BillingRecordSort::PositionDesc,                   // default: newest first
+);
+
+$views = $query->page($criteria, offset: 0, limit: 50);     // list<BillingRecordView>, 1 – 500 per page
+$total = $query->count($criteria);
+
+foreach ($views as $view) {
+    $view->position; $view->invoiceSeriesNumber; $view->recordType; $view->hash; $view->generatedAt;
+    $view->submissionStatus; $view->submissionReference; $view->recordedAt;
+}
+
+$query->findByPosition('89890001K', 12);                     // ?BillingRecordView
+$query->findByInvoice('89890001K', 'FAC-2026-001')?->hash;   // latest record of that invoice
+$query->findLatestByInvoices('89890001K', $numbers);         // one call for a list (e.g. an export), in the given order
+```
+
+- **Scope.** Every call is for one issuer NIF (upper-cased and trimmed). A scope that is not a NIF-shaped key (1 – 20
+  letters and digits, e.g. `''`) returns nothing, never every issuer. Resolve the issuer from your own tenant (for
+  example your issuer provider) before you call it.
+- **Exact invoice numbers.** `FAC-1`, `fac-1` and `FAC-1 ` are three invoices, on every database: rows a case- or
+  pad-insensitive collation returns are re-checked in PHP.
+- **Several records per invoice.** An invoice that was cancelled (`Anulacion`) or corrected has several records:
+  `findByInvoice()` returns the one with the highest position; `page()` with `invoiceSeriesNumber` lists them all.
+- **Views, not entities.** `BillingRecordView` holds the hashed fields, the hash, the previous hash, the submission
+  state, `recordedAt` (when the store wrote the row) and `submittedAt` (when the AEAT answered); the in-memory and custom
+  stores leave those two `null`. The XML is not included: read it from `BillingRecordStoreInterface::findByIssuer()`.
+- **Read only and worker-safe.** The query never writes, locks, flushes or opens a transaction, hydrates no entity and
+  keeps no state between calls (FrankenPHP worker mode without kernel reset). Inside your transaction it sees your
+  uncommitted records, like any read on that connection.
 
 ## Batch submission to the AEAT
 
@@ -389,6 +438,17 @@ php bin/console nowo:verifactu:verify-chain --issuer=89890001K
 | `ISSUER_SUBMISSION_PAUSED` | `IssuerSubmissionPausedEvent` | Batch submission (1.7): once per pause of an issuer (circuit breaker): `reason` `issuer_refused` (the AEAT refuses every request of it) or `awaiting_probe` (suspect records, nothing else to test with); `heldPositions`, the AEAT code; no record is failed; alert someone | No |
 | `ISSUER_SUBMISSION_STALLED` | `IssuerSubmissionStalledEvent` | Batch submission (1.7): two requests of an issuer in a row without any AEAT answer (certificate, endpoint, outage); at most once per `pause_seconds`; alert someone | No |
 
+**Before or after the commit.** The batch submission events (`AFTER_RECORD_SUBMISSION`, `RECORD_SUBMISSION_FAILED`,
+`ISSUER_SUBMISSION_PAUSED`, `ISSUER_SUBMISSION_STALLED`) always fire after the bundle has committed: the submitter
+refuses to run inside a transaction. `AFTER_BILLING_RECORD_GENERATED` and `AFTER_AEAT_SUBMISSION` fire after the
+bundle's own commit only when `process()` / `processBatch()` runs outside a transaction. When you wrap the call in
+your own transaction (the recommended way to keep the invoice and its record together), they fire **inside** it,
+before your commit: the chain head and the record can still roll back with your transaction. A listener that sends
+mail, calls another system or publishes a message must then defer it until your transaction commits (for example, a
+row in your outbox written in the same transaction, or a post-commit hook of your transaction runner), or it can
+announce a record that never existed. `BEFORE_BILLING_RECORD_GENERATION` and `BEFORE_AEAT_SUBMISSION` run before
+anything is committed in every case.
+
 The two AEAT submission events are informational (audit log, metrics, outbox): there is **no veto**. Whether a record is
 submitted is decided by the caller (`process(..., submitToAeat: true)`), not by a listener, so a listener can never
 silently keep a registered record away from the AEAT. `AfterBillingRecordGeneratedEvent` and both submission events
@@ -477,8 +537,10 @@ final readonly class VerifactuInvoiceRegistrar implements InvoiceRegistrar
 }
 ```
 
-Store the hash, XML and AEAT response in your own model, or enable the record store and reference its records by
-issuer NIF and hash. To raise your own
+Store the hash, XML and AEAT response in your own model, or enable the record store, reference its records by
+issuer NIF and hash (or invoice number) and read them through `BillingRecordQueryInterface`. To keep the bundle's
+tables off your domain entity manager, map them yourself (`doctrine.register_mapping: false`, see
+[CONFIGURATION](CONFIGURATION.md#doctrine-mapping-standard-and-ddd-hosts)). To raise your own
 domain event when the AEAT answers, either map `$result['submission']` in the adapter above or listen to
 `VerifactuEvents::AFTER_AEAT_SUBMISSION` (see [Events](#events)).
 
@@ -487,6 +549,8 @@ domain event when the AEAT answers, either map `$result['submission']` in the ad
 - `Repository\HashChainRepositoryInterface` (or `LockableHashChainRepositoryInterface`) via `hash_chain.repository`,
   to keep the chain in your own persistence.
 - `Repository\BillingRecordStoreInterface` via `record_store.service`, to keep the record log in your own persistence.
+- `Repository\BillingRecordQueryInterface` via `record_store.query` (1.10), the read port your lists and lookups use
+  ([List, count and look up records](#list-count-and-look-up-records)).
 - `Provider\IssuerProviderInterface` / `Provider\SoftwareIdentityProviderInterface` /
   `Provider\AeatEnvironmentProviderInterface` / `Certificate\CertificateProviderInterface` via `providers.*` (values
   kept in your database, resolved on every call; see [CONFIGURATION](CONFIGURATION.md#runtime-aeat-environment-and-certificate)).

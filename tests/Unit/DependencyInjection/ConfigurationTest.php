@@ -59,6 +59,18 @@ final class ConfigurationTest extends TestCase
         self::assertSame('', $config['doctrine']['table_prefix']);
     }
 
+    public function testRegisterMappingAndRecordQueryDefaults(): void
+    {
+        $config = (new Processor())->processConfiguration(new Configuration(), [[]]);
+
+        self::assertTrue($config['doctrine']['register_mapping']);
+        self::assertNull($config['record_store']['query']);
+
+        $custom = (new Processor())->processConfiguration(new Configuration(), [['doctrine' => ['register_mapping' => false], 'record_store' => ['query' => 'app.record_query']]]);
+        self::assertFalse($custom['doctrine']['register_mapping']);
+        self::assertSame('app.record_query', $custom['record_store']['query']);
+    }
+
     public function testDoctrineTablePrefixAcceptsIdentifierCharacters(): void
     {
         $config = (new Processor())->processConfiguration(new Configuration(), [['doctrine' => ['table_prefix' => 'App_2_']]]);
