@@ -84,7 +84,9 @@ trait RecordQueryScenarios
         $invoice = new BillingRecordCriteria(self::RQ_ISSUER, invoiceSeriesNumber: 'FAC-001');
         self::assertSame([3, 1], $this->rqPositions($query->page($invoice)));
         self::assertSame(2, $query->count($invoice));
-        self::assertSame(0, $query->count(new BillingRecordCriteria(self::RQ_ISSUER, invoiceSeriesNumber: 'FAC-001 ')));
+        // The input is trimmed like the hash and the store do (YA-1): the padded number is the same invoice
+        self::assertSame(2, $query->count(new BillingRecordCriteria(self::RQ_ISSUER, invoiceSeriesNumber: ' FAC-001 ')));
+        self::assertSame(0, $query->count(new BillingRecordCriteria(self::RQ_ISSUER, invoiceSeriesNumber: 'FAC-001 x')));
         self::assertSame([], $query->page(new BillingRecordCriteria(self::RQ_ISSUER, invoiceSeriesNumber: 'FAC-404')));
 
         $january = new BillingRecordCriteria(self::RQ_ISSUER, issuedFrom: new DateTimeImmutable('2026-01-01'), issuedTo: new DateTimeImmutable('2026-02-03 23:00'));
@@ -142,7 +144,8 @@ trait RecordQueryScenarios
         self::assertSame([3, RecordType::Anulacion, $hashes[3]], [$cancelled?->position, $cancelled?->recordType, $cancelled?->hash]);
         self::assertSame(4, $query->findByInvoice(self::RQ_ISSUER, 'fac-001')?->position);
         self::assertSame(1, $query->findByInvoice(self::RQ_OTHER_ISSUER, 'FAC-001')?->position);
-        self::assertNull($query->findByInvoice(self::RQ_ISSUER, 'FAC-001 '));
+        self::assertSame(3, $query->findByInvoice(self::RQ_ISSUER, ' FAC-001 ')?->position);
+        self::assertNull($query->findByInvoice(self::RQ_ISSUER, 'FAC-001 x'));
         self::assertNull($query->findByInvoice(self::RQ_ISSUER, 'FAC-404'));
     }
 
@@ -151,9 +154,9 @@ trait RecordQueryScenarios
         $hashes = $this->rqSeed();
         $query  = $this->rqQuery();
 
-        $views = $query->findLatestByInvoices(self::RQ_ISSUER, ['FAC-002', 'FAC-001', 'FAC-404', 'FAC-001', 'fac-001', 'R-001 ']);
-        self::assertSame([2, 3, 4], $this->rqPositions($views));
-        self::assertSame([$hashes[2], $hashes[3], $hashes[4]], array_map(static fn (BillingRecordView $view): string => $view->hash, $views));
+        $views = $query->findLatestByInvoices(self::RQ_ISSUER, ['FAC-002', 'FAC-001', 'FAC-404', 'FAC-001', 'fac-001', ' R-001 ', 'FAC-002 ']);
+        self::assertSame([2, 3, 4, 5], $this->rqPositions($views));
+        self::assertSame([$hashes[2], $hashes[3], $hashes[4], $hashes[5]], array_map(static fn (BillingRecordView $view): string => $view->hash, $views));
         self::assertSame([], $query->findLatestByInvoices(self::RQ_ISSUER, []));
         self::assertSame([], $query->findLatestByInvoices(self::RQ_OTHER_ISSUER, ['FAC-002']));
     }

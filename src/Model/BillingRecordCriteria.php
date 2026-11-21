@@ -50,7 +50,7 @@ final class BillingRecordCriteria
     /** @var list<string> invoice types (TipoFactura: F1, F2, R1 …, upper-cased); empty = any */
     public readonly array $invoiceTypes;
 
-    /** Exact invoice series and number (NumSerieFactura, compared byte for byte); null = any. */
+    /** Exact invoice series and number (NumSerieFactura, trimmed like the hash and the store do, then compared byte for byte); null = any. */
     public readonly ?string $invoiceSeriesNumber;
 
     /** First issue day included (`Ymd`), or null. */
@@ -100,7 +100,7 @@ final class BillingRecordCriteria
         $this->recordTypes = array_values($types);
 
         $this->invoiceTypes        = array_values(array_unique(array_map(static fn (string $type): string => strtoupper(trim($type)), $invoiceTypes)));
-        $this->invoiceSeriesNumber = $invoiceSeriesNumber;
+        $this->invoiceSeriesNumber = $invoiceSeriesNumber === null ? null : trim($invoiceSeriesNumber);
         $this->issuedFrom          = $issuedFrom?->format('Ymd');
         $this->issuedTo            = $issuedTo?->format('Ymd');
     }

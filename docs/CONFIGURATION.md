@@ -99,7 +99,11 @@ registered.
 With a store, the read port `Repository\BillingRecordQueryInterface` (`nowo_verifactu.billing_record_query`, 1.10) lists,
 counts and looks up records ([USAGE](USAGE.md#list-count-and-look-up-records)). On `storage: doctrine` it is
 `DoctrineBillingRecordQuery` (SQL on the bundle's table); on any other store it walks `findByIssuer()` and filters in
-PHP. `record_store.query` plugs your own implementation (for example over your own persistence).
+PHP. `record_store.query` plugs your own implementation (for example over your own persistence); it is ignored when
+there is no record store (`storage: none` and no `service`).
+
+`doctrine.register_mapping` (like `doctrine.mapping`) is read when the container is prepended, so it must be a literal
+`true` / `false`: `%env(bool:…)%` is not supported.
 
 ### Doctrine mapping (standard and DDD hosts)
 

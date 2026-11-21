@@ -168,6 +168,7 @@ the read port for record lists, counters and invoice lookups. Use it instead of 
 ```php
 use Nowo\VerifactuBundle\Model\BillingRecordCriteria;
 use Nowo\VerifactuBundle\Model\BillingRecordSort;
+use Nowo\VerifactuBundle\Model\RecordType;
 use Nowo\VerifactuBundle\Model\StoredBillingRecord;
 
 $criteria = new BillingRecordCriteria(
@@ -175,7 +176,7 @@ $criteria = new BillingRecordCriteria(
     statuses: [StoredBillingRecord::STATUS_PENDING],         // optional filters (AND); [] = any
     recordTypes: [RecordType::Alta],
     invoiceTypes: ['F1', 'R1'],
-    invoiceSeriesNumber: null,                               // exact NumSerieFactura
+    invoiceSeriesNumber: null,                               // NumSerieFactura (trimmed, then exact)
     issuedFrom: new DateTimeImmutable('2026-01-01'),         // FechaExpedicionFactura, by calendar day, inclusive
     issuedTo: new DateTimeImmutable('2026-03-31'),
     sort: BillingRecordSort::PositionDesc,                   // default: newest first
@@ -197,13 +198,19 @@ $query->findLatestByInvoices('89890001K', $numbers);         // one call for a l
 - **Scope.** Every call is for one issuer NIF (upper-cased and trimmed). A scope that is not a NIF-shaped key (1 – 20
   letters and digits, e.g. `''`) returns nothing, never every issuer. Resolve the issuer from your own tenant (for
   example your issuer provider) before you call it.
-- **Exact invoice numbers.** `FAC-1`, `fac-1` and `FAC-1 ` are three invoices, on every database: rows a case- or
-  pad-insensitive collation returns are re-checked in PHP.
+- **Exact invoice numbers.** `FAC-1` and `fac-1` are two invoices, on every database: rows a case- or pad-insensitive
+  collation returns are re-checked in PHP. Leading and trailing spaces are trimmed first, exactly as the hash and the
+  store do (1.10.1), so `' FAC-1 '` finds `FAC-1`, on the Doctrine and the store-backed query alike.
 - **Several records per invoice.** An invoice that was cancelled (`Anulacion`) or corrected has several records:
   `findByInvoice()` returns the one with the highest position; `page()` with `invoiceSeriesNumber` lists them all.
 - **Views, not entities.** `BillingRecordView` holds the hashed fields, the hash, the previous hash, the submission
   state, `recordedAt` (when the store wrote the row) and `submittedAt` (when the AEAT answered); the in-memory and custom
   stores leave those two `null`. The XML is not included: read it from `BillingRecordStoreInterface::findByIssuer()`.
+- **Pages are not a snapshot.** `page()` and `count()` are separate reads, and offset pages are not frozen: records
+  appended between two calls shift the pages of a newest-first (`PositionDesc`) listing, so a record can appear twice or
+  be skipped while you walk it. Walk with `PositionAsc` for a stable traversal.
+- **`record_store.query`.** The setting is ignored without a record store (`storage: none` and no `service`): the port
+  is not registered then.
 - **Read only and worker-safe.** The query never writes, locks, flushes or opens a transaction, hydrates no entity and
   keeps no state between calls (FrankenPHP worker mode without kernel reset). Inside your transaction it sees your
   uncommitted records, like any read on that connection.
