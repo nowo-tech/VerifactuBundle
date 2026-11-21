@@ -1,7 +1,7 @@
 # Makefile for Verifactu Bundle Demo - Symfony 8
 # Run from this directory: make up, make install, etc.
 
-.PHONY: help up down restart build install shell logs test test-coverage update update-bundle ensure-up verify db-setup
+.PHONY: help up down restart build install shell logs test test-coverage update update-bundle ensure-up verify db-setup test-e2e
 
 help:
 	@echo "Verifactu Bundle Demo - Symfony 8"
@@ -19,6 +19,7 @@ help:
 	@echo "  make update-bundle   Update bundle from path repo"
 	@echo "  make verify          Ensure up and check HTTP 200"
 	@echo "  make db-setup        Create SQLite schema for hash chain"
+	@echo "  make test-e2e        Playwright e2e: happy path, demo platform rules and axe (Docker image; DEMO_PORT overrides .env PORT)"
 	@echo ""
 
 up:
@@ -108,3 +109,16 @@ COMPOSE ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compos
 SERVICE_PHP := php
 BUNDLE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 -include $(BUNDLE_ROOT)/../.scripts/Makefile.demo-update-deps.mk
+
+# REQ-DEMO-013: Playwright e2e (official Playwright image; the image tag follows the exact @playwright/test version pinned in e2e/package.json).
+PLAYWRIGHT_VERSION := $(shell sed -n 's/.*"@playwright\/test": "\([0-9.]*\)".*/\1/p' e2e/package.json)
+PLAYWRIGHT_IMAGE ?= mcr.microsoft.com/playwright:v$(PLAYWRIGHT_VERSION)-jammy
+
+test-e2e: ensure-up
+	@mkdir -p e2e/node_modules
+	@PORT=$${DEMO_PORT:-$$(grep -E '^PORT=' .env 2>/dev/null | cut -d= -f2)}; PORT=$${PORT:-8010}; \
+	docker run --rm --network host --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+		-v "$(CURDIR)/e2e:/e2e" -w /e2e \
+		-e DEMO_BASE_URL=http://127.0.0.1:$$PORT \
+		$(PLAYWRIGHT_IMAGE) \
+		bash -lc 'npm ci --no-fund --no-audit && npx playwright test --project=chromium'
