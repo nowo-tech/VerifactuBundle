@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [[Unreleased]](#unreleased)
+- [[1.10.0] - 2026-11-21](#1100---2026-11-21)
 - [[1.9.0] - 2026-11-19](#190---2026-11-19)
 - [[1.8.0] - 2026-11-13](#180---2026-11-13)
 - [[1.7.0] - 2026-11-11](#170---2026-11-11)
@@ -33,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [[1.0.0] - 2026-07-18](#100---2026-07-18)
 
 ## [Unreleased]
+
+## [1.10.0] - 2026-11-21
 
 ### Added
 
@@ -705,7 +708,8 @@ No public API or config schema breaks. If you host under FrankenPHP and raise `a
 
 For first-time install steps, see [UPGRADING.md](UPGRADING.md) and [INSTALLATION.md](INSTALLATION.md).
 
-[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/nowo-tech/VerifactuBundle/compare/v1.6.0...v1.7.0

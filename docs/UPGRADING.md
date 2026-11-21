@@ -3,6 +3,7 @@
 ## Table of contents
 
 - [Unreleased](#unreleased)
+- [To 1.10.0](#to-1100)
 - [To 1.9.0](#to-190)
 - [To 1.8.0](#to-180)
 - [To 1.7.0](#to-170)
@@ -36,6 +37,14 @@
 - [From 1.0.7 to 1.0.8](#from-107-to-108)
 
 ## Unreleased
+
+## To 1.10.0
+
+From **1.9.0**:
+
+```bash
+composer update nowo-tech/verifactu-bundle
+```
 
 From **1.9.0** — minor, no configuration change required:
 
