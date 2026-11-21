@@ -10,6 +10,7 @@
         </unique-constraints>
         <indexes>
             <index name="idx_verifactu_billing_record_submission" columns="issuer_nif,submission_status,position"/>
+            <index name="idx_verifactu_billing_record_invoice" columns="issuer_nif,invoice_series_number"/>
         </indexes>
         <id name="issuerNif" column="issuer_nif" type="string" length="20"/>
         <id name="position" column="position" type="integer"/>

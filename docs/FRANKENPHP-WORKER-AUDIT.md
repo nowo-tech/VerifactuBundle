@@ -59,6 +59,7 @@ A bundle that is safe under **B** is safe under **A** and under classic mode / P
 | `Repository\InMemoryHashChainRepository` (default `HashChainRepositoryInterface`) | yes (public alias) | `private array $states` (request-scoped) | ✅ `kernel.reset` → `clear()` | ✅ cleared per main request |
 | `Repository\InMemoryBillingRecordStore` (`record_store.storage: memory`, public alias `nowo_verifactu.repository.in_memory_billing_record_store`) | yes | `private array $records`, `private array $claims` (request-scoped) | ✅ `kernel.reset` → `clear()` / `reset()` (`ResetInterface`) | ✅ cleared per main request by `WorkerStateResetSubscriber` |
 | `Repository\DoctrineHashChainRepository` (`storage: doctrine`) | yes | none (`readonly` registry); fresh reads, detached entities | ✅ | ✅ |
+| `Repository\DoctrineBillingRecordQuery` / `Repository\StoreBackedBillingRecordQuery` (1.10, `nowo_verifactu.billing_record_query`) | yes | none (`readonly` registry or store); array hydration, no managed entity; `DoctrineRecordQueryIntegrationTest::testWorkerModeRepeatedReadsKeepNoState` | ✅ | ✅ (the store-backed one reads the in-memory store, cleared per main request) |
 | `Service\BillingRecordProcessor` | yes (public alias) | none (`readonly` collaborators and config) | inherits repository status | inherits repository status |
 | `Generator\HashChainGenerator` | yes | none | ✅ | ✅ |
 | `Generator\BillingRecordXmlGenerator` | yes | none | ✅ | ✅ |
