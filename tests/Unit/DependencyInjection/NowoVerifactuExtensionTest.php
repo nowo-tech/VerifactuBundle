@@ -182,6 +182,21 @@ final class NowoVerifactuExtensionTest extends TestCase
         self::assertNotSame([], $container->getExtensionConfig('doctrine'));
     }
 
+    public function testPrependedMappingHasNoDeprecatedAlias(): void
+    {
+        $container = $this->containerWithDoctrineExtension();
+
+        (new NowoVerifactuExtension())->prepend($container);
+
+        /** @var array{orm: array{mappings: array{NowoVerifactuBundle: array<string, mixed>}}} $config */
+        $config  = $container->getExtensionConfig('doctrine')[0];
+        $mapping = $config['orm']['mappings']['NowoVerifactuBundle'];
+        self::assertArrayNotHasKey('alias', $mapping);
+        self::assertSame('Nowo\\VerifactuBundle\\Entity', $mapping['prefix']);
+        self::assertSame('attribute', $mapping['type']);
+        self::assertSame('Entity', $mapping['dir']);
+    }
+
     public function testPrependDoesNothingWithoutDoctrineExtension(): void
     {
         $container = new ContainerBuilder();

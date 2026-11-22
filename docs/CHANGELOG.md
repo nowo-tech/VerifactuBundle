@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The prepended Doctrine mapping no longer sets the `alias` option (`NowoVerifactu`), which DoctrineBundle 3.4 deprecates
+  (`doctrine.orm.entity_managers.default.mappings.NowoVerifactuBundle.alias`). Prefix, dir and type are unchanged.
+
 ## [1.10.1] - 2026-11-21
 
 ### Fixed

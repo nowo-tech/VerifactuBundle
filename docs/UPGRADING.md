@@ -39,6 +39,10 @@
 
 ## Unreleased
 
+The bundle's Doctrine mapping no longer declares the `NowoVerifactu` short alias (DoctrineBundle 3.4 deprecates the
+`alias` mapping option). Hosts that used `NowoVerifactu:Entity` in DQL or `getRepository('NowoVerifactu:...')` must use the
+fully qualified class names (`Nowo\VerifactuBundle\Entity\...::class`). Nothing else changes.
+
 ## To 1.10.1
 
 From **1.10.0**:
