@@ -1,0 +1,13 @@
+{
+  "name": "nowo-demo-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Playwright e2e for the bundle demo (REQ-DEMO-013): happy path plus the demo platform rules and axe",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.65.1"
+  }
+}
