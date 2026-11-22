@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The prepended Doctrine mapping no longer sets the `alias` option (`NowoVerifactu`), which DoctrineBundle 3.4 deprecates
+  (`doctrine.orm.entity_managers.default.mappings.NowoVerifactuBundle.alias`). Prefix, dir and type are unchanged.
+
 ### Changed
 
 - Demo: runs in UiKit's demo platform shell (`nowo-tech/ui-kit-bundle` ^2.60); the demo's own header is gone and the pages use the shell page headers and section cards. The demo gains a minimal Playwright e2e (`make test-e2e`). Demo only, no bundle change.

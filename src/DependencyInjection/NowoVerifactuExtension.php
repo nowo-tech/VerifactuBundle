@@ -139,7 +139,6 @@ final class NowoVerifactuExtension extends Extension implements PrependExtension
                         'type'      => $xml ? 'xml' : 'attribute',
                         'dir'       => $xml ? 'Resources/config/doctrine' : 'Entity',
                         'prefix'    => 'Nowo\\VerifactuBundle\\Entity',
-                        'alias'     => 'NowoVerifactu',
                     ],
                 ],
             ],
