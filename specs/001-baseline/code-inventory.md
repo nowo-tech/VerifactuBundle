@@ -2,9 +2,9 @@
 
 **Baseline spec**: [`spec.md`](spec.md)  
 **Package**: `nowo-tech/verifactu-bundle`  
-**Last audited**: 2026-11-16
+**Last audited**: 2026-11-22
 
-Every production artifact under `src/` is mapped below (118/118; audit: `git ls-files src | wc -l`).
+Every production artifact under `src/` is mapped below (125/125; audit: `git ls-files src | wc -l`).
 
 ## Bundle & DI
 
@@ -35,6 +35,9 @@ Every production artifact under `src/` is mapped below (118/118; audit: `git ls-
 | `Model/BillingRecordResult.php` | Typed outcome of `processToResult()` | FR-PROC-001 |
 | `Model/BillingRecordBatchResult.php` | Typed outcome of `processBatchToResult()` | FR-PROC-001 |
 | `Model/StoredBillingRecord.php` | Record read back from the store with chain position and submission state | FR-STORE-002 |
+| `Model/BillingRecordCriteria.php` | Record list filters and scope (1.10) | FR-STORE-003 |
+| `Model/BillingRecordSort.php` | Record list order (1.10) | FR-STORE-003 |
+| `Model/BillingRecordView.php` | Read-only stored record view without XML (1.10) | FR-STORE-003 |
 | `Model/RecordSubmissionStatus.php` | EstadoRegistro of a stored record | FR-STORE-002, FR-BATCH-001 |
 | `Model/RecordSubmissionOutcome.php` | What a batch submission learnt about one stored record | FR-BATCH-001 |
 | `Model/AeatBatchResponse.php` | AEAT answer to one submission (EstadoEnvio, CSV, TiempoEsperaEnvio, lines) | FR-BATCH-001, FR-FLOW-001 |
@@ -114,6 +117,10 @@ Every production artifact under `src/` is mapped below (118/118; audit: `git ls-
 | `Repository/SubmissionQueueInterface.php` | Record log seen as the AEAT submission queue (1.7) | FR-STORE-002, FR-BATCH-001 |
 | `Repository/DoctrineBillingRecordStore.php` | Doctrine record log + queue | FR-STORE-002, FR-WORKER-002 |
 | `Repository/InMemoryBillingRecordStore.php` | Request-scoped record log for development | FR-STORE-002, FR-WORKER-001 |
+| `Repository/BillingRecordQueryInterface.php` | Read port over the record log (1.10) | FR-STORE-003 |
+| `Repository/BillingRecordQueryPaging.php` | Shared argument checks of the read port | FR-STORE-003 |
+| `Repository/DoctrineBillingRecordQuery.php` | Doctrine read port, array-hydrated DQL | FR-STORE-003 |
+| `Repository/StoreBackedBillingRecordQuery.php` | Read port over any record store | FR-STORE-003 |
 | `Entity/BillingRecordEntry.php` | Record log entity (referenced by ids only) | FR-STORE-002 |
 | `Doctrine/DbalRowWriter.php` | Writes bundle rows through DBAL, never `EntityManager::flush()` | FR-STORE-001, FR-STORE-002, FR-WORKER-002 |
 | `Resources/config/doctrine/BillingRecordHashChain.orm.xml` | XML mapping of the hash chain entity | FR-STORE-001 |
@@ -219,14 +226,14 @@ Every production artifact under `src/` is mapped below (118/118; audit: `git ls-
 | Category | Files | Mapped |
 | --- | ---: | ---: |
 | Bundle & DI | 5 | 5 |
-| Models | 22 | 22 |
+| Models | 25 | 25 |
 | Integration (Nowo ERP) | 2 | 2 |
 | Generators | 2 | 2 |
 | Validators | 3 | 3 |
 | QR | 2 | 2 |
 | AEAT clients | 10 | 10 |
 | Signing & certificates | 7 | 7 |
-| Storage | 15 | 15 |
+| Storage | 19 | 19 |
 | Processing & events | 13 | 13 |
 | CLI | 6 | 6 |
 | Twig | 1 | 1 |
@@ -236,4 +243,4 @@ Every production artifact under `src/` is mapped below (118/118; audit: `git ls-
 | Batch submission & flow control | 6 | 6 |
 | Messenger | 2 | 2 |
 | Exceptions | 4 | 4 |
-| **Total production sources** | **118** | **118** |
+| **Total production sources** | **125** | **125** |
