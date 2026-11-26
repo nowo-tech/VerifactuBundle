@@ -2,7 +2,7 @@
 
 **Baseline spec**: [`spec.md`](spec.md)  
 **Package**: `nowo-tech/verifactu-bundle`  
-**Last audited**: 2026-11-22
+**Last audited**: 2026-11-27 (125/125 re-verified, no src change since 2026-11-22)
 
 Every production artifact under `src/` is mapped below (125/125; audit: `git ls-files src | wc -l`).
 
